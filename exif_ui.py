@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -43,6 +44,13 @@ def extract_image_paths_from_urls(urls: list[QtCore.QUrl]) -> list[str]:
             if p.suffix.lower() in SUPPORTED_EXTS:
                 paths.append(str(p))
     return paths
+
+
+def normalize_path(p: str) -> str:
+    try:
+        return str(Path(p).resolve())
+    except Exception:
+        return os.path.normpath(p)
 
 
 def _app_data_dir() -> Path:
@@ -110,6 +118,8 @@ def add_recent_tag(tag: str) -> None:
 class KeywordState:
     iptc: list[str]
     xmp: list[str]
+    date_original: str | None = None
+    date_create: str | None = None
 
     @property
     def iptc_set(self) -> set[str]:
@@ -130,6 +140,14 @@ class KeywordState:
     def mismatch(self) -> bool:
         return self.iptc_set != self.xmp_set
 
+    @property
+    def date_display(self) -> str:
+        if self.date_original:
+            return self.date_original
+        if self.date_create:
+            return self.date_create
+        return ""
+
 
 class ExifToolError(RuntimeError):
     pass
@@ -137,7 +155,11 @@ class ExifToolError(RuntimeError):
 
 class ExifTool:
     def __init__(self, exe: str = "exiftool"):
-        self.exe = exe
+        resolved = shutil.which(exe)
+        if resolved:
+            self.exe = resolved
+        else:
+            self.exe = exe
 
     def _run(self, args: list[str]) -> str:
         try:
@@ -159,7 +181,17 @@ class ExifTool:
 
     def read_keywords(self, file_path: str) -> KeywordState:
         out = self._run(
-            ["-q", "-q", "-j", "-G1", "-IPTC:Keywords", "-XMP-dc:Subject", file_path]
+            [
+                "-q",
+                "-q",
+                "-j",
+                "-G1",
+                "-IPTC:Keywords",
+                "-XMP-dc:Subject",
+                "-EXIF:DateTimeOriginal",
+                "-EXIF:CreateDate",
+                file_path,
+            ]
         )
         try:
             data = json.loads(out)
@@ -185,7 +217,14 @@ class ExifTool:
                     out2.append(x.strip())
             return out2
 
-        return KeywordState(_clean(iptc), _clean(xmp))
+        date_original = rec.get("EXIF:DateTimeOriginal")
+        date_create = rec.get("EXIF:CreateDate")
+        if not isinstance(date_original, str):
+            date_original = None
+        if not isinstance(date_create, str):
+            date_create = None
+
+        return KeywordState(_clean(iptc), _clean(xmp), date_original, date_create)
 
     def write_keywords(self, file_paths: list[str], keywords: list[str], keep_backup: bool) -> None:
         kws = dedupe_casefold([k.strip() for k in keywords if k.strip()])
@@ -201,14 +240,14 @@ class ExifTool:
         args += file_paths
         self._run(args)
 
-    def scan_folder_tags(self, folder: str) -> set[str]:
+    def scan_folder_tags(self, folder: str, recursive: bool) -> set[str]:
         out = self._run(
             [
                 "-q",
                 "-q",
                 "-j",
                 "-G1",
-                # Non-recursive by design: only tags from the same folder.
+                *( ["-r"] if recursive else [] ),
                 "-ext",
                 "jpg",
                 "-ext",
@@ -236,6 +275,46 @@ class ExifTool:
                         if isinstance(x, str) and x.strip():
                             tags.add(x.strip())
         return tags
+
+    def scan_iptc_empty(self, file_paths: list[str]) -> set[str]:
+        if not file_paths:
+            return set()
+        empty: set[str] = set()
+        seen: set[str] = set()
+        norm_input = [normalize_path(p) for p in file_paths]
+
+        # Avoid Windows command-line length limits by chunking.
+        chunk_size = 200
+        for i in range(0, len(norm_input), chunk_size):
+            chunk = norm_input[i : i + chunk_size]
+            out = self._run(["-q", "-q", "-j", "-G1", "-IPTC:Keywords", *chunk])
+            try:
+                data = json.loads(out)
+            except Exception as e:
+                raise ExifToolError("Failed to parse exiftool JSON output") from e
+            for rec in data:
+                src = rec.get("SourceFile")
+                if not isinstance(src, str):
+                    continue
+                src_norm = normalize_path(src)
+                seen.add(src_norm)
+                iptc = rec.get("IPTC:Keywords", rec.get("Keywords", []))
+                if isinstance(iptc, str):
+                    iptc = [iptc]
+                if not iptc:
+                    empty.add(src_norm)
+
+        return empty
+
+    def copy_exif_date_to_xmp(self, file_paths: list[str], keep_backup: bool) -> None:
+        if not file_paths:
+            return
+        args: list[str] = ["-q", "-q", "-P"]
+        if not keep_backup:
+            args.append("-overwrite_original")
+        args.append("-XMP:CreateDate<EXIF:DateTimeOriginal")
+        args += file_paths
+        self._run(args)
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -298,9 +377,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.pool = QtCore.QThreadPool.globalInstance()
         self._keywords_cache: dict[str, KeywordState] = {}
-        self._folder_tag_cache: dict[str, set[str]] = {}
-        self._folder_scans_inflight: set[str] = set()
+        self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
+        self._folder_scans_inflight: set[tuple[str, bool]] = set()
         self._selection_token = 0
+        self._filter_token = 0
+        self._filter_queue: list[list[str]] = []
+        self._filter_map: dict[str, QtWidgets.QListWidgetItem] = {}
+        self._filter_shown = 0
+        self._filter_total = 0
+        self._filter_processed = 0
+        self._filter_first_chunk = True
+        self._filter_first_empty: set[str] = set()
+        self._filter_switched = False
 
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
@@ -308,6 +396,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        self.dateLabel = QtWidgets.QLabel("")
+        self.dateLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.copyDateBtn = QtWidgets.QPushButton("Copy EXIF date → XMP")
+        self.copyDateBtn.setToolTip("Copy EXIF DateTimeOriginal to XMP:CreateDate")
+        self.copyDateBtn.clicked.connect(self.copy_exif_date_to_xmp)
 
         self.previewLabel = QtWidgets.QLabel("No preview")
         self.previewLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -355,6 +449,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownList.itemActivated.connect(self.add_keyword_from_known)
         self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
 
+        self.recursiveScan = QtWidgets.QCheckBox("Recursive scan")
+        self.recursiveScan.setToolTip("Include subfolders when building tag repo")
+        self.recursiveScan.setChecked(False)
+        self.recursiveScan.toggled.connect(self.force_refresh_known_tags)
+
+        self.onlyUntagged = QtWidgets.QCheckBox("Only IPTC-empty")
+        self.onlyUntagged.setToolTip("Show only files without IPTC keywords")
+        self.onlyUntagged.toggled.connect(self.apply_iptc_filter_async)
+        self.filterInfoLabel = QtWidgets.QLabel("")
+        self.filterInfoLabel.setToolTip("Filter result count")
+
+        self.addFolderBtn = QtWidgets.QPushButton("Add folder")
+        self.addFolderBtn.setToolTip("Add all JPG/JPEG files from a folder (Ctrl+O)")
+        self.addFolderBtn.setShortcut(QtGui.QKeySequence("Ctrl+O"))
+        self.addFolderBtn.clicked.connect(self.add_folder_dialog)
+
         # --- Right: image panel (selected file) ---
         self.imageBox = QtWidgets.QGroupBox("Image")
         self.imageBox.setStyleSheet(
@@ -363,6 +473,12 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         imageLayout = QtWidgets.QVBoxLayout(self.imageBox)
         imageLayout.addWidget(self.selectedLabel)
+        dateRowW = QtWidgets.QWidget()
+        dateRow = QtWidgets.QHBoxLayout(dateRowW)
+        dateRow.setContentsMargins(0, 0, 0, 0)
+        dateRow.addWidget(self.dateLabel, 1)
+        dateRow.addWidget(self.copyDateBtn)
+        imageLayout.addWidget(dateRowW)
         imageLayout.addWidget(self.previewLabel)
 
         mismatchRowW = QtWidgets.QWidget()
@@ -397,10 +513,23 @@ class MainWindow(QtWidgets.QMainWindow):
         knownFilterRow.addWidget(self.knownFilter, 1)
         knownFilterRow.addWidget(self.knownRefreshBtn)
         repoLayout.addWidget(knownFilterRowW)
+        repoLayout.addWidget(self.recursiveScan)
         repoLayout.addWidget(self.knownList, 1)
 
+        filesPanel = QtWidgets.QWidget()
+        filesLayout = QtWidgets.QVBoxLayout(filesPanel)
+        filesLayout.setContentsMargins(0, 0, 0, 0)
+        filesTopRow = QtWidgets.QHBoxLayout()
+        filesTopRow.setContentsMargins(0, 0, 0, 0)
+        filesTopRow.addWidget(self.onlyUntagged)
+        filesTopRow.addWidget(self.filterInfoLabel)
+        filesTopRow.addWidget(self.addFolderBtn)
+        filesTopRow.addStretch(1)
+        filesLayout.addLayout(filesTopRow)
+        filesLayout.addWidget(self.files, 1)
+
         leftSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        leftSplitter.addWidget(self.files)
+        leftSplitter.addWidget(filesPanel)
         leftSplitter.addWidget(self.repoBox)
         leftSplitter.setStretchFactor(0, 3)
         leftSplitter.setStretchFactor(1, 2)
@@ -422,6 +551,7 @@ class MainWindow(QtWidgets.QMainWindow):
             splitter,
             leftSplitter,
             self.files,
+            filesPanel,
             self.repoBox,
             self.knownList,
             self.imageBox,
@@ -454,6 +584,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+L"), self)
         sc.activated.connect(self.addEdit.setFocus)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Home"), self)
+        sc.activated.connect(lambda: self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().minimum()))
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("End"), self)
+        sc.activated.connect(lambda: self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().maximum()))
         self._shortcuts.append(sc)
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
@@ -502,7 +640,7 @@ class MainWindow(QtWidgets.QMainWindow):
         seen = set(self.all_file_paths())
         added = 0
         for p in paths:
-            p2 = str(Path(p).resolve())
+            p2 = normalize_path(p)
             if p2 in seen:
                 continue
             self.files.addItem(p2)
@@ -511,6 +649,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Added {added} files")
         if added and not self.files.selectedItems():
             self.files.setCurrentRow(0)
+        if self.onlyUntagged.isChecked():
+            self.apply_iptc_filter_async()
+
+    def add_folder_dialog(self) -> None:
+        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
+        if not folder:
+            return
+        p = Path(folder)
+        paths = [str(x) for x in p.rglob("*") if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS]
+        if paths:
+            self.add_files(paths)
 
     def all_file_paths(self) -> list[str]:
         return [self.files.item(i).text() for i in range(self.files.count())]
@@ -532,6 +681,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
             self.keywordsList.clear()
+            self.dateLabel.setText("")
             self.previewLabel.setText("No preview")
             self.previewLabel.setPixmap(QtGui.QPixmap())
             self.refresh_known_tags()
@@ -553,6 +703,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._keywords_cache[current] = st
             self._render_keywords(st)
+            if st.date_display:
+                self.dateLabel.setText(f"Capture date: {st.date_display}")
+            else:
+                self.dateLabel.setText("Capture date: (missing)")
             self.statusBar().showMessage("Ready")
             self.refresh_known_tags()
 
@@ -619,6 +773,142 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
 
+    def _preserve_files_scroll(self, fn) -> None:
+        view = self.files
+        sb = view.verticalScrollBar()
+        top_item = view.itemAt(0, 0)
+        top_path = normalize_path(top_item.text()) if top_item is not None else None
+        top_offset = view.visualItemRect(top_item).top() if top_item is not None else 0
+        top_row = view.row(top_item) if top_item is not None else 0
+
+        fn()
+
+        if top_path:
+            item = self._find_item_by_path(top_path)
+            if item is None or item.isHidden():
+                item = None
+                for i in range(max(0, top_row), view.count()):
+                    cand = view.item(i)
+                    if cand is not None and not cand.isHidden():
+                        item = cand
+                        break
+            if item is not None:
+                view.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop)
+                sb.setValue(sb.value() + top_offset)
+
+    def apply_iptc_filter_async(self) -> None:
+        self._filter_token += 1
+        token = self._filter_token
+        if not self.onlyUntagged.isChecked():
+            for i in range(self.files.count()):
+                self.files.item(i).setHidden(False)
+            self.filterInfoLabel.setText("")
+            return
+
+        paths = self.all_file_paths()
+        if not paths:
+            return
+
+        # Build map, but keep list visible until first chunk completes.
+        self._filter_map = {}
+        for i in range(self.files.count()):
+            it = self.files.item(i)
+            it.setHidden(False)
+            self._filter_map[normalize_path(it.text())] = it
+
+        self._filter_total = self.files.count()
+        self._filter_shown = 0
+        self._filter_processed = 0
+        self._filter_first_chunk = True
+        self._filter_first_empty = set()
+        self._filter_switched = False
+        self.filterInfoLabel.setText(f"…/{self._filter_total}")
+
+        # First chunk ~ a few screens; rest uses larger chunks.
+        row_h = self.files.sizeHintForRow(0) or self.files.fontMetrics().height() + 4
+        visible_rows = max(10, int(self.files.viewport().height() / max(1, row_h)))
+        first_chunk_size = max(20, visible_rows * 2)
+        chunk_size = 80
+        first = paths[:first_chunk_size]
+        rest = paths[first_chunk_size:]
+        self._filter_queue = [first] if first else []
+        if rest:
+            self._filter_queue.extend(
+                [rest[i : i + chunk_size] for i in range(0, len(rest), chunk_size)]
+            )
+        self.statusBar().showMessage("Filtering IPTC-empty...")
+        self._process_next_filter_chunk(token)
+
+    def _process_next_filter_chunk(self, token: int) -> None:
+        if token != self._filter_token:
+            return
+        if not self._filter_queue:
+            self.statusBar().showMessage("Ready")
+            return
+
+        chunk = self._filter_queue.pop(0)
+        worker = Worker(self.exif.scan_iptc_empty, chunk)
+
+        def _ok(empty: set[str]) -> None:
+            if token != self._filter_token:
+                return
+            empty_norm = {normalize_path(p) for p in empty}
+            if self._filter_first_chunk:
+                self._filter_first_empty = empty_norm
+                if empty_norm:
+                    # Switch to filtered view only when we have first results.
+                    self._filter_switched = True
+                    def _do_first():
+                        for it in self._filter_map.values():
+                            it.setHidden(True)
+                        for p in empty_norm:
+                            it = self._filter_map.get(p)
+                            if it is not None:
+                                it.setHidden(False)
+                                self._filter_shown += 1
+                    self._preserve_files_scroll(_do_first)
+                self._filter_first_chunk = False
+            else:
+                if not self._filter_switched and empty_norm:
+                    self._filter_switched = True
+                    def _do_switch():
+                        for it in self._filter_map.values():
+                            it.setHidden(True)
+                        for p in empty_norm:
+                            it = self._filter_map.get(p)
+                            if it is not None:
+                                it.setHidden(False)
+                                self._filter_shown += 1
+                    self._preserve_files_scroll(_do_switch)
+                elif self._filter_switched:
+                    def _do_next():
+                        for p in empty_norm:
+                            it = self._filter_map.get(p)
+                            if it is not None and it.isHidden():
+                                it.setHidden(False)
+                                self._filter_shown += 1
+                    self._preserve_files_scroll(_do_next)
+            self._filter_processed += len(chunk)
+            if self._filter_switched:
+                self.filterInfoLabel.setText(f"{self._filter_shown}/{self._filter_total}")
+            else:
+                self.filterInfoLabel.setText(f"…/{self._filter_total}")
+            self.statusBar().showMessage(
+                f"Filtering IPTC-empty... {self._filter_processed}/{self._filter_total}"
+            )
+            QtCore.QTimer.singleShot(0, lambda: self._process_next_filter_chunk(token))
+
+        def _err(msg: str) -> None:
+            if token != self._filter_token:
+                return
+            self.statusBar().showMessage("Error")
+            self._show_error(msg)
+            self.filterInfoLabel.setText("")
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker)
+
     def _refresh_current_keywords_view_from_cache(self) -> None:
         sel = self.selected_file_paths()
         if not sel:
@@ -628,6 +918,41 @@ class MainWindow(QtWidgets.QMainWindow):
         if st is None:
             return
         self._render_keywords(st)
+        if st.date_display:
+            self.dateLabel.setText(f"Capture date: {st.date_display}")
+        else:
+            self.dateLabel.setText("Capture date: (missing)")
+
+    def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
+        target = normalize_path(path)
+        for i in range(self.files.count()):
+            it = self.files.item(i)
+            if normalize_path(it.text()) == target:
+                return it
+        return None
+
+    def _update_filter_label(self) -> None:
+        if not self.onlyUntagged.isChecked():
+            self.filterInfoLabel.setText("")
+            return
+        total = self.files.count()
+        shown = 0
+        for i in range(self.files.count()):
+            if not self.files.item(i).isHidden():
+                shown += 1
+        self.filterInfoLabel.setText(f"{shown}/{total}")
+
+    def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
+        if not self.onlyUntagged.isChecked():
+            return
+        def _do():
+            for path, is_empty in emptiness_by_path.items():
+                it = self._find_item_by_path(path)
+                if it is None:
+                    continue
+                it.setHidden(not is_empty)
+        self._preserve_files_scroll(_do)
+        self._update_filter_label()
 
     def add_keyword_from_input(self) -> None:
         tag = self.addEdit.text().strip()
@@ -651,19 +976,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
 
+        emptiness_by_path: dict[str, bool] = {}
         try:
             for f in files:
                 st = self._ensure_loaded(f)
                 merged = dedupe_casefold(st.merged + [tag])
                 merged.sort(key=lambda s: s.casefold())
                 self.exif.write_keywords([f], merged, keep_backup=self.keepBackup.isChecked())
-                self._keywords_cache[f] = KeywordState(merged, merged)
+                self._keywords_cache[f] = KeywordState(merged, merged, st.date_original, st.date_create)
+                emptiness_by_path[f] = len(merged) == 0
         except ExifToolError as e:
             self._show_error(str(e))
             return
 
         add_recent_tag(tag)
         self._refresh_current_keywords_view_from_cache()
+        self._apply_filter_visibility_changes(emptiness_by_path)
         self.statusBar().showMessage(f"Added '{tag}' to {len(files)} file(s)")
 
     def remove_selected_keywords(self) -> None:
@@ -679,25 +1007,29 @@ class MainWindow(QtWidgets.QMainWindow):
         if not remove:
             return
 
+        emptiness_by_path: dict[str, bool] = {}
         try:
             for f in files:
                 st = self._ensure_loaded(f)
                 merged = [k for k in st.merged if k.casefold() not in remove]
                 self.exif.write_keywords([f], merged, keep_backup=self.keepBackup.isChecked())
-                self._keywords_cache[f] = KeywordState(merged, merged)
+                self._keywords_cache[f] = KeywordState(merged, merged, st.date_original, st.date_create)
+                emptiness_by_path[f] = len(merged) == 0
         except ExifToolError as e:
             self._show_error(str(e))
             return
 
         self._refresh_current_keywords_view_from_cache()
+        self._apply_filter_visibility_changes(emptiness_by_path)
         self.statusBar().showMessage(f"Removed {len(remove)} tag(s) from {len(files)} file(s)")
 
     def force_refresh_known_tags(self) -> None:
         sel = self.selected_file_paths()
         if sel:
             folder = str(Path(sel[0]).resolve().parent)
-            self._folder_tag_cache.pop(folder, None)
-            self._folder_scans_inflight.discard(folder)
+            key = (folder, self.recursiveScan.isChecked())
+            self._folder_tag_cache.pop(key, None)
+            self._folder_scans_inflight.discard(key)
         self.refresh_known_tags()
 
     def refresh_known_tags(self) -> None:
@@ -708,9 +1040,10 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = self.selected_file_paths()
         if sel:
             folder = str(Path(sel[0]).resolve().parent)
-            cached = self._folder_tag_cache.get(folder)
+            key = (folder, self.recursiveScan.isChecked())
+            cached = self._folder_tag_cache.get(key)
             if cached is None:
-                self._ensure_folder_scan(folder)
+                self._ensure_folder_scan(folder, self.recursiveScan.isChecked())
                 cached = set()
             folder_tags = cached
 
@@ -736,27 +1069,28 @@ class MainWindow(QtWidgets.QMainWindow):
         for t in combined:
             self.knownList.addItem(t)
 
-    def _ensure_folder_scan(self, folder: str) -> None:
-        if folder in self._folder_tag_cache:
+    def _ensure_folder_scan(self, folder: str, recursive: bool) -> None:
+        key = (folder, recursive)
+        if key in self._folder_tag_cache:
             return
-        if folder in self._folder_scans_inflight:
+        if key in self._folder_scans_inflight:
             return
-        self._folder_scans_inflight.add(folder)
+        self._folder_scans_inflight.add(key)
 
         token = self._selection_token
         self.statusBar().showMessage("Scanning folder tags...")
-        worker = Worker(self.exif.scan_folder_tags, folder)
+        worker = Worker(self.exif.scan_folder_tags, folder, recursive)
 
         def _ok(tags: set[str]) -> None:
-            self._folder_tag_cache[folder] = tags
-            self._folder_scans_inflight.discard(folder)
+            self._folder_tag_cache[key] = tags
+            self._folder_scans_inflight.discard(key)
             if token == self._selection_token:
                 self.statusBar().showMessage("Ready")
                 self.refresh_known_tags()
 
         def _err(msg: str) -> None:
-            self._folder_tag_cache[folder] = set()
-            self._folder_scans_inflight.discard(folder)
+            self._folder_tag_cache[key] = set()
+            self._folder_scans_inflight.discard(key)
             if token == self._selection_token:
                 self.statusBar().showMessage("Ready")
 
@@ -778,9 +1112,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         keep_backup = self.keepBackup.isChecked()
 
-        def _work(paths: list[str]) -> tuple[int, dict[str, list[str]]]:
+        def _work(paths: list[str]) -> tuple[int, dict[str, KeywordState]]:
             changed = 0
-            merged_by_file: dict[str, list[str]] = {}
+            merged_by_file: dict[str, KeywordState] = {}
             for f in paths:
                 st = self.exif.read_keywords(f)
                 merged = st.merged
@@ -788,17 +1122,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 if st.mismatch:
                     self.exif.write_keywords([f], merged, keep_backup=keep_backup)
                     changed += 1
-                merged_by_file[f] = merged
+                merged_by_file[f] = KeywordState(merged, merged, st.date_original, st.date_create)
             return changed, merged_by_file
 
         token = self._selection_token
         worker = Worker(_work, files)
 
-        def _ok(res: tuple[int, dict[str, list[str]]]) -> None:
+        def _ok(res: tuple[int, dict[str, KeywordState]]) -> None:
             changed, merged_by_file = res
             if token == self._selection_token:
-                for f, merged in merged_by_file.items():
-                    self._keywords_cache[f] = KeywordState(merged, merged)
+                for f, st in merged_by_file.items():
+                    self._keywords_cache[f] = st
                 self.statusBar().showMessage(f"Resolved {changed} file(s)")
                 self.on_selection_changed()
 
@@ -811,6 +1145,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 if sel:
                     st = self._keywords_cache.get(sel[0])
                     self.resolveBtn.setEnabled(bool(st and st.mismatch))
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker)
+
+    def copy_exif_date_to_xmp(self) -> None:
+        files = self.selected_file_paths()
+        if not files:
+            self.statusBar().showMessage("No files selected")
+            return
+        self.statusBar().showMessage("Copying EXIF date → XMP...")
+        keep_backup = self.keepBackup.isChecked()
+
+        worker = Worker(self.exif.copy_exif_date_to_xmp, files, keep_backup)
+
+        def _ok(_: object) -> None:
+            self.statusBar().showMessage("Date copied to XMP")
+
+        def _err(msg: str) -> None:
+            self.statusBar().showMessage("Error")
+            self._show_error(msg)
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)

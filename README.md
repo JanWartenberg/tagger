@@ -4,12 +4,16 @@ Minimal GUI to view/add/remove photo keywords using `exiftool`.
 
 Features (MVP)
 - Drag and drop JPG/JPEG files (drop anywhere)
+- Add folder button (includes subfolders)
 - Image preview for selected file
+- Capture date display (EXIF DateTimeOriginal)
 - Shows keywords (reads both `IPTC:Keywords` and `XMP-dc:Subject`)
 - Writes keywords to both fields (keeps them in sync)
 - Shows a mismatch warning if IPTC and XMP differ
 - "Resolve" button to merge+sync both fields when they differ
 - "Known tags": recent (last 100) + tags found in the same folder
+- Recursive scan toggle for known tags (default OFF)
+- Filter: show only files with empty IPTC keywords
 
 Prerequisites
 - Windows
