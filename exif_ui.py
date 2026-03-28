@@ -69,6 +69,26 @@ def _legacy_recent_tags_path() -> Path:
     return Path(base) / LEGACY_APP_DIR_NAME / "recent_tags.json"
 
 
+def _config_path() -> Path:
+    return _app_data_dir() / "config.json"
+
+
+def load_config() -> dict:
+    p = _config_path()
+    if not p.exists():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_config(cfg: dict) -> None:
+    p = _config_path()
+    p.write_text(json.dumps(cfg, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
 def load_recent_tags() -> list[str]:
     p = _recent_tags_path()
     if not p.exists():
@@ -120,6 +140,8 @@ class KeywordState:
     xmp: list[str]
     date_original: str | None = None
     date_create: str | None = None
+    date_xmp_create: str | None = None
+    date_digitized: str | None = None
 
     @property
     def iptc_set(self) -> set[str]:
@@ -146,6 +168,10 @@ class KeywordState:
             return self.date_original
         if self.date_create:
             return self.date_create
+        if self.date_xmp_create:
+            return self.date_xmp_create
+        if self.date_digitized:
+            return self.date_digitized
         return ""
 
 
@@ -190,6 +216,11 @@ class ExifTool:
                 "-XMP-dc:Subject",
                 "-EXIF:DateTimeOriginal",
                 "-EXIF:CreateDate",
+                "-XMP:CreateDate",
+                "-XMP-xmp:CreateDate",
+                "-EXIF:DateTimeDigitized",
+                "-Composite:SubSecDateTimeOriginal",
+                "-Composite:SubSecCreateDate",
                 file_path,
             ]
         )
@@ -217,14 +248,59 @@ class ExifTool:
                     out2.append(x.strip())
             return out2
 
-        date_original = rec.get("EXIF:DateTimeOriginal")
-        date_create = rec.get("EXIF:CreateDate")
-        if not isinstance(date_original, str):
-            date_original = None
-        if not isinstance(date_create, str):
-            date_create = None
+        def _first_str(rec: dict, keys: list[str]) -> str | None:
+            for k in keys:
+                v = rec.get(k)
+                if isinstance(v, str) and v.strip():
+                    return v.strip()
+                if isinstance(v, list) and v:
+                    v0 = v[0]
+                    if isinstance(v0, str) and v0.strip():
+                        return v0.strip()
+            return None
 
-        return KeywordState(_clean(iptc), _clean(xmp), date_original, date_create)
+        date_original = _first_str(
+            rec,
+            [
+                "EXIF:DateTimeOriginal",
+                "DateTimeOriginal",
+                "Composite:SubSecDateTimeOriginal",
+                "SubSecDateTimeOriginal",
+            ],
+        )
+        date_create = _first_str(
+            rec,
+            [
+                "EXIF:CreateDate",
+                "CreateDate",
+                "Composite:SubSecCreateDate",
+                "SubSecCreateDate",
+            ],
+        )
+        date_xmp_create = _first_str(
+            rec,
+            [
+                "XMP-xmp:CreateDate",
+                "XMP:CreateDate",
+                "CreateDate",
+            ],
+        )
+        date_digitized = _first_str(
+            rec,
+            [
+                "EXIF:DateTimeDigitized",
+                "DateTimeDigitized",
+            ],
+        )
+
+        return KeywordState(
+            _clean(iptc),
+            _clean(xmp),
+            date_original,
+            date_create,
+            date_xmp_create,
+            date_digitized,
+        )
 
     def write_keywords(self, file_paths: list[str], keywords: list[str], keep_backup: bool) -> None:
         kws = dedupe_casefold([k.strip() for k in keywords if k.strip()])
@@ -390,6 +466,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_first_empty: set[str] = set()
         self._filter_switched = False
 
+        self._config = load_config()
+
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
@@ -406,11 +484,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.previewLabel = QtWidgets.QLabel("No preview")
         self.previewLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.previewLabel.setMinimumHeight(220)
+        self.previewLabel.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding
+        )
+        self.previewLabel.setContentsMargins(8, 8, 8, 8)
         self.previewLabel.setStyleSheet(
             "QLabel { background: palette(window); color: palette(text); "
             "border: 1px solid palette(mid); border-radius: 8px; }"
         )
         self._preview_token = 0
+        self._preview_image: QtGui.QImage | None = None
         self.mismatchLabel = QtWidgets.QLabel("")
         self.mismatchLabel.setStyleSheet("color: #b45309;")
         self.resolveBtn = QtWidgets.QPushButton("Resolve (sync both)")
@@ -472,31 +555,46 @@ class MainWindow(QtWidgets.QMainWindow):
             "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 6px; }"
         )
         imageLayout = QtWidgets.QVBoxLayout(self.imageBox)
-        imageLayout.addWidget(self.selectedLabel)
+
+        previewBox = QtWidgets.QWidget()
+        previewLayout = QtWidgets.QVBoxLayout(previewBox)
+        previewLayout.setContentsMargins(0, 0, 0, 0)
+        previewLayout.addWidget(self.selectedLabel)
         dateRowW = QtWidgets.QWidget()
         dateRow = QtWidgets.QHBoxLayout(dateRowW)
         dateRow.setContentsMargins(0, 0, 0, 0)
         dateRow.addWidget(self.dateLabel, 1)
         dateRow.addWidget(self.copyDateBtn)
-        imageLayout.addWidget(dateRowW)
-        imageLayout.addWidget(self.previewLabel)
+        previewLayout.addWidget(dateRowW)
+        previewLayout.addWidget(self.previewLabel, 1)
 
+        tagsBox = QtWidgets.QWidget()
+        tagsLayout = QtWidgets.QVBoxLayout(tagsBox)
+        tagsLayout.setContentsMargins(0, 0, 0, 0)
         mismatchRowW = QtWidgets.QWidget()
         mismatchRow = QtWidgets.QHBoxLayout(mismatchRowW)
         mismatchRow.setContentsMargins(0, 0, 0, 0)
         mismatchRow.addWidget(self.mismatchLabel, 1)
         mismatchRow.addWidget(self.resolveBtn)
-        imageLayout.addWidget(mismatchRowW)
+        tagsLayout.addWidget(mismatchRowW)
 
-        imageLayout.addWidget(QtWidgets.QLabel("Tags on image"))
-        imageLayout.addWidget(self.keywordsList, 1)
+        tagsLayout.addWidget(QtWidgets.QLabel("Tags on image"))
+        tagsLayout.addWidget(self.keywordsList, 1)
 
         addRow = QtWidgets.QHBoxLayout()
         addRow.addWidget(self.addEdit, 1)
         addRow.addWidget(self.addBtn)
-        imageLayout.addLayout(addRow)
-        imageLayout.addWidget(self.removeBtn)
-        imageLayout.addWidget(self.keepBackup)
+        tagsLayout.addLayout(addRow)
+        tagsLayout.addWidget(self.removeBtn)
+        tagsLayout.addWidget(self.keepBackup)
+
+        rightSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        rightSplitter.addWidget(previewBox)
+        rightSplitter.addWidget(tagsBox)
+        rightSplitter.setStretchFactor(0, 2)
+        rightSplitter.setStretchFactor(1, 1)
+        rightSplitter.setChildrenCollapsible(False)
+        imageLayout.addWidget(rightSplitter)
 
         # --- Left-bottom: repo panel (known tags) ---
         self.repoBox = QtWidgets.QGroupBox("Tag repo")
@@ -533,16 +631,23 @@ class MainWindow(QtWidgets.QMainWindow):
         leftSplitter.addWidget(self.repoBox)
         leftSplitter.setStretchFactor(0, 3)
         leftSplitter.setStretchFactor(1, 2)
+        leftSplitter.setChildrenCollapsible(False)
+        leftSplitter.setMinimumWidth(250)
 
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         splitter.addWidget(leftSplitter)
         splitter.addWidget(self.imageBox)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        splitter.setChildrenCollapsible(False)
+        leftSplitter.setMinimumWidth(250)
 
         self.setCentralWidget(splitter)
         self.statusBar().showMessage("Ready")
         self.resize(1100, 700)
+        splitter.setSizes([450, 650])
+
+        self._apply_focus_styles()
 
         # Make the whole window feel droppable (not only the file list).
         for w in [
@@ -566,11 +671,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Extra shortcuts (work regardless of focus)
         self._shortcuts: list[QtGui.QShortcut] = []
+        self._vim_g_pending: dict[int, int] = {}
+        self._last_left_pane: QtWidgets.QListWidget = self.files
         self._init_shortcuts()
 
     def _init_shortcuts(self) -> None:
         sc = QtGui.QShortcut(QtGui.QKeySequence("Backspace"), self)
         sc.activated.connect(self.remove_selected_keywords)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Escape"), self)
+        sc.activated.connect(self.close)
         self._shortcuts.append(sc)
 
         for seq in ("Ctrl+Return", "Ctrl+Enter"):
@@ -586,16 +697,77 @@ class MainWindow(QtWidgets.QMainWindow):
         sc.activated.connect(self.addEdit.setFocus)
         self._shortcuts.append(sc)
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Home"), self)
-        sc.activated.connect(lambda: self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().minimum()))
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, W"), self)
+        sc.activated.connect(self._focus_next_pane)
         self._shortcuts.append(sc)
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("End"), self)
-        sc.activated.connect(lambda: self.files.verticalScrollBar().setValue(self.files.verticalScrollBar().maximum()))
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, Ctrl+W"), self)
+        sc.activated.connect(self._focus_next_pane)
         self._shortcuts.append(sc)
+
+        for key, direction in (("Ctrl+W, H", "left"), ("Ctrl+W, L", "right")):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            sc.activated.connect(lambda d=direction: self._focus_pane_by_direction(d))
+            self._shortcuts.append(sc)
+
+        for key, direction in (("Ctrl+W, J", "down"), ("Ctrl+W, K", "up")):
+            sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            sc.activated.connect(lambda d=direction: self._focus_pane_by_direction(d))
+            self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("/"), self)
+        sc.activated.connect(self.knownFilter.setFocus)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("n"), self)
+        sc.activated.connect(lambda: self._move_list_selection(self.knownList, +1))
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("N"), self)
+        sc.activated.connect(lambda: self._move_list_selection(self.knownList, -1))
+        self._shortcuts.append(sc)
+
+        for lst in (self.files, self.keywordsList, self.knownList):
+            for key, delta in (("j", +1), ("k", -1)):
+                sc = QtGui.QShortcut(QtGui.QKeySequence(key), lst)
+                sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+                sc.activated.connect(lambda d=delta, w=lst: self._move_list_selection(w, d))
+                self._shortcuts.append(sc)
+
+            sc = QtGui.QShortcut(QtGui.QKeySequence("g"), lst)
+            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+            sc.activated.connect(lambda w=lst: self._vim_g(w))
+            self._shortcuts.append(sc)
+
+            sc = QtGui.QShortcut(QtGui.QKeySequence("G"), lst)
+            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+            sc.activated.connect(lambda w=lst: self._go_list_edge(w, to_end=True))
+            self._shortcuts.append(sc)
+
+            for key, to_end in (("Home", False), ("End", True)):
+                sc = QtGui.QShortcut(QtGui.QKeySequence(key), lst)
+                sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+                sc.activated.connect(lambda end=to_end, w=lst: self._go_list_edge(w, to_end=end))
+                self._shortcuts.append(sc)
+
+    def _apply_focus_styles(self) -> None:
+        list_qss = (
+            "QListWidget { border: 1px solid palette(mid); border-radius: 4px; }"
+            "QListWidget:focus { border: 1px solid #60a5fa; }"
+        )
+        edit_qss = (
+            "QLineEdit { border: 1px solid palette(mid); border-radius: 4px; }"
+            "QLineEdit:focus { border: 1px solid #60a5fa; }"
+        )
+        for lst in (self.files, self.keywordsList, self.knownList):
+            lst.setStyleSheet(list_qss)
+        for edit in (self.addEdit, self.knownFilter):
+            edit.setStyleSheet(edit_qss)
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         et = event.type()
+        if obj is self.previewLabel and et == QtCore.QEvent.Type.Resize:
+            self._update_preview_pixmap()
         if et in (
             QtCore.QEvent.Type.DragEnter,
             QtCore.QEvent.Type.DragMove,
@@ -612,7 +784,89 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.add_files(paths)
                     event.acceptProposedAction()
                     return True
+        if et == QtCore.QEvent.Type.FocusIn:
+            if obj in (self.files, self.knownList):
+                self._last_left_pane = obj
         return super().eventFilter(obj, event)
+
+    def _move_list_selection(self, lst: QtWidgets.QListWidget, delta: int) -> None:
+        if lst.count() == 0:
+            return
+        row = lst.currentRow()
+        if row < 0:
+            row = 0 if delta >= 0 else lst.count() - 1
+        else:
+            row = max(0, min(lst.count() - 1, row + delta))
+        lst.setCurrentRow(row)
+        lst.scrollToItem(lst.currentItem())
+
+    def _go_list_edge(self, lst: QtWidgets.QListWidget, to_end: bool) -> None:
+        if lst.count() == 0:
+            return
+        row = lst.count() - 1 if to_end else 0
+        lst.setCurrentRow(row)
+        lst.scrollToItem(lst.currentItem())
+
+    def _vim_g(self, lst: QtWidgets.QListWidget) -> None:
+        key = id(lst)
+        now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
+        last = self._vim_g_pending.get(key)
+        if last is not None and (now - last) <= 600:
+            self._vim_g_pending.pop(key, None)
+            self._go_list_edge(lst, to_end=False)
+            return
+        self._vim_g_pending[key] = now
+
+    def _focus_pane(self, pane: QtWidgets.QListWidget) -> None:
+        if pane.count() > 0 and pane.currentRow() < 0:
+            pane.setCurrentRow(0)
+        pane.setFocus()
+
+    def _focus_next_pane(self) -> None:
+        panes = [self.files, self.knownList, self.keywordsList]
+        focus = self.focusWidget()
+        current = None
+        for p in panes:
+            if focus is p:
+                current = p
+                break
+        if current is None:
+            self._focus_pane(panes[0])
+            return
+        idx = panes.index(current)
+        nxt = panes[(idx + 1) % len(panes)]
+        self._focus_pane(nxt)
+
+    def _focus_pane_by_direction(self, direction: str) -> None:
+        focus = self.focusWidget()
+        current = focus if focus in (self.files, self.knownList, self.keywordsList) else None
+        if current is None:
+            self._focus_pane(self.files)
+            return
+
+        if direction == "left":
+            if current is self.keywordsList:
+                self._focus_pane(self._last_left_pane or self.files)
+            return
+
+        if direction == "right":
+            if current in (self.files, self.knownList):
+                self._focus_pane(self.keywordsList)
+            return
+
+        if direction == "down":
+            if current is self.files:
+                self._focus_pane(self.knownList)
+            elif current is self.keywordsList:
+                self._focus_pane(self.knownList)
+            return
+
+        if direction == "up":
+            if current is self.knownList:
+                self._focus_pane(self.files)
+            elif current is self.keywordsList:
+                self._focus_pane(self.files)
+            return
 
     # Fallback handlers: some widgets won't forward drag events to the filter.
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
@@ -639,6 +893,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def add_files(self, paths: list[str]) -> None:
         seen = set(self.all_file_paths())
         added = 0
+        last_added_path = None
         for p in paths:
             p2 = normalize_path(p)
             if p2 in seen:
@@ -646,20 +901,68 @@ class MainWindow(QtWidgets.QMainWindow):
             self.files.addItem(p2)
             seen.add(p2)
             added += 1
+            last_added_path = p2
         self.statusBar().showMessage(f"Added {added} files")
         if added and not self.files.selectedItems():
             self.files.setCurrentRow(0)
         if self.onlyUntagged.isChecked():
             self.apply_iptc_filter_async()
+        if last_added_path:
+            self._set_last_folder(str(Path(last_added_path).parent))
 
     def add_folder_dialog(self) -> None:
-        folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
+        default_dir = self._get_default_folder_for_dialog()
+        if default_dir:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Choose folder", default_dir
+            )
+        else:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
         if not folder:
             return
         p = Path(folder)
         paths = [str(x) for x in p.rglob("*") if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS]
         if paths:
             self.add_files(paths)
+        self._set_last_folder(folder)
+        if self.files.count() > 0:
+            self.files.setFocus()
+            if self.files.currentRow() < 0:
+                self.files.setCurrentRow(0)
+
+    def _set_last_folder(self, folder: str) -> None:
+        try:
+            p = Path(folder).resolve()
+        except Exception:
+            p = Path(folder)
+        if not p.exists() or not p.is_dir():
+            return
+        self._config["last_folder"] = str(p)
+        save_config(self._config)
+
+    def _get_default_folder_for_dialog(self) -> str | None:
+        last_folder = self._config.get("last_folder")
+        if isinstance(last_folder, str) and last_folder:
+            try:
+                p = Path(last_folder)
+                if p.exists() and p.is_dir():
+                    return str(p)
+            except Exception:
+                pass
+
+        sel = self.selected_file_paths()
+        if sel:
+            try:
+                return str(Path(sel[0]).resolve().parent)
+            except Exception:
+                return str(Path(sel[0]).parent)
+
+        if self.files.count() > 0:
+            try:
+                return str(Path(self.files.item(0).text()).resolve().parent)
+            except Exception:
+                return str(Path(self.files.item(0).text()).parent)
+        return None
 
     def all_file_paths(self) -> list[str]:
         return [self.files.item(i).text() for i in range(self.files.count())]
@@ -725,17 +1028,11 @@ class MainWindow(QtWidgets.QMainWindow):
         token = self._preview_token
         self.previewLabel.setText("Loading preview...")
         self.previewLabel.setPixmap(QtGui.QPixmap())
-
-        target_w = max(320, self.previewLabel.width())
-        target_h = max(220, self.previewLabel.height())
+        self._preview_image = None
 
         def _work(p: str) -> QtGui.QImage:
             reader = QtGui.QImageReader(p)
             reader.setAutoTransform(True)
-            size = reader.size()
-            if size.isValid():
-                size.scale(target_w, target_h, QtCore.Qt.AspectRatioMode.KeepAspectRatio)
-                reader.setScaledSize(size)
             img = reader.read()
             if img.isNull():
                 raise RuntimeError("Failed to load image preview")
@@ -746,8 +1043,8 @@ class MainWindow(QtWidgets.QMainWindow):
         def _ok(img: QtGui.QImage) -> None:
             if token != self._preview_token:
                 return
-            pm = QtGui.QPixmap.fromImage(img)
-            self.previewLabel.setPixmap(pm)
+            self._preview_image = img
+            self._update_preview_pixmap()
             self.previewLabel.setText("")
 
         def _err(msg: str) -> None:
@@ -755,10 +1052,33 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.previewLabel.setText("No preview")
             self.previewLabel.setPixmap(QtGui.QPixmap())
+            self._preview_image = None
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
         self.pool.start(worker)
+
+    def _update_preview_pixmap(self) -> None:
+        if self._preview_image is None:
+            return
+        img = self._preview_image
+        max_w = max(1, self.previewLabel.width() - 16)
+        max_h = max(1, self.previewLabel.height() - 16)
+        if img.width() > max_w or img.height() > max_h:
+            scaled = img.scaled(
+                max_w,
+                max_h,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            )
+            pm = QtGui.QPixmap.fromImage(scaled)
+        else:
+            pm = QtGui.QPixmap.fromImage(img)
+        self.previewLabel.setPixmap(pm)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._update_preview_pixmap()
 
     def _render_keywords(self, st: KeywordState) -> None:
         self.keywordsList.clear()
