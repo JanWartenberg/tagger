@@ -4,6 +4,8 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from dataclasses import field
+from typing import Callable
 from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -177,6 +179,15 @@ class KeywordState:
 
 class ExifToolError(RuntimeError):
     pass
+
+
+@dataclass
+class Command:
+    name: str
+    callback: Callable[[list[str]], None]
+    description: str
+    shortcuts: list[str] = field(default_factory=list)
+    aliases: list[str] = field(default_factory=list)
 
 
 class ExifTool:
@@ -648,6 +659,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resize(1100, 700)
         splitter.setSizes([450, 650])
 
+        self.cmdLine = QtWidgets.QLineEdit()
+        self.cmdLine.setPlaceholderText(":")
+        self.cmdLine.setVisible(False)
+        self.cmdLine.returnPressed.connect(self._execute_command_line)
+        self.statusBar().addWidget(self.cmdLine, 1)
+
+        self._cmdHint = QtWidgets.QLabel(self)
+        self._cmdHint.setVisible(False)
+        self._cmdHint.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._cmdHint.setStyleSheet(
+            "QLabel { background: palette(window); border: 1px solid palette(mid); "
+            "border-radius: 4px; padding: 2px 6px; }"
+        )
+
         self._apply_focus_styles()
 
         # Make the whole window feel droppable (not only the file list).
@@ -663,6 +688,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.imageBox,
             self.previewLabel,
             self.keywordsList,
+            self.cmdLine,
         ]:
             if w is not None:
                 w.setAcceptDrops(True)
@@ -679,7 +705,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vim_visual_anchor = 0
         self._yanked_tags: list[str] = []
         self._last_left_pane: QtWidgets.QListWidget = self.files
+        self._commands: dict[str, Command] = {}
+        self._command_list: list[Command] = []
         self._init_shortcuts()
+        self._init_commands()
 
     def _init_shortcuts(self) -> None:
         sc = QtGui.QShortcut(QtGui.QKeySequence("Backspace"), self)
@@ -687,7 +716,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("Escape"), self)
-        sc.activated.connect(self.close)
+        sc.activated.connect(self._escape_action)
         self._shortcuts.append(sc)
 
         for seq in ("Ctrl+Return", "Ctrl+Enter"):
@@ -758,7 +787,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("i"), self.files)
         sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(self.addEdit.setFocus)
+        sc.activated.connect(self._focus_add_edit_select_all)
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("l"), self.files)
@@ -798,7 +827,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         for lst in (self.files, self.keywordsList, self.knownList):
             lst.setStyleSheet(list_qss)
-        for edit in (self.addEdit, self.knownFilter):
+        for edit in (self.addEdit, self.knownFilter, self.cmdLine):
             edit.setStyleSheet(edit_qss)
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
@@ -820,6 +849,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 if paths:
                     self.add_files(paths)
                     event.acceptProposedAction()
+                    return True
+        if et == QtCore.QEvent.Type.KeyPress:
+            key = getattr(event, "key", None)
+            if callable(key):
+                if event.text() == ":":
+                    fw = self.focusWidget()
+                    if not isinstance(fw, QtWidgets.QLineEdit):
+                        self._open_command_line()
+                        return True
+                if obj is self.cmdLine and event.key() == QtCore.Qt.Key.Key_Tab:
+                    self._tab_complete_command_line()
                     return True
         if et == QtCore.QEvent.Type.KeyPress and obj in (self.files, self.keywordsList, self.knownList):
             key = getattr(event, "key", None)
@@ -879,6 +919,310 @@ class MainWindow(QtWidgets.QMainWindow):
             self._go_list_edge(lst, to_end=False)
             return
         self._vim_g_pending[key] = now
+
+    def _escape_action(self) -> None:
+        if self.cmdLine.isVisible():
+            self._close_command_line()
+            return
+        fw = self.focusWidget()
+        if isinstance(fw, QtWidgets.QLineEdit):
+            fw.clearFocus()
+            self.setFocus()
+            return
+
+    def _open_command_line(self) -> None:
+        self.cmdLine.setVisible(True)
+        self.cmdLine.setText(":")
+        self.cmdLine.setCursorPosition(1)
+        self.cmdLine.setFocus()
+        self._hide_cmd_matches()
+
+    def _close_command_line(self) -> None:
+        self.cmdLine.setVisible(False)
+        self.cmdLine.clear()
+        self._hide_cmd_matches()
+        self.setFocus()
+
+    def _execute_command_line(self) -> None:
+        raw = (self.cmdLine.text() or "").strip()
+        self._close_command_line()
+        if not raw:
+            return
+        if raw.startswith(":"):
+            raw = raw[1:].strip()
+        if not raw:
+            return
+        parts = raw.split()
+        name = parts[0].casefold()
+        args = parts[1:]
+        self._run_command(name, args)
+
+    def _tab_complete_command_line(self) -> None:
+        raw = self.cmdLine.text() or ""
+        if not raw.startswith(":"):
+            return
+        prefix = raw[1:].strip().casefold()
+        if not prefix:
+            return
+        matches = self._command_candidates(prefix)
+        if not matches:
+            self.statusBar().showMessage("No command match")
+            self._hide_cmd_matches()
+            return
+        common = self._common_prefix(matches)
+        if common and common != prefix:
+            self.cmdLine.setText(f":{common}")
+            self.cmdLine.setCursorPosition(len(self.cmdLine.text()))
+        if len(matches) == 1:
+            self.cmdLine.setText(f":{matches[0]} ")
+            self.cmdLine.setCursorPosition(len(self.cmdLine.text()))
+            self._hide_cmd_matches()
+            return
+        self._show_cmd_matches(", ".join(matches))
+
+    def _command_candidates(self, prefix: str) -> list[str]:
+        names = {cmd.name for cmd in self._command_list}
+        for cmd in self._command_list:
+            names.update(cmd.aliases)
+        out = [n for n in names if n.startswith(prefix)]
+        out.sort()
+        return out
+
+    def _common_prefix(self, items: list[str]) -> str:
+        if not items:
+            return ""
+        pref = items[0]
+        for s in items[1:]:
+            i = 0
+            lim = min(len(pref), len(s))
+            while i < lim and pref[i] == s[i]:
+                i += 1
+            pref = pref[:i]
+            if not pref:
+                break
+        return pref
+
+    def _show_cmd_matches(self, text: str) -> None:
+        self._cmdHint.setText(text)
+        self._cmdHint.setVisible(True)
+        self._position_cmd_hint()
+
+    def _hide_cmd_matches(self) -> None:
+        self._cmdHint.setVisible(False)
+
+    def _position_cmd_hint(self) -> None:
+        if not self._cmdHint.isVisible():
+            return
+        sb = self.statusBar()
+        if sb is None:
+            return
+        sb_geo = sb.geometry()
+        margin = 6
+        height = self._cmdHint.sizeHint().height() + 4
+        width = sb_geo.width() - margin * 2
+        x = sb_geo.x() + margin
+        y = sb_geo.y() - height - 4
+        self._cmdHint.setGeometry(x, y, max(10, width), height)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self._position_cmd_hint()
+
+    def _register_command(
+        self,
+        name: str,
+        callback,
+        description: str,
+        shortcuts: list[str] | None = None,
+        aliases: list[str] | None = None,
+    ) -> None:
+        cmd = Command(
+            name=name,
+            callback=callback,
+            description=description,
+            shortcuts=shortcuts or [],
+            aliases=aliases or [],
+        )
+        self._commands[name] = cmd
+        for a in cmd.aliases:
+            self._commands[a] = cmd
+        self._command_list.append(cmd)
+
+    def _run_command(self, name: str, args: list[str]) -> None:
+        cmd = self._commands.get(name)
+        if cmd is None:
+            self.statusBar().showMessage(f"Unknown command: {name}")
+            return
+        try:
+            cmd.callback(args)
+        except Exception as e:
+            self._show_error(str(e))
+
+    def _init_commands(self) -> None:
+        self._register_command(
+            "listcommands",
+            self._cmd_list_commands,
+            "List all commands",
+            shortcuts=[":listcommands", ":ls"],
+            aliases=["ls"],
+        )
+        self._register_command(
+            "quit",
+            self._cmd_quit,
+            "Quit the app",
+            shortcuts=[":quit", ":q"],
+            aliases=["q"],
+        )
+        self._register_command(
+            "addfolder",
+            lambda _a: self.add_folder_dialog(),
+            "Add files from a folder",
+            shortcuts=["Ctrl+O"],
+        )
+        self._register_command(
+            "refresh",
+            lambda _a: self.force_refresh_known_tags(),
+            "Refresh known tags",
+            shortcuts=["F5"],
+        )
+        self._register_command(
+            "resolve",
+            lambda _a: self.resolve_mismatch(),
+            "Resolve IPTC/XMP mismatch",
+            shortcuts=["Ctrl+R"],
+        )
+        self._register_command(
+            "addtag",
+            lambda _a: self.add_keyword_from_input(),
+            "Add tag from input",
+            shortcuts=["Ctrl+Enter", "Ctrl+Return"],
+        )
+        self._register_command(
+            "removetags",
+            lambda _a: self.remove_selected_keywords(),
+            "Remove selected tags",
+            shortcuts=["Backspace", "Del"],
+        )
+        self._register_command(
+            "focusfilter",
+            lambda _a: self._focus_known_filter_select_all(),
+            "Focus known-tag filter",
+            shortcuts=["Ctrl+F", "/"],
+        )
+        self._register_command(
+            "focusadd",
+            lambda _a: self._focus_add_edit_select_all(),
+            "Focus add-keyword input",
+            shortcuts=["Ctrl+L", "i"],
+        )
+        self._register_command(
+            "panenext",
+            lambda _a: self._focus_next_pane(),
+            "Focus next pane",
+            shortcuts=["Ctrl+W W", "Ctrl+W Ctrl+W"],
+        )
+        self._register_command(
+            "paneleft",
+            lambda _a: self._focus_pane_by_direction("left"),
+            "Focus left pane",
+            shortcuts=["Ctrl+W H", "h"],
+        )
+        self._register_command(
+            "paneright",
+            lambda _a: self._focus_pane_by_direction("right"),
+            "Focus right pane",
+            shortcuts=["Ctrl+W L", "l"],
+        )
+        self._register_command(
+            "panedown",
+            lambda _a: self._focus_pane_by_direction("down"),
+            "Focus lower pane",
+            shortcuts=["Ctrl+W J"],
+        )
+        self._register_command(
+            "paneup",
+            lambda _a: self._focus_pane_by_direction("up"),
+            "Focus upper pane",
+            shortcuts=["Ctrl+W K"],
+        )
+        self._register_command(
+            "listdown",
+            lambda _a: self._move_list_selection(self._current_list_widget(), +1),
+            "Move selection down",
+            shortcuts=["j", "Down"],
+        )
+        self._register_command(
+            "listup",
+            lambda _a: self._move_list_selection(self._current_list_widget(), -1),
+            "Move selection up",
+            shortcuts=["k", "Up"],
+        )
+        self._register_command(
+            "listtop",
+            lambda _a: self._go_list_edge(self._current_list_widget(), to_end=False),
+            "Jump to top of list",
+            shortcuts=["gg", "Home"],
+        )
+        self._register_command(
+            "listbottom",
+            lambda _a: self._go_list_edge(self._current_list_widget(), to_end=True),
+            "Jump to bottom of list",
+            shortcuts=["G", "End"],
+        )
+        self._register_command(
+            "knownnext",
+            lambda _a: self._move_list_selection(self.knownList, +1),
+            "Next known-tag match",
+            shortcuts=["n"],
+        )
+        self._register_command(
+            "knownprev",
+            lambda _a: self._move_list_selection(self.knownList, -1),
+            "Previous known-tag match",
+            shortcuts=["N"],
+        )
+        self._register_command(
+            "visual",
+            lambda _a: self._toggle_visual_keywords(),
+            "Toggle visual tag selection",
+            shortcuts=["Shift+V"],
+        )
+        self._register_command(
+            "yank",
+            lambda _a: self._yank_selected_tags(),
+            "Yank selected tags",
+            shortcuts=["Ctrl+C", "Space+y"],
+        )
+        self._register_command(
+            "paste",
+            lambda _a: self._paste_yanked_tags(),
+            "Paste yanked tags",
+            shortcuts=["Ctrl+V", "Space+p"],
+        )
+        self._register_command(
+            "escape",
+            lambda _a: self._escape_action(),
+            "Reset focus / close command line",
+            shortcuts=["Esc"],
+        )
+
+    def _cmd_list_commands(self, _args: list[str]) -> None:
+        lines: list[str] = []
+        for cmd in sorted(self._command_list, key=lambda c: c.name):
+            alias = f" (aliases: {', '.join(cmd.aliases)})" if cmd.aliases else ""
+            shorts = f" [{', '.join(cmd.shortcuts)}]" if cmd.shortcuts else ""
+            lines.append(f"{cmd.name}{alias} — {cmd.description}{shorts}")
+        text = "\n".join(lines) if lines else "(no commands)"
+        QtWidgets.QMessageBox.information(self, "Commands", text)
+
+    def _cmd_quit(self, _args: list[str]) -> None:
+        self.close()
+
+    def _current_list_widget(self) -> QtWidgets.QListWidget:
+        fw = self.focusWidget()
+        if fw in (self.files, self.keywordsList, self.knownList):
+            return fw
+        return self.files
 
     def _toggle_visual_keywords(self) -> None:
         if self.keywordsList.count() == 0:
