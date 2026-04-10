@@ -15,6 +15,14 @@ Features (MVP)
 - Recursive scan toggle for known tags (default OFF)
 - Filter: show only files with empty IPTC keywords
 
+Commands & shortcuts
+- Command line: press `:` to open, `:ls` to list commands, `:q`/`:quit` to quit, `Tab` to complete
+- `Esc` closes command line / exits text fields
+- Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus, `i` focuses Add Keyword
+- Known tag filter: `/` or `Ctrl+F` focuses and selects text, `n/N` move in matches
+- Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
+- Tags: `Shift+V` visual select, `Ctrl+C` yank, `Ctrl+V` paste (current file)
+
 Prerequisites
 - Windows
 - `exiftool` installed and available on PATH (running `exiftool -ver` must work)

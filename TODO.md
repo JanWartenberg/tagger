@@ -21,3 +21,5 @@
 
 ## Done
 - Workflow hinterfragen -> mehr/bessere Keyboard shortcuts?
+- Neovim-style commands
+- Neovim-style keybinds
