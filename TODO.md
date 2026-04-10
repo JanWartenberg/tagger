@@ -1,12 +1,13 @@
 # Offene Themen
 
 ## Feature
+- Tag - Zeichenlimit
+    - hinterfragen, welches Maximum wirklich technisch vorliegt, dann umsetzen
 - Rückwärtssuche nach Tags
     - sprich: Tag(s) eingeben und Fotos danach filtern
     - evtl. Bedarf das eines eigenen Tabs
 - Tagvorschläge
     -i.e. Bild an KI senden zur Analyse + Vorschlag von Tags
-- Workflow hinterfragen -> mehr/bessere Keyboard shortcuts?
 - Mehrere Fotos gleichzeitig taggen (Mehrfachauswahl + Tag hinzufügen -- Hinterfragen, was passabler Workflow/UI wäre)
 
 ## Doing
@@ -18,4 +19,5 @@
   - didaktische Details (schlechtes Foto, aber Merkmal sichtbar)
   - Rätselfotos
 
-
+## Done
+- Workflow hinterfragen -> mehr/bessere Keyboard shortcuts?

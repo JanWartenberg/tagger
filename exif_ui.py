@@ -523,6 +523,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownFilter = QtWidgets.QLineEdit()
         self.knownFilter.setPlaceholderText("Filter known tags...")
         self.knownFilter.textChanged.connect(self.refresh_known_tags)
+        self.knownFilter.returnPressed.connect(self._focus_first_known_tag)
         self.knownRefreshBtn = QtWidgets.QPushButton("Refresh")
         self.knownRefreshBtn.setFixedWidth(80)
         self.knownRefreshBtn.clicked.connect(self.force_refresh_known_tags)
@@ -672,6 +673,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # Extra shortcuts (work regardless of focus)
         self._shortcuts: list[QtGui.QShortcut] = []
         self._vim_g_pending: dict[int, int] = {}
+        self._vim_space_pending: int | None = None
+        self._vim_space_target: QtWidgets.QWidget | None = None
+        self._vim_visual_keywords = False
+        self._vim_visual_anchor = 0
+        self._yanked_tags: list[str] = []
         self._last_left_pane: QtWidgets.QListWidget = self.files
         self._init_shortcuts()
 
@@ -690,11 +696,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
-        sc.activated.connect(self.knownFilter.setFocus)
+        sc.activated.connect(self._focus_known_filter_select_all)
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+L"), self)
-        sc.activated.connect(self.addEdit.setFocus)
+        sc.activated.connect(self._focus_add_edit_select_all)
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, W"), self)
@@ -716,7 +722,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("/"), self)
-        sc.activated.connect(self.knownFilter.setFocus)
+        sc.activated.connect(self._focus_known_filter_select_all)
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("n"), self)
@@ -749,6 +755,37 @@ class MainWindow(QtWidgets.QMainWindow):
                 sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
                 sc.activated.connect(lambda end=to_end, w=lst: self._go_list_edge(w, to_end=end))
                 self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("i"), self.files)
+        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        sc.activated.connect(self.addEdit.setFocus)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("l"), self.files)
+        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        sc.activated.connect(lambda: self._focus_pane(self.keywordsList))
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("h"), self.keywordsList)
+        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        sc.activated.connect(lambda: self._focus_pane(self._last_left_pane or self.files))
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Shift+V"), self.keywordsList)
+        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        sc.activated.connect(self._toggle_visual_keywords)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+C"), self.keywordsList)
+        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+        sc.activated.connect(self._yank_selected_tags)
+        self._shortcuts.append(sc)
+
+        for lst in (self.files, self.keywordsList):
+            sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+V"), lst)
+            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
+            sc.activated.connect(self._paste_yanked_tags)
+            self._shortcuts.append(sc)
 
     def _apply_focus_styles(self) -> None:
         list_qss = (
@@ -784,6 +821,28 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.add_files(paths)
                     event.acceptProposedAction()
                     return True
+        if et == QtCore.QEvent.Type.KeyPress and obj in (self.files, self.keywordsList, self.knownList):
+            key = getattr(event, "key", None)
+            if callable(key):
+                k = event.key()
+                now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
+                if k == QtCore.Qt.Key.Key_Space:
+                    self._vim_space_pending = now
+                    self._vim_space_target = obj
+                    return True
+                if k in (QtCore.Qt.Key.Key_Y, QtCore.Qt.Key.Key_P):
+                    if self._vim_space_pending is not None and (now - self._vim_space_pending) <= 600:
+                        self._vim_space_pending = None
+                        self._vim_space_target = None
+                        if k == QtCore.Qt.Key.Key_Y and obj is self.keywordsList:
+                            self._yank_selected_tags()
+                            return True
+                        if k == QtCore.Qt.Key.Key_P and obj in (self.files, self.keywordsList):
+                            self._paste_yanked_tags()
+                            return True
+                if self._vim_space_pending is not None and (now - self._vim_space_pending) > 600:
+                    self._vim_space_pending = None
+                    self._vim_space_target = None
         if et == QtCore.QEvent.Type.FocusIn:
             if obj in (self.files, self.knownList):
                 self._last_left_pane = obj
@@ -797,7 +856,11 @@ class MainWindow(QtWidgets.QMainWindow):
             row = 0 if delta >= 0 else lst.count() - 1
         else:
             row = max(0, min(lst.count() - 1, row + delta))
-        lst.setCurrentRow(row)
+        if lst is self.keywordsList and self._vim_visual_keywords:
+            self._select_list_range(lst, self._vim_visual_anchor, row)
+            lst.setCurrentRow(row)
+        else:
+            lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
 
     def _go_list_edge(self, lst: QtWidgets.QListWidget, to_end: bool) -> None:
@@ -816,6 +879,60 @@ class MainWindow(QtWidgets.QMainWindow):
             self._go_list_edge(lst, to_end=False)
             return
         self._vim_g_pending[key] = now
+
+    def _toggle_visual_keywords(self) -> None:
+        if self.keywordsList.count() == 0:
+            return
+        self._vim_visual_keywords = not self._vim_visual_keywords
+        if self.keywordsList.currentRow() < 0:
+            self.keywordsList.setCurrentRow(0)
+        self._vim_visual_anchor = self.keywordsList.currentRow()
+        if self._vim_visual_keywords:
+            self._select_list_range(self.keywordsList, self._vim_visual_anchor, self._vim_visual_anchor)
+
+    def _select_list_range(self, lst: QtWidgets.QListWidget, start: int, end: int) -> None:
+        a = max(0, min(start, end))
+        b = min(lst.count() - 1, max(start, end))
+        lst.blockSignals(True)
+        try:
+            lst.clearSelection()
+            for i in range(a, b + 1):
+                it = lst.item(i)
+                if it is not None:
+                    it.setSelected(True)
+        finally:
+            lst.blockSignals(False)
+
+    def _yank_selected_tags(self) -> None:
+        items = self.keywordsList.selectedItems()
+        tags = [it.text().strip() for it in items if it is not None and it.text().strip()]
+        tags = dedupe_casefold(tags)
+        if not tags:
+            self.statusBar().showMessage("No tags selected")
+            return
+        self._yanked_tags = tags
+        self.statusBar().showMessage(f"Yanked {len(tags)} tag(s)")
+
+    def _paste_yanked_tags(self) -> None:
+        if not self._yanked_tags:
+            self.statusBar().showMessage("Yank tags first")
+            return
+        files = self.selected_file_paths()
+        if not files:
+            self.statusBar().showMessage("No files selected")
+            return
+        target = files[0]
+        try:
+            st = self._ensure_loaded(target)
+            merged = dedupe_casefold(st.merged + self._yanked_tags)
+            merged.sort(key=lambda s: s.casefold())
+            self.exif.write_keywords([target], merged, keep_backup=self.keepBackup.isChecked())
+            self._keywords_cache[target] = KeywordState(merged, merged, st.date_original, st.date_create)
+            self._refresh_current_keywords_view_from_cache()
+            self._apply_filter_visibility_changes({target: len(merged) == 0})
+            self.statusBar().showMessage(f"Pasted {len(self._yanked_tags)} tag(s)")
+        except ExifToolError as e:
+            self._show_error(str(e))
 
     def _focus_pane(self, pane: QtWidgets.QListWidget) -> None:
         if pane.count() > 0 and pane.currentRow() < 0:
@@ -838,6 +955,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._focus_pane(nxt)
 
     def _focus_pane_by_direction(self, direction: str) -> None:
+        # NOTE: If pane layout grows more complex, revisit shortcut coherence.
         focus = self.focusWidget()
         current = focus if focus in (self.files, self.knownList, self.keywordsList) else None
         if current is None:
@@ -1388,6 +1506,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownList.clear()
         for t in combined:
             self.knownList.addItem(t)
+
+    def _focus_first_known_tag(self) -> None:
+        if self.knownList.count() == 0:
+            return
+        self.knownList.setCurrentRow(0)
+        self.knownList.setFocus()
+
+    def _focus_known_filter_select_all(self) -> None:
+        self.knownFilter.setFocus()
+        self.knownFilter.selectAll()
+
+    def _focus_add_edit_select_all(self) -> None:
+        self.addEdit.setFocus()
+        self.addEdit.selectAll()
 
     def _ensure_folder_scan(self, folder: str, recursive: bool) -> None:
         key = (folder, recursive)
