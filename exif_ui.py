@@ -87,6 +87,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
+        self.files.setToolTip("Focus: f / Ctrl+W H · Navigate: j/k, gg/G")
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -120,26 +121,29 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.keywordsList = QtWidgets.QListWidget()
         self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.keywordsList.setToolTip("Focus: l / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V")
 
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
         self.addEdit.returnPressed.connect(self.add_keyword_from_input)
+        self.addEdit.setToolTip("Insert: i · Add: Ctrl+Enter")
         self.addBtn = QtWidgets.QPushButton("Add")
         self.addBtn.clicked.connect(self.add_keyword_from_input)
         self.addBtn.setToolTip("Add keyword to selected file(s) (Ctrl+Enter)")
         self.removeBtn = QtWidgets.QPushButton("Remove selected")
         self.removeBtn.clicked.connect(self.remove_selected_keywords)
-        self.removeBtn.setToolTip("Remove selected tags from image (Del)")
+        self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace)")
         self.removeBtn.setShortcut(QtGui.QKeySequence("Del"))
 
         self.keepBackup = QtWidgets.QCheckBox("Keep *_original backups (exiftool default)")
         self.keepBackup.setChecked(True)
-        self.keepBackup.setToolTip("If enabled, exiftool keeps *_original backups")
+        self.keepBackup.setToolTip("If enabled, exiftool keeps *_original backups (Ctrl+Shift+B)")
 
         self.knownFilter = QtWidgets.QLineEdit()
         self.knownFilter.setPlaceholderText("Filter known tags...")
         self.knownFilter.textChanged.connect(self.refresh_known_tags)
         self.knownFilter.returnPressed.connect(self._focus_first_known_tag)
+        self.knownFilter.setToolTip("Focus: / or Ctrl+F")
         self.knownRefreshBtn = QtWidgets.QPushButton("Refresh")
         self.knownRefreshBtn.setFixedWidth(80)
         self.knownRefreshBtn.clicked.connect(self.force_refresh_known_tags)
@@ -148,6 +152,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownList = QtWidgets.QListWidget()
         self.knownList.itemActivated.connect(self.add_keyword_from_known)
         self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
+        self.knownList.setToolTip("Focus: t / Ctrl+W J · Navigate: j/k, n/N")
 
         self.recursiveScan = QtWidgets.QCheckBox("Recursive scan")
         self.recursiveScan.setToolTip("Include subfolders when building tag repo")
@@ -155,7 +160,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recursiveScan.toggled.connect(self.force_refresh_known_tags)
 
         self.onlyUntagged = QtWidgets.QCheckBox("Only IPTC-empty")
-        self.onlyUntagged.setToolTip("Show only files without IPTC keywords")
+        self.onlyUntagged.setToolTip("Show only files without IPTC keywords (Ctrl+Shift+E)")
         self.onlyUntagged.toggled.connect(self.apply_iptc_filter_async)
         self.filterInfoLabel = QtWidgets.QLabel("")
         self.filterInfoLabel.setToolTip("Filter result count")
@@ -201,8 +206,8 @@ class MainWindow(QtWidgets.QMainWindow):
         addRow = QtWidgets.QHBoxLayout()
         addRow.addWidget(self.addEdit, 1)
         addRow.addWidget(self.addBtn)
+        addRow.addWidget(self.removeBtn)
         tagsLayout.addLayout(addRow)
-        tagsLayout.addWidget(self.removeBtn)
         tagsLayout.addWidget(self.keepBackup)
 
         rightSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -278,6 +283,14 @@ class MainWindow(QtWidgets.QMainWindow):
             "border-radius: 4px; padding: 2px 6px; }"
         )
 
+        self._tagHint = QtWidgets.QLabel(self)
+        self._tagHint.setVisible(False)
+        self._tagHint.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._tagHint.setStyleSheet(
+            "QLabel { background: palette(window); border: 1px solid palette(mid); "
+            "border-radius: 4px; padding: 2px 6px; }"
+        )
+
         self._apply_focus_styles()
 
         # Make the whole window feel droppable (not only the file list).
@@ -287,12 +300,16 @@ class MainWindow(QtWidgets.QMainWindow):
             splitter,
             leftSplitter,
             self.files,
+            self.files.viewport(),
             filesPanel,
             self.repoBox,
             self.knownList,
+            self.knownList.viewport(),
             self.imageBox,
             self.previewLabel,
             self.keywordsList,
+            self.keywordsList.viewport(),
+            self.addEdit,
             self.cmdLine,
         ]:
             if w is not None:
@@ -337,6 +354,14 @@ class MainWindow(QtWidgets.QMainWindow):
         sc.activated.connect(self._focus_add_edit_select_all)
         self._shortcuts.append(sc)
 
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+B"), self)
+        sc.activated.connect(self._toggle_keep_backup)
+        self._shortcuts.append(sc)
+
+        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+E"), self)
+        sc.activated.connect(self._toggle_only_iptc_empty)
+        self._shortcuts.append(sc)
+
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, W"), self)
         sc.activated.connect(self._focus_next_pane)
         self._shortcuts.append(sc)
@@ -344,6 +369,8 @@ class MainWindow(QtWidgets.QMainWindow):
         sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, Ctrl+W"), self)
         sc.activated.connect(self._focus_next_pane)
         self._shortcuts.append(sc)
+
+
 
         for key, direction in (("Ctrl+W, H", "left"), ("Ctrl+W, L", "right")):
             sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
@@ -365,34 +392,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("N"), self)
         sc.activated.connect(lambda: self._move_list_selection(self.knownList, -1))
-        self._shortcuts.append(sc)
-
-        for lst in (self.files, self.keywordsList, self.knownList):
-            for key, delta in (("j", +1), ("k", -1)):
-                sc = QtGui.QShortcut(QtGui.QKeySequence(key), lst)
-                sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-                sc.activated.connect(lambda d=delta, w=lst: self._move_list_selection(w, d))
-                self._shortcuts.append(sc)
-
-            sc = QtGui.QShortcut(QtGui.QKeySequence("g"), lst)
-            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-            sc.activated.connect(lambda w=lst: self._vim_g(w))
-            self._shortcuts.append(sc)
-
-            sc = QtGui.QShortcut(QtGui.QKeySequence("G"), lst)
-            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-            sc.activated.connect(lambda w=lst: self._go_list_edge(w, to_end=True))
-            self._shortcuts.append(sc)
-
-            for key, to_end in (("Home", False), ("End", True)):
-                sc = QtGui.QShortcut(QtGui.QKeySequence(key), lst)
-                sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-                sc.activated.connect(lambda end=to_end, w=lst: self._go_list_edge(w, to_end=end))
-                self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("i"), self.files)
-        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(self._focus_add_edit_select_all)
         self._shortcuts.append(sc)
 
         sc = QtGui.QShortcut(QtGui.QKeySequence("l"), self.files)
@@ -455,9 +454,51 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.add_files(paths)
                     event.acceptProposedAction()
                     return True
+        if et == QtCore.QEvent.Type.ShortcutOverride:
+            if not isinstance(self.focusWidget(), QtWidgets.QLineEdit):
+                if self._mods_ok(event.modifiers()):
+                    if event.key() in (
+                        QtCore.Qt.Key.Key_I,
+                        QtCore.Qt.Key.Key_T,
+                        QtCore.Qt.Key.Key_F,
+                        QtCore.Qt.Key.Key_G,
+                        QtCore.Qt.Key.Key_J,
+                        QtCore.Qt.Key.Key_K,
+                    ):
+                        event.accept()
+                        return True
         if et == QtCore.QEvent.Type.KeyPress:
             key = getattr(event, "key", None)
             if callable(key):
+                if isinstance(self.focusWidget(), QtWidgets.QLineEdit):
+                    pass
+                else:
+                    k = event.key()
+                    if self._mods_ok(event.modifiers()):
+                        if k == QtCore.Qt.Key.Key_I:
+                            self._focus_add_edit_select_all()
+                            return True
+                        if k == QtCore.Qt.Key.Key_T:
+                            self._focus_pane(self.knownList)
+                            return True
+                        if k == QtCore.Qt.Key.Key_F:
+                            self._focus_pane(self.files)
+                            return True
+
+                        lst = self._list_from_obj(obj) or self._list_from_obj(self.focusWidget())
+                        if lst is not None:
+                            if k == QtCore.Qt.Key.Key_G:
+                                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+                                    self._go_list_edge(lst, to_end=True)
+                                else:
+                                    self._vim_g(lst)
+                                return True
+                            if k == QtCore.Qt.Key.Key_J:
+                                self._move_list_selection(lst, +1)
+                                return True
+                            if k == QtCore.Qt.Key.Key_K:
+                                self._move_list_selection(lst, -1)
+                                return True
                 if event.text() == ":":
                     fw = self.focusWidget()
                     if not isinstance(fw, QtWidgets.QLineEdit):
@@ -465,6 +506,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         return True
                 if obj is self.cmdLine and event.key() == QtCore.Qt.Key.Key_Tab:
                     self._tab_complete_command_line()
+                    return True
+                if obj is self.addEdit and event.key() == QtCore.Qt.Key.Key_Tab:
+                    self._tab_complete_add_edit()
                     return True
         if et == QtCore.QEvent.Type.KeyPress and obj in (self.files, self.keywordsList, self.knownList):
             key = getattr(event, "key", None)
@@ -493,14 +537,31 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._last_left_pane = obj
         return super().eventFilter(obj, event)
 
+    def _list_from_obj(self, obj: QtCore.QObject) -> QtWidgets.QListWidget | None:
+        cur = obj
+        while cur is not None:
+            if cur in (self.files, self.knownList, self.keywordsList):
+                return cur
+            try:
+                cur = cur.parent()
+            except Exception:
+                break
+        return None
+
+    def _mods_ok(self, mods: QtCore.Qt.KeyboardModifier) -> bool:
+        allowed = QtCore.Qt.KeyboardModifier.ShiftModifier
+        return (mods & ~allowed) == QtCore.Qt.KeyboardModifier.NoModifier
+
     def _move_list_selection(self, lst: QtWidgets.QListWidget, delta: int) -> None:
         if lst.count() == 0:
             return
         row = lst.currentRow()
         if row < 0:
-            row = 0 if delta >= 0 else lst.count() - 1
+            row = self._first_visible_row(lst) if delta >= 0 else self._last_visible_row(lst)
         else:
-            row = max(0, min(lst.count() - 1, row + delta))
+            row = self._next_visible_row(lst, row, delta)
+        if row is None:
+            return
         if lst is self.keywordsList and self._vim_visual_keywords:
             self._select_list_range(lst, self._vim_visual_anchor, row)
             lst.setCurrentRow(row)
@@ -511,9 +572,37 @@ class MainWindow(QtWidgets.QMainWindow):
     def _go_list_edge(self, lst: QtWidgets.QListWidget, to_end: bool) -> None:
         if lst.count() == 0:
             return
-        row = lst.count() - 1 if to_end else 0
+        row = self._last_visible_row(lst) if to_end else self._first_visible_row(lst)
+        if row is None:
+            return
         lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
+
+    def _first_visible_row(self, lst: QtWidgets.QListWidget) -> int | None:
+        for i in range(lst.count()):
+            it = lst.item(i)
+            if it is not None and not it.isHidden():
+                return i
+        return None
+
+    def _last_visible_row(self, lst: QtWidgets.QListWidget) -> int | None:
+        for i in range(lst.count() - 1, -1, -1):
+            it = lst.item(i)
+            if it is not None and not it.isHidden():
+                return i
+        return None
+
+    def _next_visible_row(self, lst: QtWidgets.QListWidget, start: int, delta: int) -> int | None:
+        if delta == 0:
+            return start
+        step = 1 if delta > 0 else -1
+        i = start + step
+        while 0 <= i < lst.count():
+            it = lst.item(i)
+            if it is not None and not it.isHidden():
+                return i
+            i += step
+        return start
 
     def _vim_g(self, lst: QtWidgets.QListWidget) -> None:
         key = id(lst)
@@ -585,6 +674,26 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._show_cmd_matches(", ".join(matches))
 
+    def _tab_complete_add_edit(self) -> None:
+        raw = (self.addEdit.text() or "").strip()
+        if not raw:
+            return
+        matches = self._tag_candidates(raw)
+        if not matches:
+            self.statusBar().showMessage("No tag match")
+            self._hide_tag_matches()
+            return
+        common = self._common_prefix(matches)
+        if common and common.casefold() != raw.casefold():
+            self.addEdit.setText(common)
+            self.addEdit.setCursorPosition(len(common))
+        if len(matches) == 1:
+            self.addEdit.setText(matches[0])
+            self.addEdit.setCursorPosition(len(matches[0]))
+            self._hide_tag_matches()
+            return
+        self._show_tag_matches(", ".join(matches))
+
     def _command_candidates(self, prefix: str) -> list[str]:
         names = {cmd.name for cmd in self._command_list}
         for cmd in self._command_list:
@@ -592,6 +701,22 @@ class MainWindow(QtWidgets.QMainWindow):
         out = [n for n in names if n.startswith(prefix)]
         out.sort()
         return out
+
+    def _tag_candidates(self, prefix: str) -> list[str]:
+        prefix_cf = prefix.casefold()
+        names: list[str] = []
+        for i in range(self.knownList.count()):
+            it = self.knownList.item(i)
+            if it is None:
+                continue
+            txt = (it.text() or "").strip()
+            if not txt:
+                continue
+            if txt.casefold().startswith(prefix_cf):
+                names.append(txt)
+        names = dedupe_casefold(names)
+        names.sort(key=lambda s: s.casefold())
+        return names
 
     def _common_prefix(self, items: list[str]) -> str:
         if not items:
@@ -615,6 +740,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _hide_cmd_matches(self) -> None:
         self._cmdHint.setVisible(False)
 
+    def _show_tag_matches(self, text: str) -> None:
+        self._tagHint.setText(text)
+        self._tagHint.setVisible(True)
+        self._position_tag_hint()
+
+    def _hide_tag_matches(self) -> None:
+        self._tagHint.setVisible(False)
+
     def _position_cmd_hint(self) -> None:
         if not self._cmdHint.isVisible():
             return
@@ -629,9 +762,22 @@ class MainWindow(QtWidgets.QMainWindow):
         y = sb_geo.y() - height - 4
         self._cmdHint.setGeometry(x, y, max(10, width), height)
 
+    def _position_tag_hint(self) -> None:
+        if not self._tagHint.isVisible():
+            return
+        edit_geo = self.addEdit.geometry()
+        map_pos = self.addEdit.mapTo(self, QtCore.QPoint(0, 0))
+        margin = 6
+        height = self._tagHint.sizeHint().height() + 4
+        width = max(10, edit_geo.width() - margin * 2)
+        x = map_pos.x() + margin
+        y = map_pos.y() - height - 4
+        self._tagHint.setGeometry(x, y, width, height)
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self._position_cmd_hint()
+        self._position_tag_hint()
 
     def _register_command(
         self,
@@ -719,6 +865,30 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda _a: self._focus_add_edit_select_all(),
             "Focus add-keyword input",
             shortcuts=["Ctrl+L", "i"],
+        )
+        self._register_command(
+            "focusfiles",
+            lambda _a: self._focus_pane(self.files),
+            "Focus files pane",
+            shortcuts=["f"],
+        )
+        self._register_command(
+            "focustags",
+            lambda _a: self._focus_pane(self.knownList),
+            "Focus known-tags pane",
+            shortcuts=["t"],
+        )
+        self._register_command(
+            "togglebackup",
+            lambda _a: self._toggle_keep_backup(),
+            "Toggle keep *_original backups",
+            shortcuts=["Ctrl+Shift+B"],
+        )
+        self._register_command(
+            "toggleemptyiptc",
+            lambda _a: self._toggle_only_iptc_empty(),
+            "Toggle only IPTC-empty filter",
+            shortcuts=["Ctrl+Shift+E"],
         )
         self._register_command(
             "panenext",
@@ -1190,6 +1360,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 view.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop)
                 sb.setValue(sb.value() + top_offset)
 
+    def _ensure_files_focus_visible(self) -> None:
+        if self.files.count() == 0:
+            return
+        current = self.files.currentItem()
+        if current is not None and not current.isHidden():
+            self.files.setFocus()
+            return
+        for i in range(self.files.count()):
+            it = self.files.item(i)
+            if it is not None and not it.isHidden():
+                self.files.setCurrentRow(i)
+                self.files.scrollToItem(it)
+                self.files.setFocus()
+                return
+
     def apply_iptc_filter_async(self) -> None:
         self._filter_token += 1
         token = self._filter_token
@@ -1260,6 +1445,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             if it is not None:
                                 it.setHidden(False)
                                 self._filter_shown += 1
+                        self._ensure_files_focus_visible()
                     self._preserve_files_scroll(_do_first)
                 self._filter_first_chunk = False
             else:
@@ -1273,6 +1459,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             if it is not None:
                                 it.setHidden(False)
                                 self._filter_shown += 1
+                        self._ensure_files_focus_visible()
                     self._preserve_files_scroll(_do_switch)
                 elif self._filter_switched:
                     def _do_next():
@@ -1491,6 +1678,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addEdit.setFocus()
         self.addEdit.selectAll()
 
+    def _toggle_keep_backup(self) -> None:
+        self.keepBackup.setChecked(not self.keepBackup.isChecked())
+        state = "ON" if self.keepBackup.isChecked() else "OFF"
+        self.statusBar().showMessage(f"Keep *_original backups: {state}")
+
+    def _toggle_only_iptc_empty(self) -> None:
+        self.onlyUntagged.setChecked(not self.onlyUntagged.isChecked())
+        state = "ON" if self.onlyUntagged.isChecked() else "OFF"
+        self.statusBar().showMessage(f"Only IPTC-empty: {state}")
+
     def _ensure_folder_scan(self, folder: str, recursive: bool) -> None:
         key = (folder, recursive)
         if key in self._folder_tag_cache:
@@ -1604,6 +1801,7 @@ class MainWindow(QtWidgets.QMainWindow):
 def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
     w = MainWindow()
+    app.installEventFilter(w)
     w.show()
     return app.exec()
 

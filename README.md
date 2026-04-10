@@ -18,10 +18,12 @@ Features (MVP)
 Commands & shortcuts
 - Command line: press `:` to open, `:ls` to list commands, `:q`/`:quit` to quit, `Tab` to complete
 - `Esc` closes command line / exits text fields
-- Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus, `i` focuses Add Keyword
+- Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus
+- Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files
 - Known tag filter: `/` or `Ctrl+F` focuses and selects text, `n/N` move in matches
 - Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
 - Tags: `Shift+V` visual select, `Ctrl+C` yank, `Ctrl+V` paste (current file)
+- Toggles: `Ctrl+Shift+B` keep *_original backups, `Ctrl+Shift+E` only IPTC-empty
 
 Prerequisites
 - Windows
