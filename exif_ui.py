@@ -80,6 +80,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_processed = 0
         self._filter_first_chunk = True
         self._filter_switched = False
+        self._filter_selected: set[str] = set()
 
         self._config = load_config()
 
@@ -368,8 +369,6 @@ class MainWindow(QtWidgets.QMainWindow):
         sc.activated.connect(self._focus_next_pane)
         self._shortcuts.append(sc)
 
-
-
         for key, direction in (("Ctrl+W, H", "left"), ("Ctrl+W, L", "right")):
             sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
             sc.activated.connect(lambda d=direction: self._focus_pane_by_direction(d))
@@ -508,6 +507,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 if obj is self.addEdit and event.key() == QtCore.Qt.Key.Key_Tab:
                     self._tab_complete_add_edit()
                     return True
+        if obj in (self.addEdit, self.knownFilter):
+            if event.type() == QtCore.QEvent.Type.KeyPress:
+                if event.key() == QtCore.Qt.Key.Key_C and event.modifiers() == QtCore.Qt.KeyboardModifier.ControlModifier:
+                    self._escape_action()
+                    return True  # capture Event
         if et == QtCore.QEvent.Type.KeyPress and obj in (self.files, self.keywordsList, self.knownList):
             key = getattr(event, "key", None)
             if callable(key):
@@ -974,7 +978,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "escape",
             lambda _a: self._escape_action(),
             "Reset focus / close command line",
-            shortcuts=["Esc"],
+            shortcuts=["Esc", "Ctrl+C"],
         )
 
     def _cmd_list_commands(self, _args: list[str]) -> None:
@@ -1220,6 +1224,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_selection_changed(self) -> None:
         sel = self.selected_file_paths()
         if not sel:
+            if self.onlyUntagged.isChecked():
+                self._filter_selected = set()
             self.selectedLabel.setText("Drop JPG/JPEG files here")
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
@@ -1238,6 +1244,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._selection_token += 1
         token = self._selection_token
         self.statusBar().showMessage("Reading keywords...")
+
+        if self.onlyUntagged.isChecked():
+            self._filter_selected = {normalize_path(p) for p in sel}
 
         worker = Worker(self.exif.read_keywords, current)
 
@@ -1373,6 +1382,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self.onlyUntagged.isChecked():
             for i in range(self.files.count()):
                 self.files.item(i).setHidden(False)
+                self.files.item(i).setBackground(QtGui.QBrush())
             self.filterInfoLabel.setText("")
             return
 
@@ -1386,6 +1396,8 @@ class MainWindow(QtWidgets.QMainWindow):
             it = self.files.item(i)
             it.setHidden(False)
             self._filter_map[normalize_path(it.text())] = it
+
+        self._filter_selected = {normalize_path(p) for p in self.selected_file_paths()}
 
         self._filter_total = self.files.count()
         self._filter_shown = 0
@@ -1423,6 +1435,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if token != self._filter_token:
                 return
             empty_norm = {normalize_path(p) for p in empty}
+            empty_norm |= self._filter_selected
             if self._filter_first_chunk:
                 if empty_norm:
                     # Switch to filtered view only when we have first results.
@@ -1516,14 +1529,19 @@ class MainWindow(QtWidgets.QMainWindow):
     def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
         if not self.onlyUntagged.isChecked():
             return
+        selected = {normalize_path(p) for p in self.selected_file_paths()}
         def _do():
             for path, is_empty in emptiness_by_path.items():
                 it = self._find_item_by_path(path)
                 if it is None:
                     continue
-                it.setHidden(not is_empty)
+                if normalize_path(path) in selected:
+                    it.setHidden(False)
+                else:
+                    it.setHidden(not is_empty)
         self._preserve_files_scroll(_do)
         self._update_filter_label()
+        self._filter_selected = selected
 
     def add_keyword_from_input(self) -> None:
         tag = self.addEdit.text().strip()

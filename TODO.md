@@ -1,5 +1,11 @@
 # Offene Themen
 
+## Bugs
+- fix CTRL+C in Editfelder
+- refactorn
+    - _init_shortcuts  und _register_command sollten eine Single Source of Truth teilen
+
+
 ## Feature
 - Tag - Zeichenlimit
     - hinterfragen, welches Maximum wirklich technisch vorliegt, dann umsetzen
