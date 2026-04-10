@@ -79,7 +79,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_total = 0
         self._filter_processed = 0
         self._filter_first_chunk = True
-        self._filter_first_empty: set[str] = set()
         self._filter_switched = False
 
         self._config = load_config()
@@ -322,7 +321,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._shortcuts: list[QtGui.QShortcut] = []
         self._vim_g_pending: dict[int, int] = {}
         self._vim_space_pending: int | None = None
-        self._vim_space_target: QtWidgets.QWidget | None = None
         self._vim_visual_keywords = False
         self._vim_visual_anchor = 0
         self._yanked_tags: list[str] = []
@@ -517,12 +515,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
                 if k == QtCore.Qt.Key.Key_Space:
                     self._vim_space_pending = now
-                    self._vim_space_target = obj
                     return True
                 if k in (QtCore.Qt.Key.Key_Y, QtCore.Qt.Key.Key_P):
                     if self._vim_space_pending is not None and (now - self._vim_space_pending) <= 600:
                         self._vim_space_pending = None
-                        self._vim_space_target = None
                         if k == QtCore.Qt.Key.Key_Y and obj is self.keywordsList:
                             self._yank_selected_tags()
                             return True
@@ -531,7 +527,6 @@ class MainWindow(QtWidgets.QMainWindow):
                             return True
                 if self._vim_space_pending is not None and (now - self._vim_space_pending) > 600:
                     self._vim_space_pending = None
-                    self._vim_space_target = None
         if et == QtCore.QEvent.Type.FocusIn:
             if obj in (self.files, self.knownList):
                 self._last_left_pane = obj
@@ -778,6 +773,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().resizeEvent(event)
         self._position_cmd_hint()
         self._position_tag_hint()
+        self._update_preview_pixmap()
 
     def _register_command(
         self,
@@ -1320,10 +1316,6 @@ class MainWindow(QtWidgets.QMainWindow):
             pm = QtGui.QPixmap.fromImage(img)
         self.previewLabel.setPixmap(pm)
 
-    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
-        super().resizeEvent(event)
-        self._update_preview_pixmap()
-
     def _render_keywords(self, st: KeywordState) -> None:
         self.keywordsList.clear()
         for kw in st.merged:
@@ -1399,7 +1391,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_shown = 0
         self._filter_processed = 0
         self._filter_first_chunk = True
-        self._filter_first_empty = set()
         self._filter_switched = False
         self.filterInfoLabel.setText(f"…/{self._filter_total}")
 
@@ -1433,7 +1424,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             empty_norm = {normalize_path(p) for p in empty}
             if self._filter_first_chunk:
-                self._filter_first_empty = empty_norm
                 if empty_norm:
                     # Switch to filtered view only when we have first results.
                     self._filter_switched = True
