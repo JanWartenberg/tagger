@@ -5,6 +5,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from commands import Command
 from exif_tool import ExifTool, ExifToolError, KeywordState
+from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import SUPPORTED_EXTS, dedupe_casefold, extract_image_paths_from_urls, normalize_path
 
@@ -67,6 +68,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setAcceptDrops(True)
 
         self.exif = ExifTool()
+        self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
         self._keywords_cache: dict[str, KeywordState] = {}
         self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
@@ -1042,20 +1044,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         target = files[0]
         try:
-            st = self._ensure_loaded(target)
-            merged = dedupe_casefold(st.merged + self._yanked_tags)
-            merged.sort(key=lambda s: s.casefold())
-            self.exif.write_keywords([target], merged, keep_backup=self.keepBackup.isChecked())
-            self._keywords_cache[target] = KeywordState(
-                merged,
-                merged,
-                st.date_original,
-                st.date_create,
-                st.date_xmp_create,
-                st.date_digitized,
+            result = self.tag_mutations.add_tags(
+                [target],
+                self._yanked_tags,
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self._ensure_loaded,
             )
-            self._refresh_current_keywords_view_from_cache()
-            self._apply_filter_visibility_changes({target: len(merged) == 0})
+            self._apply_tag_mutation_result(result)
             self.statusBar().showMessage(f"Pasted {len(self._yanked_tags)} tag(s)")
         except ExifToolError as e:
             self._show_error(str(e))
@@ -1507,6 +1502,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.dateLabel.setText("Capture date: (missing)")
 
+    def _apply_tag_mutation_result(self, result: TagMutationResult) -> None:
+        self._keywords_cache.update(result.updated_states)
+        self._refresh_current_keywords_view_from_cache()
+        self._apply_filter_visibility_changes(result.emptiness_by_path)
+
     def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
         target = normalize_path(path)
         for i in range(self.files.count()):
@@ -1565,29 +1565,19 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
 
-        emptiness_by_path: dict[str, bool] = {}
         try:
-            for f in files:
-                st = self._ensure_loaded(f)
-                merged = dedupe_casefold(st.merged + [tag])
-                merged.sort(key=lambda s: s.casefold())
-                self.exif.write_keywords([f], merged, keep_backup=self.keepBackup.isChecked())
-                self._keywords_cache[f] = KeywordState(
-                    merged,
-                    merged,
-                    st.date_original,
-                    st.date_create,
-                    st.date_xmp_create,
-                    st.date_digitized,
-                )
-                emptiness_by_path[f] = len(merged) == 0
+            result = self.tag_mutations.add_tag(
+                files,
+                tag,
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self._ensure_loaded,
+            )
         except ExifToolError as e:
             self._show_error(str(e))
             return
 
         add_recent_tag(tag)
-        self._refresh_current_keywords_view_from_cache()
-        self._apply_filter_visibility_changes(emptiness_by_path)
+        self._apply_tag_mutation_result(result)
         self.statusBar().showMessage(f"Added '{tag}' to {len(files)} file(s)")
 
     def remove_selected_keywords(self) -> None:
@@ -1603,27 +1593,18 @@ class MainWindow(QtWidgets.QMainWindow):
         if not remove:
             return
 
-        emptiness_by_path: dict[str, bool] = {}
         try:
-            for f in files:
-                st = self._ensure_loaded(f)
-                merged = [k for k in st.merged if k.casefold() not in remove]
-                self.exif.write_keywords([f], merged, keep_backup=self.keepBackup.isChecked())
-                self._keywords_cache[f] = KeywordState(
-                    merged,
-                    merged,
-                    st.date_original,
-                    st.date_create,
-                    st.date_xmp_create,
-                    st.date_digitized,
-                )
-                emptiness_by_path[f] = len(merged) == 0
+            result = self.tag_mutations.remove_tags(
+                files,
+                remove,
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self._ensure_loaded,
+            )
         except ExifToolError as e:
             self._show_error(str(e))
             return
 
-        self._refresh_current_keywords_view_from_cache()
-        self._apply_filter_visibility_changes(emptiness_by_path)
+        self._apply_tag_mutation_result(result)
         self.statusBar().showMessage(f"Removed {len(remove)} tag(s) from {len(files)} file(s)")
 
     def force_refresh_known_tags(self) -> None:
@@ -1739,35 +1720,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         keep_backup = self.keepBackup.isChecked()
 
-        def _work(paths: list[str]) -> tuple[int, dict[str, KeywordState]]:
-            changed = 0
-            merged_by_file: dict[str, KeywordState] = {}
-            for f in paths:
-                st = self.exif.read_keywords(f)
-                merged = st.merged
-                # Only write if fields differ; avoids unnecessary rewrite.
-                if st.mismatch:
-                    self.exif.write_keywords([f], merged, keep_backup=keep_backup)
-                    changed += 1
-                merged_by_file[f] = KeywordState(
-                    merged,
-                    merged,
-                    st.date_original,
-                    st.date_create,
-                    st.date_xmp_create,
-                    st.date_digitized,
-                )
-            return changed, merged_by_file
+        def _work(paths: list[str]) -> TagMutationResult:
+            return self.tag_mutations.resolve_mismatches(paths, keep_backup=keep_backup)
 
         token = self._selection_token
         worker = Worker(_work, files)
 
-        def _ok(res: tuple[int, dict[str, KeywordState]]) -> None:
-            changed, merged_by_file = res
+        def _ok(res: TagMutationResult) -> None:
             if token == self._selection_token:
-                for f, st in merged_by_file.items():
-                    self._keywords_cache[f] = st
-                self.statusBar().showMessage(f"Resolved {changed} file(s)")
+                self._keywords_cache.update(res.updated_states)
+                self._apply_filter_visibility_changes(res.emptiness_by_path)
+                self.statusBar().showMessage(f"Resolved {res.changed_count} file(s)")
                 self.on_selection_changed()
 
         def _err(msg: str) -> None:
