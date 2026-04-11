@@ -82,7 +82,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_processed = 0
         self._filter_first_chunk = True
         self._filter_switched = False
-        self._filter_selected: set[str] = set()
+        self._filter_preserved: set[str] = set()
 
         self._config = load_config()
 
@@ -122,7 +122,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resolveBtn.setShortcut(QtGui.QKeySequence("Ctrl+R"))
 
         self.keywordsList = QtWidgets.QListWidget()
-        self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.keywordsList.setToolTip("Focus: l / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V")
 
         self.addEdit = QtWidgets.QLineEdit()
@@ -163,7 +163,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.onlyUntagged = QtWidgets.QCheckBox("Only IPTC-empty")
         self.onlyUntagged.setToolTip("Show only files without IPTC keywords (Ctrl+Shift+E)")
-        self.onlyUntagged.toggled.connect(self.apply_iptc_filter_async)
+        self.onlyUntagged.toggled.connect(
+            lambda _checked: self.apply_iptc_filter_async(reset_preserved=True)
+        )
         self.filterInfoLabel = QtWidgets.QLabel("")
         self.filterInfoLabel.setToolTip("Filter result count")
 
@@ -567,7 +569,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._select_list_range(lst, self._vim_visual_anchor, row)
             lst.setCurrentRow(row)
         else:
-            lst.setCurrentRow(row)
+            if lst is self.keywordsList:
+                self._set_single_list_selection(lst, row)
+            else:
+                lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
 
     def _go_list_edge(self, lst: QtWidgets.QListWidget, to_end: bool) -> None:
@@ -576,7 +581,10 @@ class MainWindow(QtWidgets.QMainWindow):
         row = self._last_visible_row(lst) if to_end else self._first_visible_row(lst)
         if row is None:
             return
-        lst.setCurrentRow(row)
+        if lst is self.keywordsList and not self._vim_visual_keywords:
+            self._set_single_list_selection(lst, row)
+        else:
+            lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
 
     def _first_visible_row(self, lst: QtWidgets.QListWidget) -> int | None:
@@ -1001,15 +1009,37 @@ class MainWindow(QtWidgets.QMainWindow):
             return fw
         return self.files
 
+    def _set_single_list_selection(self, lst: QtWidgets.QListWidget, row: int) -> None:
+        if row < 0 or row >= lst.count():
+            return
+        item = lst.item(row)
+        if item is None:
+            return
+        lst.blockSignals(True)
+        try:
+            lst.clearSelection()
+            item.setSelected(True)
+            lst.setCurrentItem(item)
+        finally:
+            lst.blockSignals(False)
+
     def _toggle_visual_keywords(self) -> None:
         if self.keywordsList.count() == 0:
             return
         self._vim_visual_keywords = not self._vim_visual_keywords
         if self.keywordsList.currentRow() < 0:
-            self.keywordsList.setCurrentRow(0)
+            self._set_single_list_selection(self.keywordsList, 0)
         self._vim_visual_anchor = self.keywordsList.currentRow()
         if self._vim_visual_keywords:
+            self.keywordsList.setSelectionMode(
+                QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+            )
             self._select_list_range(self.keywordsList, self._vim_visual_anchor, self._vim_visual_anchor)
+        else:
+            self.keywordsList.setSelectionMode(
+                QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+            )
+            self._set_single_list_selection(self.keywordsList, self._vim_visual_anchor)
 
     def _select_list_range(self, lst: QtWidgets.QListWidget, start: int, end: int) -> None:
         a = max(0, min(start, end))
@@ -1057,7 +1087,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _focus_pane(self, pane: QtWidgets.QListWidget) -> None:
         if pane.count() > 0 and pane.currentRow() < 0:
-            pane.setCurrentRow(0)
+            if pane is self.keywordsList and not self._vim_visual_keywords:
+                self._set_single_list_selection(pane, 0)
+            else:
+                pane.setCurrentRow(0)
+        elif pane is self.keywordsList and not self._vim_visual_keywords and pane.currentRow() >= 0:
+            self._set_single_list_selection(pane, pane.currentRow())
         pane.setFocus()
 
     def _focus_next_pane(self) -> None:
@@ -1220,7 +1255,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = self.selected_file_paths()
         if not sel:
             if self.onlyUntagged.isChecked():
-                self._filter_selected = set()
+                self._sync_filter_preserved_selection([])
             self.selectedLabel.setText("Drop JPG/JPEG files here")
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
@@ -1241,7 +1276,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Reading keywords...")
 
         if self.onlyUntagged.isChecked():
-            self._filter_selected = {normalize_path(p) for p in sel}
+            self._sync_filter_preserved_selection(sel)
 
         worker = Worker(self.exif.read_keywords, current)
 
@@ -1321,9 +1356,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.previewLabel.setPixmap(pm)
 
     def _render_keywords(self, st: KeywordState) -> None:
+        self._vim_visual_keywords = False
+        self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
         self.keywordsList.clear()
         for kw in st.merged:
             self.keywordsList.addItem(kw)
+        if self.keywordsList.count() > 0:
+            self._set_single_list_selection(self.keywordsList, 0)
         if st.mismatch:
             self.mismatchLabel.setText(
                 "Warning: IPTC:Keywords and XMP-dc:Subject differ (showing merged view)"
@@ -1359,21 +1398,32 @@ class MainWindow(QtWidgets.QMainWindow):
     def _ensure_files_focus_visible(self) -> None:
         if self.files.count() == 0:
             return
+        hidden_selected = [it for it in self.files.selectedItems() if it.isHidden()]
+        for it in hidden_selected:
+            it.setSelected(False)
         current = self.files.currentItem()
-        if current is not None and not current.isHidden():
+        selected_visible = [it for it in self.files.selectedItems() if not it.isHidden()]
+        if selected_visible:
+            target = current if current in selected_visible else selected_visible[0]
+            self.files.setCurrentItem(target)
+            self.files.scrollToItem(target)
             self.files.setFocus()
             return
         for i in range(self.files.count()):
             it = self.files.item(i)
             if it is not None and not it.isHidden():
-                self.files.setCurrentRow(i)
+                self.files.clearSelection()
+                it.setSelected(True)
+                self.files.setCurrentItem(it)
                 self.files.scrollToItem(it)
                 self.files.setFocus()
                 return
 
-    def apply_iptc_filter_async(self) -> None:
+    def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
         self._filter_token += 1
         token = self._filter_token
+        if reset_preserved:
+            self._filter_preserved = set()
         if not self.onlyUntagged.isChecked():
             for i in range(self.files.count()):
                 self.files.item(i).setHidden(False)
@@ -1391,8 +1441,6 @@ class MainWindow(QtWidgets.QMainWindow):
             it = self.files.item(i)
             it.setHidden(False)
             self._filter_map[normalize_path(it.text())] = it
-
-        self._filter_selected = {normalize_path(p) for p in self.selected_file_paths()}
 
         self._filter_total = self.files.count()
         self._filter_shown = 0
@@ -1420,6 +1468,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if token != self._filter_token:
             return
         if not self._filter_queue:
+            if self.onlyUntagged.isChecked() and not self._filter_switched:
+                def _do_finish_empty():
+                    for it in self._filter_map.values():
+                        it.setHidden(True)
+                    self._ensure_files_focus_visible()
+                self._preserve_files_scroll(_do_finish_empty)
+                self.filterInfoLabel.setText(f"0/{self._filter_total}")
             self.statusBar().showMessage("Ready")
             return
 
@@ -1430,7 +1485,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if token != self._filter_token:
                 return
             empty_norm = {normalize_path(p) for p in empty}
-            empty_norm |= self._filter_selected
+            empty_norm |= self._filter_preserved
             if self._filter_first_chunk:
                 if empty_norm:
                     # Switch to filtered view only when we have first results.
@@ -1526,22 +1581,38 @@ class MainWindow(QtWidgets.QMainWindow):
                 shown += 1
         self.filterInfoLabel.setText(f"{shown}/{total}")
 
+    def _sync_filter_preserved_selection(self, selected_paths: list[str]) -> None:
+        if not self.onlyUntagged.isChecked() or not self._filter_preserved:
+            return
+        selected = {normalize_path(p) for p in selected_paths}
+        released = self._filter_preserved - selected
+        if released:
+            def _do():
+                for path in released:
+                    it = self._find_item_by_path(path)
+                    if it is None:
+                        continue
+                    st = self._keywords_cache.get(path)
+                    if st is not None:
+                        it.setHidden(len(st.iptc) > 0)
+            self._preserve_files_scroll(_do)
+        self._filter_preserved &= selected
+
     def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
         if not self.onlyUntagged.isChecked():
             return
-        selected = {normalize_path(p) for p in self.selected_file_paths()}
         def _do():
             for path, is_empty in emptiness_by_path.items():
                 it = self._find_item_by_path(path)
                 if it is None:
                     continue
-                if normalize_path(path) in selected:
+                if normalize_path(path) in self._filter_preserved:
                     it.setHidden(False)
                 else:
                     it.setHidden(not is_empty)
         self._preserve_files_scroll(_do)
+        self._ensure_files_focus_visible()
         self._update_filter_label()
-        self._filter_selected = selected
 
     def add_keyword_from_input(self) -> None:
         tag = self.addEdit.text().strip()
@@ -1564,6 +1635,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
+        if self.onlyUntagged.isChecked():
+            self._filter_preserved = {normalize_path(p) for p in files}
 
         try:
             result = self.tag_mutations.add_tag(
@@ -1585,6 +1658,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
+        if self.onlyUntagged.isChecked():
+            self._filter_preserved = {normalize_path(p) for p in files}
         items = self.keywordsList.selectedItems()
         if not items:
             self.statusBar().showMessage("No keywords selected")
