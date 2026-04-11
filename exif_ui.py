@@ -1,9 +1,10 @@
 import sys
 from pathlib import Path
+from typing import Callable
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from commands import Command
+from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, ExifToolError, KeywordState
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
@@ -119,7 +120,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resolveBtn.setEnabled(False)
         self.resolveBtn.clicked.connect(self.resolve_mismatch)
         self.resolveBtn.setToolTip("Resolve IPTC/XMP mismatch (Ctrl+R)")
-        self.resolveBtn.setShortcut(QtGui.QKeySequence("Ctrl+R"))
 
         self.keywordsList = QtWidgets.QListWidget()
         self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
@@ -135,7 +135,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.removeBtn = QtWidgets.QPushButton("Remove selected")
         self.removeBtn.clicked.connect(self.remove_selected_keywords)
         self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace)")
-        self.removeBtn.setShortcut(QtGui.QKeySequence("Del"))
 
         self.keepBackup = QtWidgets.QCheckBox("Keep *_original backups (exiftool default)")
         self.keepBackup.setChecked(True)
@@ -150,7 +149,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownRefreshBtn.setFixedWidth(80)
         self.knownRefreshBtn.clicked.connect(self.force_refresh_known_tags)
         self.knownRefreshBtn.setToolTip("Refresh tag repo (F5)")
-        self.knownRefreshBtn.setShortcut(QtGui.QKeySequence("F5"))
         self.knownList = QtWidgets.QListWidget()
         self.knownList.itemActivated.connect(self.add_keyword_from_known)
         self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
@@ -171,7 +169,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.addFolderBtn = QtWidgets.QPushButton("Add folder")
         self.addFolderBtn.setToolTip("Add all JPG/JPEG files from a folder (Ctrl+O)")
-        self.addFolderBtn.setShortcut(QtGui.QKeySequence("Ctrl+O"))
         self.addFolderBtn.clicked.connect(self.add_folder_dialog)
 
         # --- Right: image panel (selected file) ---
@@ -330,96 +327,126 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vim_visual_anchor = 0
         self._yanked_tags: list[str] = []
         self._last_left_pane: QtWidgets.QListWidget = self.files
-        self._commands: dict[str, Command] = {}
-        self._command_list: list[Command] = []
-        self._init_shortcuts()
-        self._init_commands()
+        self._actions_by_id: dict[str, ActionSpec] = {}
+        self._commands_by_name: dict[str, ActionSpec] = {}
+        self._listed_actions: list[ActionSpec] = []
+        self._action_handlers: dict[str, Callable[[], None]] = {}
+        self._widget_refs: dict[str, QtCore.QObject] = {}
+        self._init_actions()
 
-    def _init_shortcuts(self) -> None:
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Backspace"), self)
-        sc.activated.connect(self.remove_selected_keywords)
-        self._shortcuts.append(sc)
+    def _init_actions(self) -> None:
+        specs = build_action_specs()
+        self._actions_by_id = {spec.id: spec for spec in specs}
+        self._listed_actions = [spec for spec in specs if spec.command is not None and spec.show_in_help]
+        self._widget_refs = self._build_widget_refs()
+        self._action_handlers = self._build_action_handlers()
+        self._commands_by_name = {}
+        self._install_shortcuts_from_actions()
+        self._index_commands_from_actions()
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Escape"), self)
-        sc.activated.connect(self._escape_action)
-        self._shortcuts.append(sc)
+    def _build_widget_refs(self) -> dict[str, QtCore.QObject]:
+        return {
+            "window": self,
+            "files": self.files,
+            "keywordsList": self.keywordsList,
+            "knownList": self.knownList,
+            "addEdit": self.addEdit,
+            "knownFilter": self.knownFilter,
+            "cmdLine": self.cmdLine,
+        }
 
-        for seq in ("Ctrl+Return", "Ctrl+Enter"):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(seq), self)
-            sc.activated.connect(self.add_keyword_from_input)
-            self._shortcuts.append(sc)
+    def _build_action_handlers(self) -> dict[str, Callable[[], None]]:
+        return {
+            "_cmd_list_commands": lambda: self._cmd_list_commands(),
+            "_cmd_quit": lambda: self._cmd_quit(),
+            "add_folder_dialog": self.add_folder_dialog,
+            "force_refresh_known_tags": self.force_refresh_known_tags,
+            "resolve_mismatch": self.resolve_mismatch,
+            "add_keyword_from_input": self.add_keyword_from_input,
+            "remove_selected_keywords": self.remove_selected_keywords,
+            "_focus_known_filter_select_all": self._focus_known_filter_select_all,
+            "_focus_add_edit_select_all": self._focus_add_edit_select_all,
+            "_focus_pane_files": self._focus_pane_files,
+            "_focus_pane_known": self._focus_pane_known,
+            "_toggle_keep_backup": self._toggle_keep_backup,
+            "_toggle_only_iptc_empty": self._toggle_only_iptc_empty,
+            "_focus_next_pane": self._focus_next_pane,
+            "_focus_pane_left": self._focus_pane_left,
+            "_focus_pane_right": self._focus_pane_right,
+            "_focus_pane_down": self._focus_pane_down,
+            "_focus_pane_up": self._focus_pane_up,
+            "_action_list_down": self._action_list_down,
+            "_action_list_up": self._action_list_up,
+            "_action_list_top": self._action_list_top,
+            "_action_list_bottom": self._action_list_bottom,
+            "_action_known_next": self._action_known_next,
+            "_action_known_prev": self._action_known_prev,
+            "_toggle_visual_keywords": self._toggle_visual_keywords,
+            "_yank_selected_tags": self._yank_selected_tags,
+            "_paste_yanked_tags": self._paste_yanked_tags,
+            "_escape_action": self._escape_action,
+            "_open_command_line": self._open_command_line,
+            "_tab_complete_command_line": self._tab_complete_command_line,
+            "_tab_complete_add_edit": self._tab_complete_add_edit,
+        }
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+F"), self)
-        sc.activated.connect(self._focus_known_filter_select_all)
-        self._shortcuts.append(sc)
+    def _install_shortcuts_from_actions(self) -> None:
+        self._shortcuts = []
+        for spec in self._actions_by_id.values():
+            for binding in spec.shortcuts:
+                widget = self._widget_refs.get(binding.widget_ref)
+                if widget is None:
+                    continue
+                shortcut = QtGui.QShortcut(QtGui.QKeySequence(binding.sequence), widget)
+                shortcut.setContext(binding.context)
+                shortcut.activated.connect(lambda action_id=spec.id: self._dispatch_action(action_id))
+                self._shortcuts.append(shortcut)
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+L"), self)
-        sc.activated.connect(self._focus_add_edit_select_all)
-        self._shortcuts.append(sc)
+    def _index_commands_from_actions(self) -> None:
+        for spec in self._listed_actions:
+            command = spec.command
+            if command is None:
+                continue
+            self._commands_by_name[command.name] = spec
+            for alias in command.aliases:
+                self._commands_by_name[alias] = spec
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+B"), self)
-        sc.activated.connect(self._toggle_keep_backup)
-        self._shortcuts.append(sc)
+    def _dispatch_action(self, action_id: str) -> None:
+        spec = self._actions_by_id.get(action_id)
+        if spec is None:
+            raise RuntimeError(f"Unknown action: {action_id}")
+        handler = self._action_handlers.get(spec.handler_name)
+        if handler is None:
+            raise RuntimeError(f"Missing handler for action: {spec.id} ({spec.handler_name})")
+        handler()
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+Shift+E"), self)
-        sc.activated.connect(self._toggle_only_iptc_empty)
-        self._shortcuts.append(sc)
+    def _dispatch_command(self, name: str, args: list[str]) -> None:
+        spec = self._commands_by_name.get(name)
+        if spec is None:
+            self.statusBar().showMessage(f"Unknown command: {name}")
+            return
+        try:
+            self._dispatch_action(spec.id)
+        except Exception as e:
+            self._show_error(str(e))
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, W"), self)
-        sc.activated.connect(self._focus_next_pane)
-        self._shortcuts.append(sc)
+    def _format_key_route_label(self, route: KeyRoute) -> str:
+        if route.kind == "sequence":
+            if route.sequence == ("g", "g"):
+                return "gg"
+            return "+".join(route.sequence)
+        return route.sequence[0]
 
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+W, Ctrl+W"), self)
-        sc.activated.connect(self._focus_next_pane)
-        self._shortcuts.append(sc)
-
-        for key, direction in (("Ctrl+W, H", "left"), ("Ctrl+W, L", "right")):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
-            sc.activated.connect(lambda d=direction: self._focus_pane_by_direction(d))
-            self._shortcuts.append(sc)
-
-        for key, direction in (("Ctrl+W, J", "down"), ("Ctrl+W, K", "up")):
-            sc = QtGui.QShortcut(QtGui.QKeySequence(key), self)
-            sc.activated.connect(lambda d=direction: self._focus_pane_by_direction(d))
-            self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("/"), self)
-        sc.activated.connect(self._focus_known_filter_select_all)
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("n"), self)
-        sc.activated.connect(lambda: self._move_list_selection(self.knownList, +1))
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("N"), self)
-        sc.activated.connect(lambda: self._move_list_selection(self.knownList, -1))
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("l"), self.files)
-        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(lambda: self._focus_pane(self.keywordsList))
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("h"), self.keywordsList)
-        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(lambda: self._focus_pane(self._last_left_pane or self.files))
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Shift+V"), self.keywordsList)
-        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(self._toggle_visual_keywords)
-        self._shortcuts.append(sc)
-
-        sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+C"), self.keywordsList)
-        sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-        sc.activated.connect(self._yank_selected_tags)
-        self._shortcuts.append(sc)
-
-        for lst in (self.files, self.keywordsList):
-            sc = QtGui.QShortcut(QtGui.QKeySequence("Ctrl+V"), lst)
-            sc.setContext(QtCore.Qt.ShortcutContext.WidgetShortcut)
-            sc.activated.connect(self._paste_yanked_tags)
-            self._shortcuts.append(sc)
+    def _action_help_labels(self, spec: ActionSpec) -> list[str]:
+        labels: list[str] = []
+        command = spec.command
+        if command is not None and spec.id in {"listcommands", "quit"}:
+            labels.append(f":{command.name}")
+            labels.extend(f":{alias}" for alias in command.aliases)
+        labels.extend(binding.sequence for binding in spec.shortcuts if binding.show_in_help)
+        labels.extend(self._format_key_route_label(route) for route in spec.key_routes if route.show_in_help)
+        labels.extend(trigger.label for trigger in spec.native_triggers)
+        return labels
 
     def _apply_focus_styles(self) -> None:
         list_qss = (
@@ -455,92 +482,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.add_files(paths)
                     event.acceptProposedAction()
                     return True
-        if et == QtCore.QEvent.Type.ShortcutOverride:
-            if not isinstance(self.focusWidget(), QtWidgets.QLineEdit):
-                if self._mods_ok(event.modifiers()):
-                    if event.key() in (
-                        QtCore.Qt.Key.Key_I,
-                        QtCore.Qt.Key.Key_T,
-                        QtCore.Qt.Key.Key_F,
-                        QtCore.Qt.Key.Key_G,
-                        QtCore.Qt.Key.Key_J,
-                        QtCore.Qt.Key.Key_K,
-                    ):
-                        event.accept()
-                        return True
-        if et == QtCore.QEvent.Type.KeyPress:
-            key = getattr(event, "key", None)
-            if callable(key):
-                if isinstance(self.focusWidget(), QtWidgets.QLineEdit):
-                    pass
-                else:
-                    k = event.key()
-                    if self._mods_ok(event.modifiers()):
-                        if k == QtCore.Qt.Key.Key_I:
-                            self._focus_add_edit_select_all()
-                            return True
-                        if k == QtCore.Qt.Key.Key_T:
-                            self._focus_pane(self.knownList)
-                            return True
-                        if k == QtCore.Qt.Key.Key_F:
-                            self._focus_pane(self.files)
-                            return True
-
-                        lst = self._list_from_obj(obj) or self._list_from_obj(self.focusWidget())
-                        if lst is not None:
-                            if k == QtCore.Qt.Key.Key_G:
-                                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
-                                    self._go_list_edge(lst, to_end=True)
-                                else:
-                                    self._vim_g(lst)
-                                return True
-                            if k == QtCore.Qt.Key.Key_J:
-                                self._move_list_selection(lst, +1)
-                                return True
-                            if k == QtCore.Qt.Key.Key_K:
-                                self._move_list_selection(lst, -1)
-                                return True
-                if event.text() == ":":
-                    fw = self.focusWidget()
-                    if not isinstance(fw, QtWidgets.QLineEdit):
-                        self._open_command_line()
-                        return True
-                if obj is self.cmdLine and event.key() == QtCore.Qt.Key.Key_Tab:
-                    self._tab_complete_command_line()
-                    return True
-                if obj is self.addEdit and event.key() == QtCore.Qt.Key.Key_Tab:
-                    self._tab_complete_add_edit()
-                    return True
-        if obj in (self.addEdit, self.knownFilter):
-            if event.type() == QtCore.QEvent.Type.KeyPress:
-                if event.key() == QtCore.Qt.Key.Key_C and event.modifiers() == QtCore.Qt.KeyboardModifier.ControlModifier:
-                    self._escape_action()
-                    return True  # capture Event
-        if et == QtCore.QEvent.Type.KeyPress and obj in (self.files, self.keywordsList, self.knownList):
-            key = getattr(event, "key", None)
-            if callable(key):
-                k = event.key()
-                now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
-                if k == QtCore.Qt.Key.Key_Space:
-                    self._vim_space_pending = now
-                    return True
-                if k in (QtCore.Qt.Key.Key_Y, QtCore.Qt.Key.Key_P):
-                    if self._vim_space_pending is not None and (now - self._vim_space_pending) <= 600:
-                        self._vim_space_pending = None
-                        if k == QtCore.Qt.Key.Key_Y and obj is self.keywordsList:
-                            self._yank_selected_tags()
-                            return True
-                        if k == QtCore.Qt.Key.Key_P and obj in (self.files, self.keywordsList):
-                            self._paste_yanked_tags()
-                            return True
-                if self._vim_space_pending is not None and (now - self._vim_space_pending) > 600:
-                    self._vim_space_pending = None
+        if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(event, QtGui.QKeyEvent):
+            if self._handle_shortcut_override(event):
+                return True
+        if et == QtCore.QEvent.Type.KeyPress and isinstance(event, QtGui.QKeyEvent):
+            if self._handle_key_routes(obj, event):
+                return True
         if et == QtCore.QEvent.Type.FocusIn:
             if obj in (self.files, self.knownList):
                 self._last_left_pane = obj
         return super().eventFilter(obj, event)
 
-    def _list_from_obj(self, obj: QtCore.QObject) -> QtWidgets.QListWidget | None:
+    def _list_from_obj(self, obj: QtCore.QObject | None) -> QtWidgets.QListWidget | None:
         cur = obj
         while cur is not None:
             if cur in (self.files, self.knownList, self.keywordsList):
@@ -550,6 +503,187 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 break
         return None
+
+    def _resolve_current_list_widget(self, obj: QtCore.QObject | None = None) -> QtWidgets.QListWidget | None:
+        return self._list_from_obj(obj) or self._list_from_obj(self.focusWidget())
+
+    def _event_token(self, event: QtGui.QKeyEvent) -> str | None:
+        if (
+            event.key() == QtCore.Qt.Key.Key_C
+            and event.modifiers() == QtCore.Qt.KeyboardModifier.ControlModifier
+        ):
+            return "Ctrl+C"
+        if event.key() == QtCore.Qt.Key.Key_Tab:
+            return "Tab"
+        if event.key() == QtCore.Qt.Key.Key_Space:
+            return "Space"
+        if event.text() == ":":
+            return ":"
+        if (
+            event.key() == QtCore.Qt.Key.Key_G
+            and event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "G"
+        text = event.text()
+        if text:
+            return text
+        key_map = {
+            QtCore.Qt.Key.Key_I: "i",
+            QtCore.Qt.Key.Key_T: "t",
+            QtCore.Qt.Key.Key_F: "f",
+            QtCore.Qt.Key.Key_G: "g",
+            QtCore.Qt.Key.Key_J: "j",
+            QtCore.Qt.Key.Key_K: "k",
+            QtCore.Qt.Key.Key_Y: "y",
+            QtCore.Qt.Key.Key_P: "p",
+        }
+        return key_map.get(event.key())
+
+    def _scope_matches(
+        self,
+        route: KeyRoute,
+        obj: QtCore.QObject | None,
+        list_widget: QtWidgets.QListWidget | None,
+    ) -> bool:
+        if route.scope == "global_non_input":
+            return True
+        if route.scope == "list_widgets":
+            return list_widget is not None
+        if route.scope == "widget_exact":
+            current = self._list_from_obj(obj) or obj
+            if current is None:
+                return False
+            for ref in route.widget_refs:
+                target = self._widget_refs.get(ref)
+                if target is None:
+                    continue
+                if current is target:
+                    return True
+            return False
+        return False
+
+    def _find_matching_single_route(
+        self,
+        token: str,
+        scope: str,
+        obj: QtCore.QObject | None,
+        list_widget: QtWidgets.QListWidget | None,
+    ) -> ActionSpec | None:
+        for spec in self._actions_by_id.values():
+            for route in spec.key_routes:
+                if route.scope != scope or route.kind not in ("single", "widget_specific"):
+                    continue
+                if route.sequence != (token,):
+                    continue
+                if self._scope_matches(route, obj, list_widget):
+                    return spec
+        return None
+
+    def _handle_shortcut_override(self, event: QtGui.QKeyEvent) -> bool:
+        if isinstance(self.focusWidget(), QtWidgets.QLineEdit):
+            return False
+        if not self._mods_ok(event.modifiers()):
+            return False
+        token = self._event_token(event)
+        if token is None:
+            return False
+        list_widget = self._resolve_current_list_widget()
+        for scope in ("global_non_input", "list_widgets"):
+            if self._find_matching_single_route(token, scope, self.focusWidget(), list_widget) is not None:
+                event.accept()
+                return True
+        return False
+
+    def _handle_prefix_route(
+        self,
+        route: KeyRoute,
+        action_id: str,
+        token: str,
+        obj: QtCore.QObject | None,
+        list_widget: QtWidgets.QListWidget | None,
+    ) -> bool:
+        if len(route.sequence) != 2:
+            return False
+        if not self._scope_matches(route, obj, list_widget):
+            return False
+
+        prefix, suffix = route.sequence
+        timeout_ms = route.timeout_ms or 600
+        now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
+
+        if prefix == "g":
+            if list_widget is None:
+                return False
+            key = id(list_widget)
+            last = self._vim_g_pending.get(key)
+            if token == prefix:
+                self._vim_g_pending[key] = now
+                return True
+            if token == suffix and last is not None and (now - last) <= timeout_ms:
+                self._vim_g_pending.pop(key, None)
+                self._dispatch_action(action_id)
+                return True
+            if last is not None and (now - last) > timeout_ms:
+                self._vim_g_pending.pop(key, None)
+            return False
+
+        if prefix == "Space":
+            if token == prefix:
+                self._vim_space_pending = now
+                return True
+            if token == suffix and self._vim_space_pending is not None:
+                if route.widget_refs and list_widget is not None:
+                    allowed_widgets = {
+                        self._widget_refs[ref]
+                        for ref in route.widget_refs
+                        if ref in self._widget_refs
+                    }
+                    if list_widget not in allowed_widgets:
+                        return False
+                if (now - self._vim_space_pending) <= timeout_ms:
+                    self._vim_space_pending = None
+                    self._dispatch_action(action_id)
+                    return True
+                self._vim_space_pending = None
+                return False
+            if self._vim_space_pending is not None and (now - self._vim_space_pending) > timeout_ms:
+                self._vim_space_pending = None
+            return False
+
+        return False
+
+    def _handle_key_routes(self, obj: QtCore.QObject, event: QtGui.QKeyEvent) -> bool:
+        token = self._event_token(event)
+        if token is None:
+            return False
+
+        focus = self.focusWidget()
+        list_widget = self._resolve_current_list_widget(obj)
+
+        if not isinstance(focus, QtWidgets.QLineEdit) and self._mods_ok(event.modifiers()):
+            for scope in ("global_non_input", "list_widgets"):
+                match = self._find_matching_single_route(token, scope, obj, list_widget)
+                if match is not None:
+                    self._dispatch_action(match.id)
+                    return True
+                for spec in self._actions_by_id.values():
+                    for route in spec.key_routes:
+                        if route.scope == scope and route.kind == "sequence":
+                            if self._handle_prefix_route(route, spec.id, token, obj, list_widget):
+                                return True
+
+        widget_match = self._find_matching_single_route(token, "widget_exact", obj, list_widget)
+        if widget_match is not None:
+            self._dispatch_action(widget_match.id)
+            return True
+
+        for spec in self._actions_by_id.values():
+            for route in spec.key_routes:
+                if route.scope == "widget_exact" and route.kind == "sequence":
+                    if self._handle_prefix_route(route, spec.id, token, obj, list_widget):
+                        return True
+
+        return False
 
     def _mods_ok(self, mods: QtCore.Qt.KeyboardModifier) -> bool:
         allowed = QtCore.Qt.KeyboardModifier.ShiftModifier
@@ -658,7 +792,7 @@ class MainWindow(QtWidgets.QMainWindow):
         parts = raw.split()
         name = parts[0].casefold()
         args = parts[1:]
-        self._run_command(name, args)
+        self._dispatch_command(name, args)
 
     def _tab_complete_command_line(self) -> None:
         raw = self.cmdLine.text() or ""
@@ -704,10 +838,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_tag_matches(", ".join(matches))
 
     def _command_candidates(self, prefix: str) -> list[str]:
-        names = {cmd.name for cmd in self._command_list}
-        for cmd in self._command_list:
-            names.update(cmd.aliases)
-        out = [n for n in names if n.startswith(prefix)]
+        out = [name for name in self._commands_by_name if name.startswith(prefix)]
         out.sort()
         return out
 
@@ -789,225 +920,65 @@ class MainWindow(QtWidgets.QMainWindow):
         self._position_tag_hint()
         self._update_preview_pixmap()
 
-    def _register_command(
-        self,
-        name: str,
-        callback,
-        description: str,
-        shortcuts: list[str] | None = None,
-        aliases: list[str] | None = None,
-    ) -> None:
-        cmd = Command(
-            name=name,
-            callback=callback,
-            description=description,
-            shortcuts=shortcuts or [],
-            aliases=aliases or [],
-        )
-        self._commands[name] = cmd
-        for a in cmd.aliases:
-            self._commands[a] = cmd
-        self._command_list.append(cmd)
-
-    def _run_command(self, name: str, args: list[str]) -> None:
-        cmd = self._commands.get(name)
-        if cmd is None:
-            self.statusBar().showMessage(f"Unknown command: {name}")
-            return
-        try:
-            cmd.callback(args)
-        except Exception as e:
-            self._show_error(str(e))
-
-    def _init_commands(self) -> None:
-        self._register_command(
-            "listcommands",
-            self._cmd_list_commands,
-            "List all commands",
-            shortcuts=[":listcommands", ":ls"],
-            aliases=["ls"],
-        )
-        self._register_command(
-            "quit",
-            self._cmd_quit,
-            "Quit the app",
-            shortcuts=[":quit", ":q"],
-            aliases=["q"],
-        )
-        self._register_command(
-            "addfolder",
-            lambda _a: self.add_folder_dialog(),
-            "Add files from a folder",
-            shortcuts=["Ctrl+O"],
-        )
-        self._register_command(
-            "refresh",
-            lambda _a: self.force_refresh_known_tags(),
-            "Refresh known tags",
-            shortcuts=["F5"],
-        )
-        self._register_command(
-            "resolve",
-            lambda _a: self.resolve_mismatch(),
-            "Resolve IPTC/XMP mismatch",
-            shortcuts=["Ctrl+R"],
-        )
-        self._register_command(
-            "addtag",
-            lambda _a: self.add_keyword_from_input(),
-            "Add tag from input",
-            shortcuts=["Ctrl+Enter", "Ctrl+Return"],
-        )
-        self._register_command(
-            "removetags",
-            lambda _a: self.remove_selected_keywords(),
-            "Remove selected tags",
-            shortcuts=["Backspace", "Del"],
-        )
-        self._register_command(
-            "focusfilter",
-            lambda _a: self._focus_known_filter_select_all(),
-            "Focus known-tag filter",
-            shortcuts=["Ctrl+F", "/"],
-        )
-        self._register_command(
-            "focusadd",
-            lambda _a: self._focus_add_edit_select_all(),
-            "Focus add-keyword input",
-            shortcuts=["Ctrl+L", "i"],
-        )
-        self._register_command(
-            "focusfiles",
-            lambda _a: self._focus_pane(self.files),
-            "Focus files pane",
-            shortcuts=["f"],
-        )
-        self._register_command(
-            "focustags",
-            lambda _a: self._focus_pane(self.knownList),
-            "Focus known-tags pane",
-            shortcuts=["t"],
-        )
-        self._register_command(
-            "togglebackup",
-            lambda _a: self._toggle_keep_backup(),
-            "Toggle keep *_original backups",
-            shortcuts=["Ctrl+Shift+B"],
-        )
-        self._register_command(
-            "toggleemptyiptc",
-            lambda _a: self._toggle_only_iptc_empty(),
-            "Toggle only IPTC-empty filter",
-            shortcuts=["Ctrl+Shift+E"],
-        )
-        self._register_command(
-            "panenext",
-            lambda _a: self._focus_next_pane(),
-            "Focus next pane",
-            shortcuts=["Ctrl+W W", "Ctrl+W Ctrl+W"],
-        )
-        self._register_command(
-            "paneleft",
-            lambda _a: self._focus_pane_by_direction("left"),
-            "Focus left pane",
-            shortcuts=["Ctrl+W H", "h"],
-        )
-        self._register_command(
-            "paneright",
-            lambda _a: self._focus_pane_by_direction("right"),
-            "Focus right pane",
-            shortcuts=["Ctrl+W L", "l"],
-        )
-        self._register_command(
-            "panedown",
-            lambda _a: self._focus_pane_by_direction("down"),
-            "Focus lower pane",
-            shortcuts=["Ctrl+W J"],
-        )
-        self._register_command(
-            "paneup",
-            lambda _a: self._focus_pane_by_direction("up"),
-            "Focus upper pane",
-            shortcuts=["Ctrl+W K"],
-        )
-        self._register_command(
-            "listdown",
-            lambda _a: self._move_list_selection(self._current_list_widget(), +1),
-            "Move selection down",
-            shortcuts=["j", "Down"],
-        )
-        self._register_command(
-            "listup",
-            lambda _a: self._move_list_selection(self._current_list_widget(), -1),
-            "Move selection up",
-            shortcuts=["k", "Up"],
-        )
-        self._register_command(
-            "listtop",
-            lambda _a: self._go_list_edge(self._current_list_widget(), to_end=False),
-            "Jump to top of list",
-            shortcuts=["gg", "Home"],
-        )
-        self._register_command(
-            "listbottom",
-            lambda _a: self._go_list_edge(self._current_list_widget(), to_end=True),
-            "Jump to bottom of list",
-            shortcuts=["G", "End"],
-        )
-        self._register_command(
-            "knownnext",
-            lambda _a: self._move_list_selection(self.knownList, +1),
-            "Next known-tag match",
-            shortcuts=["n"],
-        )
-        self._register_command(
-            "knownprev",
-            lambda _a: self._move_list_selection(self.knownList, -1),
-            "Previous known-tag match",
-            shortcuts=["N"],
-        )
-        self._register_command(
-            "visual",
-            lambda _a: self._toggle_visual_keywords(),
-            "Toggle visual tag selection",
-            shortcuts=["Shift+V"],
-        )
-        self._register_command(
-            "yank",
-            lambda _a: self._yank_selected_tags(),
-            "Yank selected tags",
-            shortcuts=["Ctrl+C", "Space+y"],
-        )
-        self._register_command(
-            "paste",
-            lambda _a: self._paste_yanked_tags(),
-            "Paste yanked tags",
-            shortcuts=["Ctrl+V", "Space+p"],
-        )
-        self._register_command(
-            "escape",
-            lambda _a: self._escape_action(),
-            "Reset focus / close command line",
-            shortcuts=["Esc", "Ctrl+C"],
-        )
-
-    def _cmd_list_commands(self, _args: list[str]) -> None:
+    def _cmd_list_commands(self, _args: list[str] | None = None) -> None:
         lines: list[str] = []
-        for cmd in sorted(self._command_list, key=lambda c: c.name):
-            alias = f" (aliases: {', '.join(cmd.aliases)})" if cmd.aliases else ""
-            shorts = f" [{', '.join(cmd.shortcuts)}]" if cmd.shortcuts else ""
-            lines.append(f"{cmd.name}{alias} — {cmd.description}{shorts}")
+        for spec in sorted(self._listed_actions, key=lambda action: action.command.name if action.command else action.id):
+            command = spec.command
+            if command is None:
+                continue
+            alias = f" (aliases: {', '.join(command.aliases)})" if command.aliases else ""
+            labels = self._action_help_labels(spec)
+            shorts = f" [{', '.join(labels)}]" if labels else ""
+            lines.append(f"{command.name}{alias} — {spec.description}{shorts}")
         text = "\n".join(lines) if lines else "(no commands)"
         QtWidgets.QMessageBox.information(self, "Commands", text)
 
-    def _cmd_quit(self, _args: list[str]) -> None:
+    def _cmd_quit(self, _args: list[str] | None = None) -> None:
         self.close()
 
-    def _current_list_widget(self) -> QtWidgets.QListWidget:
-        fw = self.focusWidget()
-        if fw in (self.files, self.keywordsList, self.knownList):
-            return fw
-        return self.files
+    def _focus_pane_files(self) -> None:
+        self._focus_pane(self.files)
+
+    def _focus_pane_known(self) -> None:
+        self._focus_pane(self.knownList)
+
+    def _focus_pane_left(self) -> None:
+        self._focus_pane_by_direction("left")
+
+    def _focus_pane_right(self) -> None:
+        self._focus_pane_by_direction("right")
+
+    def _focus_pane_down(self) -> None:
+        self._focus_pane_by_direction("down")
+
+    def _focus_pane_up(self) -> None:
+        self._focus_pane_by_direction("up")
+
+    def _action_list_down(self) -> None:
+        lst = self._resolve_current_list_widget()
+        if lst is not None:
+            self._move_list_selection(lst, +1)
+
+    def _action_list_up(self) -> None:
+        lst = self._resolve_current_list_widget()
+        if lst is not None:
+            self._move_list_selection(lst, -1)
+
+    def _action_list_top(self) -> None:
+        lst = self._resolve_current_list_widget()
+        if lst is not None:
+            self._go_list_edge(lst, to_end=False)
+
+    def _action_list_bottom(self) -> None:
+        lst = self._resolve_current_list_widget()
+        if lst is not None:
+            self._go_list_edge(lst, to_end=True)
+
+    def _action_known_next(self) -> None:
+        self._move_list_selection(self.knownList, +1)
+
+    def _action_known_prev(self) -> None:
+        self._move_list_selection(self.knownList, -1)
 
     def _set_single_list_selection(self, lst: QtWidgets.QListWidget, row: int) -> None:
         if row < 0 or row >= lst.count():
