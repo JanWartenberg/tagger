@@ -71,6 +71,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
+        self._mutation_queue: list[tuple[Callable[[], TagMutationResult], str | None]] = []
+        self._mutation_inflight = False
         self._keywords_cache: dict[str, KeywordState] = {}
         self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
         self._folder_scans_inflight: set[tuple[str, bool]] = set()
@@ -1044,17 +1046,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
         target = files[0]
-        try:
-            result = self.tag_mutations.add_tags(
+        optimistic = self._optimistic_mutation(
+            [target],
+            lambda st: st.merged + self._yanked_tags,
+        )
+        if optimistic.updated_states:
+            self._apply_tag_mutation_result(optimistic)
+        self.statusBar().showMessage(f"Queued paste ({len(self._yanked_tags)} tag(s))")
+        self._enqueue_tag_mutation(
+            lambda: self.tag_mutations.add_tags(
                 [target],
                 self._yanked_tags,
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
-            )
-            self._apply_tag_mutation_result(result)
-            self.statusBar().showMessage(f"Pasted {len(self._yanked_tags)} tag(s)")
-        except ExifToolError as e:
-            self._show_error(str(e))
+            ),
+            f"Pasted {len(self._yanked_tags)} tag(s)",
+        )
 
     def _focus_pane(self, pane: QtWidgets.QListWidget) -> None:
         if pane.count() > 0 and pane.currentRow() < 0:
@@ -1533,6 +1540,79 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_current_keywords_view_from_cache()
         self._apply_filter_visibility_changes(result.emptiness_by_path)
 
+    def _current_keywords_from_ui(self) -> list[str]:
+        items = [self.keywordsList.item(i) for i in range(self.keywordsList.count())]
+        return [it.text().strip() for it in items if it is not None and it.text().strip()]
+
+    def _optimistic_mutation(
+        self,
+        files: list[str],
+        transform: Callable[[KeywordState], list[str]],
+    ) -> TagMutationResult:
+        updated_states: dict[str, KeywordState] = {}
+        emptiness_by_path: dict[str, bool] = {}
+        selected = self.selected_file_paths()
+        current = normalize_path(selected[0]) if selected else None
+
+        for path in files:
+            st = self._keywords_cache.get(path)
+            if st is None and current and normalize_path(path) == current:
+                kws = self._current_keywords_from_ui()
+                st = KeywordState(kws, kws)
+            if st is None:
+                continue
+            keywords = transform(st)
+            keywords = dedupe_casefold([k.strip() for k in keywords if k.strip()])
+            keywords.sort(key=lambda value: value.casefold())
+            updated_states[path] = KeywordState(
+                keywords,
+                keywords,
+                st.date_original,
+                st.date_create,
+                st.date_xmp_create,
+                st.date_digitized,
+            )
+            emptiness_by_path[path] = len(keywords) == 0
+
+        return TagMutationResult(
+            updated_states=updated_states,
+            emptiness_by_path=emptiness_by_path,
+            processed_count=len(files),
+            changed_count=len(updated_states),
+        )
+
+    def _enqueue_tag_mutation(
+        self,
+        fn: Callable[[], TagMutationResult],
+        status: str | None = None,
+    ) -> None:
+        self._mutation_queue.append((fn, status))
+        self._process_tag_mutation_queue()
+
+    def _process_tag_mutation_queue(self) -> None:
+        if self._mutation_inflight or not self._mutation_queue:
+            return
+        self._mutation_inflight = True
+        fn, status = self._mutation_queue.pop(0)
+        worker = Worker(fn)
+
+        def _ok(result: TagMutationResult) -> None:
+            self._mutation_inflight = False
+            self._apply_tag_mutation_result(result)
+            if status:
+                self.statusBar().showMessage(status)
+            self._process_tag_mutation_queue()
+
+        def _err(msg: str) -> None:
+            self._mutation_inflight = False
+            self.statusBar().showMessage("Error")
+            self._show_error(msg)
+            self._process_tag_mutation_queue()
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker)
+
     def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
         target = normalize_path(path)
         for i in range(self.files.count()):
@@ -1608,21 +1688,20 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if self.onlyUntagged.isChecked():
             self._filter_preserved = {normalize_path(p) for p in files}
-
-        try:
-            result = self.tag_mutations.add_tag(
+        optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
+        if optimistic.updated_states:
+            self._apply_tag_mutation_result(optimistic)
+        add_recent_tag(tag)
+        self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
+        self._enqueue_tag_mutation(
+            lambda: self.tag_mutations.add_tag(
                 files,
                 tag,
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
-            )
-        except ExifToolError as e:
-            self._show_error(str(e))
-            return
-
-        add_recent_tag(tag)
-        self._apply_tag_mutation_result(result)
-        self.statusBar().showMessage(f"Added '{tag}' to {len(files)} file(s)")
+            ),
+            f"Added '{tag}' to {len(files)} file(s)",
+        )
 
     def remove_selected_keywords(self) -> None:
         files = self.selected_file_paths()
@@ -1638,20 +1717,22 @@ class MainWindow(QtWidgets.QMainWindow):
         remove = {it.text().strip().casefold() for it in items if it.text().strip()}
         if not remove:
             return
-
-        try:
-            result = self.tag_mutations.remove_tags(
+        optimistic = self._optimistic_mutation(
+            files,
+            lambda st: [tag for tag in st.merged if tag.casefold() not in remove],
+        )
+        if optimistic.updated_states:
+            self._apply_tag_mutation_result(optimistic)
+        self.statusBar().showMessage(f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)")
+        self._enqueue_tag_mutation(
+            lambda: self.tag_mutations.remove_tags(
                 files,
                 remove,
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
-            )
-        except ExifToolError as e:
-            self._show_error(str(e))
-            return
-
-        self._apply_tag_mutation_result(result)
-        self.statusBar().showMessage(f"Removed {len(remove)} tag(s) from {len(files)} file(s)")
+            ),
+            f"Removed {len(remove)} tag(s) from {len(files)} file(s)",
+        )
 
     def force_refresh_known_tags(self) -> None:
         sel = self.selected_file_paths()
