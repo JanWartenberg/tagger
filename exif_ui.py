@@ -1162,6 +1162,32 @@ class MainWindow(QtWidgets.QMainWindow):
         if last_added_path:
             self._set_last_folder(str(Path(last_added_path).parent))
 
+    def _reset_files_pane_for_reload(self) -> None:
+        # Cancel in-flight async work that would render stale UI.
+        self._selection_token += 1
+        self._preview_token += 1
+        self._filter_token += 1
+        self._filter_queue = []
+
+        # Reset caches tied to previous file lists.
+        self._keywords_cache = {}
+        self._filter_map = {}
+        self._filter_preserved = set()
+        self._folder_tag_cache = {}
+        self._folder_scans_inflight = set()
+
+        # Clear list + selection without spamming selection-changed handlers mid-reset.
+        self.files.blockSignals(True)
+        try:
+            self.files.clearSelection()
+            self.files.setCurrentRow(-1)
+            self.files.clear()
+        finally:
+            self.files.blockSignals(False)
+
+        self.filterInfoLabel.setText("")
+        self.on_selection_changed()
+
     def add_folder_dialog(self) -> None:
         default_dir = self._get_default_folder_for_dialog()
         if default_dir:
@@ -1172,6 +1198,10 @@ class MainWindow(QtWidgets.QMainWindow):
             folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
         if not folder:
             return
+
+        # Ctrl+O is treated as a (re)load: wipe the pane + right side first.
+        self._reset_files_pane_for_reload()
+
         p = Path(folder)
         paths = [str(x) for x in p.rglob("*") if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS]
         if paths:
@@ -1376,16 +1406,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def _ensure_files_focus_visible(self) -> None:
         if self.files.count() == 0:
             return
+        changed = False
+
         hidden_selected = [it for it in self.files.selectedItems() if it.isHidden()]
         for it in hidden_selected:
             it.setSelected(False)
+            changed = True
+
         current = self.files.currentItem()
+        if current is not None and current.isHidden():
+            self.files.setCurrentRow(-1)
+            changed = True
+
         selected_visible = [it for it in self.files.selectedItems() if not it.isHidden()]
         if selected_visible:
             target = current if current in selected_visible else selected_visible[0]
+            if target is not current:
+                changed = True
             self.files.setCurrentItem(target)
             self.files.scrollToItem(target)
             self.files.setFocus()
+            if changed:
+                QtCore.QTimer.singleShot(0, self.on_selection_changed)
             return
         for i in range(self.files.count()):
             it = self.files.item(i)
@@ -1395,7 +1437,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.files.setCurrentItem(it)
                 self.files.scrollToItem(it)
                 self.files.setFocus()
+                changed = True
+                if changed:
+                    QtCore.QTimer.singleShot(0, self.on_selection_changed)
                 return
+
+        # No visible items left (e.g. empty-filter yields 0): hard-reset selection/current.
+        self.files.clearSelection()
+        self.files.setCurrentRow(-1)
+        if changed:
+            QtCore.QTimer.singleShot(0, self.on_selection_changed)
 
     def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
         self._filter_token += 1
