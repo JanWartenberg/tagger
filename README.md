@@ -41,10 +41,5 @@ Run
 python tagger.py
 ```
 
-Legacy (optional):
-```bat
-python exif_ui.py
-```
-
 Notes
 - By default exiftool creates `*_original` backup files. You can disable this via the checkbox.

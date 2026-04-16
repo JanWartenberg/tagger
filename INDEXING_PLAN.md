@@ -8,7 +8,7 @@ Goal: fast tag/date search for 1–3k photos without UI blocking.
 
 ## Storage choice
 - **SQLite** (recommended): robust, fast queries, incremental updates.
-- Location: `D:\Fotos\.exif_ui\index.sqlite`.
+- Location: `D:\Fotos\.tagger\index.sqlite`.
 
 ## Schema (minimal)
 ```
