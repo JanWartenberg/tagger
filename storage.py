@@ -2,59 +2,77 @@ import json
 import os
 from pathlib import Path
 
-APP_DIR_NAME = "exif_ui"
-LEGACY_APP_DIR_NAME = "exif_keywords_mvp"
+# --- Storage constants (no magic strings in code) ---
+ENV_APPDATA = "APPDATA"
+APP_DIR_NAME = "tagger"
+
+CONFIG_FILENAME = "config.json"
+RECENT_TAGS_FILENAME = "recent_tags.json"
+MAX_RECENT_TAGS = 100
+TEXT_ENCODING = "utf-8"
 
 
-def _app_data_dir() -> Path:
-    base = os.getenv("APPDATA") or str(Path.home())
-    d = Path(base) / APP_DIR_NAME
-    d.mkdir(parents=True, exist_ok=True)
+def _base_storage_dir() -> Path:
+    base = os.getenv(ENV_APPDATA)
+    return Path(base) if base else Path.home()
+
+
+def _storage_dir(app_dir_name: str, ensure_exists: bool) -> Path:
+    d = _base_storage_dir() / app_dir_name
+    if ensure_exists:
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
+def _path_in_storage(app_dir_name: str, filename: str, ensure_dir: bool) -> Path:
+    return _storage_dir(app_dir_name, ensure_exists=ensure_dir) / filename
+
+
 def _recent_tags_path() -> Path:
-    return _app_data_dir() / "recent_tags.json"
+    return _path_in_storage(APP_DIR_NAME, RECENT_TAGS_FILENAME, ensure_dir=True)
 
 
-def _legacy_recent_tags_path() -> Path:
-    base = os.getenv("APPDATA") or str(Path.home())
-    return Path(base) / LEGACY_APP_DIR_NAME / "recent_tags.json"
+def _config_path() -> Path:
+    return _path_in_storage(APP_DIR_NAME, CONFIG_FILENAME, ensure_dir=True)
+
+
+def describe_storage_paths() -> dict[str, str]:
+    """Useful for debugging: where does the app read/write things?"""
+    return {
+        "base_storage_dir": str(_base_storage_dir()),
+        "app_dir": str(_storage_dir(APP_DIR_NAME, ensure_exists=False)),
+        "config_path": str(_config_path()),
+        "recent_tags_path": str(_recent_tags_path()),
+    }
 
 
 def load_recent_tags() -> list[str]:
-    p = _recent_tags_path()
-    if not p.exists():
-        legacy = _legacy_recent_tags_path()
-        if legacy.exists():
-            try:
-                data = json.loads(legacy.read_text(encoding="utf-8"))
-                if isinstance(data, list):
-                    tags: list[str] = []
-                    for x in data:
-                        if isinstance(x, str) and x.strip():
-                            tags.append(x.strip())
-                    save_recent_tags(tags)
-                    return tags[:100]
-            except Exception:
-                pass
-        return []
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except Exception:
-        return []
-    if not isinstance(data, list):
-        return []
-    out: list[str] = []
-    for x in data:
-        if isinstance(x, str) and x.strip():
-            out.append(x.strip())
-    return out[:100]
+    def _clean_list(data: object) -> list[str]:
+        if not isinstance(data, list):
+            return []
+        out: list[str] = []
+        for x in data:
+            if isinstance(x, str) and x.strip():
+                out.append(x.strip())
+        return out[:MAX_RECENT_TAGS]
+
+    def _read_list(path: Path) -> list[str]:
+        try:
+            data = json.loads(path.read_text(encoding=TEXT_ENCODING))
+        except Exception:
+            return []
+        return _clean_list(data)
+
+    current = _recent_tags_path()
+    return _read_list(current) if current.exists() else []
 
 
 def save_recent_tags(tags: list[str]) -> None:
     p = _recent_tags_path()
-    p.write_text(json.dumps(tags[:100], ensure_ascii=True, indent=2), encoding="utf-8")
+    p.write_text(
+        json.dumps(tags[:MAX_RECENT_TAGS], ensure_ascii=True, indent=2),
+        encoding=TEXT_ENCODING,
+    )
 
 
 def add_recent_tag(tag: str) -> None:
@@ -67,16 +85,12 @@ def add_recent_tag(tag: str) -> None:
     save_recent_tags(tags)
 
 
-def _config_path() -> Path:
-    return _app_data_dir() / "config.json"
-
-
 def load_config() -> dict:
     p = _config_path()
     if not p.exists():
         return {}
     try:
-        data = json.loads(p.read_text(encoding="utf-8"))
+        data = json.loads(p.read_text(encoding=TEXT_ENCODING))
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
@@ -84,4 +98,4 @@ def load_config() -> dict:
 
 def save_config(cfg: dict) -> None:
     p = _config_path()
-    p.write_text(json.dumps(cfg, ensure_ascii=True, indent=2), encoding="utf-8")
+    p.write_text(json.dumps(cfg, ensure_ascii=True, indent=2), encoding=TEXT_ENCODING)
