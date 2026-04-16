@@ -38,6 +38,11 @@ pip install -r requirements.txt
 
 Run
 ```bat
+python tagger.py
+```
+
+Legacy (optional):
+```bat
 python exif_ui.py
 ```
 

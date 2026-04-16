@@ -65,7 +65,7 @@ class Worker(QtCore.QRunnable):
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle("Exif UI")
+        self.setWindowTitle("TAGGER: Tool Annotator, Grouping Guiding EXIF Records")
         self.setAcceptDrops(True)
 
         self.exif = ExifTool()

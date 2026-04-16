@@ -1,7 +1,6 @@
-# Offene Themen
+# Backlog
 
 ## Bugs
-- fix CTRL+C in Editfelder
 - refactorn
     - _init_shortcuts  und _register_command sollten eine Single Source of Truth teilen
 
@@ -26,6 +25,7 @@
   - Rätselfotos
 
 ## Done
+- fix CTRL+C in Editfelder
 - Workflow hinterfragen -> mehr/bessere Keyboard shortcuts?
 - Neovim-style commands
 - Neovim-style keybinds
