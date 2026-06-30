@@ -78,32 +78,14 @@ class ExifTool:
         return p.stdout
 
     def read_keywords(self, file_path: str) -> KeywordState:
-        out = self._run(
-            [
-                "-q",
-                "-q",
-                "-j",
-                "-G1",
-                "-IPTC:Keywords",
-                "-XMP-dc:Subject",
-                "-EXIF:DateTimeOriginal",
-                "-EXIF:CreateDate",
-                "-XMP:CreateDate",
-                "-XMP-xmp:CreateDate",
-                "-EXIF:DateTimeDigitized",
-                "-Composite:SubSecDateTimeOriginal",
-                "-Composite:SubSecCreateDate",
-                file_path,
-            ]
-        )
-        try:
-            data = json.loads(out)
-        except Exception as e:
-            raise ExifToolError("Failed to parse exiftool JSON output") from e
-        if not data:
-            return KeywordState([], [])
+        file_path = normalize_path(file_path)
+        return self.read_keywords_many([file_path]).get(file_path, KeywordState([], []))
 
-        rec = data[0]
+    def _parse_keyword_record(self, rec: dict) -> tuple[str | None, KeywordState]:
+        src = rec.get("SourceFile")
+        if not isinstance(src, str):
+            return None, KeywordState([], [])
+
         iptc = rec.get("IPTC:Keywords", [])
         xmp = rec.get("XMP-dc:Subject", [])
         if isinstance(iptc, str):
@@ -120,7 +102,7 @@ class ExifTool:
                     out2.append(x.strip())
             return out2
 
-        def _first_str(rec: dict, keys: list[str]) -> str | None:
+        def _first_str(keys: list[str]) -> str | None:
             for k in keys:
                 v = rec.get(k)
                 if isinstance(v, str) and v.strip():
@@ -131,48 +113,72 @@ class ExifTool:
                         return v0.strip()
             return None
 
-        date_original = _first_str(
-            rec,
-            [
+        state = KeywordState(
+            _clean(iptc),
+            _clean(xmp),
+            _first_str([
                 "EXIF:DateTimeOriginal",
                 "DateTimeOriginal",
                 "Composite:SubSecDateTimeOriginal",
                 "SubSecDateTimeOriginal",
-            ],
-        )
-        date_create = _first_str(
-            rec,
-            [
+            ]),
+            _first_str([
                 "EXIF:CreateDate",
                 "CreateDate",
                 "Composite:SubSecCreateDate",
                 "SubSecCreateDate",
-            ],
-        )
-        date_xmp_create = _first_str(
-            rec,
-            [
+            ]),
+            _first_str([
                 "XMP-xmp:CreateDate",
                 "XMP:CreateDate",
                 "CreateDate",
-            ],
-        )
-        date_digitized = _first_str(
-            rec,
-            [
+            ]),
+            _first_str([
                 "EXIF:DateTimeDigitized",
                 "DateTimeDigitized",
-            ],
+            ]),
         )
+        return src, state
 
-        return KeywordState(
-            _clean(iptc),
-            _clean(xmp),
-            date_original,
-            date_create,
-            date_xmp_create,
-            date_digitized,
-        )
+    def read_keywords_many(self, file_paths: list[str]) -> dict[str, KeywordState]:
+        if not file_paths:
+            return {}
+
+        norm_input = [normalize_path(p) for p in file_paths]
+        out: dict[str, KeywordState] = {}
+
+        # Avoid Windows command-line length limits by chunking.
+        chunk_size = 200
+        for i in range(0, len(norm_input), chunk_size):
+            chunk = norm_input[i : i + chunk_size]
+            stdout = self._run(
+                [
+                    "-q",
+                    "-q",
+                    "-j",
+                    "-G1",
+                    "-IPTC:Keywords",
+                    "-XMP-dc:Subject",
+                    "-EXIF:DateTimeOriginal",
+                    "-EXIF:CreateDate",
+                    "-XMP:CreateDate",
+                    "-XMP-xmp:CreateDate",
+                    "-EXIF:DateTimeDigitized",
+                    "-Composite:SubSecDateTimeOriginal",
+                    "-Composite:SubSecCreateDate",
+                    *chunk,
+                ]
+            )
+            try:
+                data = json.loads(stdout)
+            except Exception as e:
+                raise ExifToolError("Failed to parse exiftool JSON output") from e
+            for rec in data:
+                src, state = self._parse_keyword_record(rec)
+                if src is not None:
+                    out[normalize_path(src)] = state
+
+        return out
 
     def write_keywords(self, file_paths: list[str], keywords: list[str], keep_backup: bool) -> None:
         kws = dedupe_casefold([k.strip() for k in keywords if k.strip()])

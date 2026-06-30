@@ -6,9 +6,13 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, ExifToolError, KeywordState
+from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import SUPPORTED_EXTS, dedupe_casefold, extract_image_paths_from_urls, normalize_path
+
+
+DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -76,6 +80,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache: dict[str, KeywordState] = {}
         self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
         self._folder_scans_inflight: set[tuple[str, bool]] = set()
+        self._index_root: str | None = None
+        self._index_sync_inflight: set[str] = set()
         self._selection_token = 0
         self._filter_token = 0
         self._filter_queue: list[list[str]] = []
@@ -166,6 +172,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.onlyUntagged.toggled.connect(
             lambda _checked: self.apply_iptc_filter_async(reset_preserved=True)
         )
+        self.dbSearchEdit = QtWidgets.QLineEdit()
+        self.dbSearchEdit.setPlaceholderText("Search DB tags/date...")
+        self.dbSearchEdit.setToolTip("Reverse search in the SQLite index: tag:foo or date:2024")
+        self.dbSearchEdit.returnPressed.connect(self.apply_db_search)
+        self.dbSearchBtn = QtWidgets.QPushButton("Search")
+        self.dbSearchBtn.clicked.connect(self.apply_db_search)
+        self.dbSearchClearBtn = QtWidgets.QPushButton("Clear")
+        self.dbSearchClearBtn.clicked.connect(self.clear_db_search)
         self.filterInfoLabel = QtWidgets.QLabel("")
         self.filterInfoLabel.setToolTip("Filter result count")
 
@@ -242,6 +256,13 @@ class MainWindow(QtWidgets.QMainWindow):
         filesPanel = QtWidgets.QWidget()
         filesLayout = QtWidgets.QVBoxLayout(filesPanel)
         filesLayout.setContentsMargins(0, 0, 0, 0)
+        filesSearchRowW = QtWidgets.QWidget()
+        filesSearchRow = QtWidgets.QHBoxLayout(filesSearchRowW)
+        filesSearchRow.setContentsMargins(0, 0, 0, 0)
+        filesSearchRow.addWidget(self.dbSearchEdit, 1)
+        filesSearchRow.addWidget(self.dbSearchBtn)
+        filesSearchRow.addWidget(self.dbSearchClearBtn)
+        filesLayout.addWidget(filesSearchRowW)
         filesTopRow = QtWidgets.QHBoxLayout()
         filesTopRow.setContentsMargins(0, 0, 0, 0)
         filesTopRow.addWidget(self.onlyUntagged)
@@ -356,6 +377,86 @@ class MainWindow(QtWidgets.QMainWindow):
             "knownFilter": self.knownFilter,
             "cmdLine": self.cmdLine,
         }
+
+    def _index_root_for_paths(self, paths: list[str]) -> str | None:
+        root = resolve_index_root(paths, preferred_root=DEFAULT_INDEX_ROOT)
+        return str(root) if root is not None else self._index_root
+
+    def _photo_index(self, root: str | None) -> PhotoIndex | None:
+        if not root:
+            return None
+        return PhotoIndex(root)
+
+    def _schedule_index_sync(self, root: str | None) -> None:
+        if not root:
+            return
+        root = normalize_path(root)
+        index = PhotoIndex(root)
+        if index.is_initialized():
+            self._index_root = root
+            return
+        if root in self._index_sync_inflight:
+            return
+        self._index_sync_inflight.add(root)
+        self._index_root = root
+        self.statusBar().showMessage("Indexing photos...")
+
+        worker = Worker(self._run_index_sync, root)
+
+        def _ok(result: IndexSyncResult) -> None:
+            self._index_sync_inflight.discard(root)
+            if self._index_root == root:
+                self.statusBar().showMessage(
+                    f"Index ready: {result.updated_count} updated, {result.deleted_count} removed"
+                )
+                self.refresh_known_tags()
+
+        def _err(msg: str) -> None:
+            self._index_sync_inflight.discard(root)
+            if self._index_root == root:
+                self.statusBar().showMessage("Indexing failed")
+                self._show_error(msg)
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker)
+
+    def _run_index_sync(self, root: str) -> IndexSyncResult:
+        index = PhotoIndex(root)
+        return index.sync_root(self.exif)
+
+    def _update_index_states(self, states: dict[str, KeywordState]) -> None:
+        if not states:
+            return
+        root = self._index_root_for_paths(list(states.keys()))
+        if not root:
+            return
+        index = self._photo_index(root)
+        if index is None:
+            return
+        index.update_states(states)
+
+    def _index_missing_paths(self, root: str, paths: list[str]) -> None:
+        index = PhotoIndex(root)
+        existing = index.has_photos(paths)
+        missing = [normalize_path(p) for p in paths if normalize_path(p) not in existing]
+        if not missing:
+            return
+
+        worker = Worker(self.exif.read_keywords_many, missing)
+
+        def _ok(states: dict[str, KeywordState]) -> None:
+            if states:
+                index.update_states(states)
+                self._keywords_cache.update(states)
+                self.refresh_known_tags()
+
+        def _err(msg: str) -> None:
+            self._show_error(msg)
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker)
 
     def _build_action_handlers(self) -> dict[str, Callable[[], None]]:
         return {
@@ -1161,6 +1262,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self.apply_iptc_filter_async()
         if last_added_path:
             self._set_last_folder(str(Path(last_added_path).parent))
+        root = self._index_root_for_paths(self.all_file_paths())
+        if root:
+            self._index_root = root
+            index = PhotoIndex(root)
+            if index.is_initialized():
+                self._index_missing_paths(root, paths)
+            else:
+                self._schedule_index_sync(root)
 
     def _reset_files_pane_for_reload(self) -> None:
         # Cancel in-flight async work that would render stale UI.
@@ -1175,6 +1284,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_preserved = set()
         self._folder_tag_cache = {}
         self._folder_scans_inflight = set()
+        self._index_root = None
 
         # Clear list + selection without spamming selection-changed handlers mid-reset.
         self.files.blockSignals(True)
@@ -1207,6 +1317,10 @@ class MainWindow(QtWidgets.QMainWindow):
         if paths:
             self.add_files(paths)
         self._set_last_folder(folder)
+        root = self._index_root_for_paths(paths or [folder])
+        if root:
+            self._index_root = root
+        self._schedule_index_sync(root)
         if self.files.count() > 0:
             self.files.setFocus()
             if self.files.currentRow() < 0:
@@ -1292,6 +1406,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if token != self._selection_token:
                 return
             self._keywords_cache[current] = st
+            self._update_index_states({current: st})
             self._render_keywords(st)
             if st.date_display:
                 self.dateLabel.setText(f"Capture date: {st.date_display}")
@@ -1588,6 +1703,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_tag_mutation_result(self, result: TagMutationResult) -> None:
         self._keywords_cache.update(result.updated_states)
+        self._update_index_states(result.updated_states)
         self._refresh_current_keywords_view_from_cache()
         self._apply_filter_visibility_changes(result.emptiness_by_path)
 
@@ -1682,6 +1798,51 @@ class MainWindow(QtWidgets.QMainWindow):
             if not self.files.item(i).isHidden():
                 shown += 1
         self.filterInfoLabel.setText(f"{shown}/{total}")
+
+    def clear_db_search(self) -> None:
+        self.dbSearchEdit.clear()
+        self._apply_db_search_results(None)
+        self.statusBar().showMessage("DB search cleared")
+        self.on_selection_changed()
+
+    def apply_db_search(self) -> None:
+        query = (self.dbSearchEdit.text() or "").strip()
+        if not query:
+            self.clear_db_search()
+            return
+        if self.onlyUntagged.isChecked():
+            self.onlyUntagged.setChecked(False)
+        root = self._index_root_for_paths(self.all_file_paths())
+        if not root:
+            self.statusBar().showMessage("No index root available")
+            return
+        try:
+            matches = set(PhotoIndex(root).search_photos(query))
+        except Exception as e:
+            self._show_error(str(e))
+            return
+        self._apply_db_search_results(matches)
+        self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
+
+    def _apply_db_search_results(self, matches: set[str] | None) -> None:
+        def _do() -> None:
+            first_visible_row: int | None = None
+            for i in range(self.files.count()):
+                it = self.files.item(i)
+                if it is None:
+                    continue
+                show = True if matches is None else normalize_path(it.text()) in matches
+                it.setHidden(not show)
+                if show and first_visible_row is None:
+                    first_visible_row = i
+
+            current = self.files.currentItem()
+            current_visible = current is not None and not current.isHidden()
+            if first_visible_row is not None and not current_visible:
+                self.files.setCurrentRow(first_visible_row)
+
+        self._preserve_files_scroll(_do)
+        self._ensure_files_focus_visible()
 
     def _sync_filter_preserved_selection(self, selected_paths: list[str]) -> None:
         if not self.onlyUntagged.isChecked() or not self._filter_preserved:
@@ -1786,12 +1947,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def force_refresh_known_tags(self) -> None:
-        sel = self.selected_file_paths()
-        if sel:
-            folder = str(Path(sel[0]).resolve().parent)
-            key = (folder, self.recursiveScan.isChecked())
-            self._folder_tag_cache.pop(key, None)
-            self._folder_scans_inflight.discard(key)
         self.refresh_known_tags()
 
     def refresh_known_tags(self) -> None:
@@ -1799,15 +1954,15 @@ class MainWindow(QtWidgets.QMainWindow):
         recent = load_recent_tags()
 
         folder_tags: set[str] = set()
-        sel = self.selected_file_paths()
-        if sel:
-            folder = str(Path(sel[0]).resolve().parent)
-            key = (folder, self.recursiveScan.isChecked())
-            cached = self._folder_tag_cache.get(key)
-            if cached is None:
-                self._ensure_folder_scan(folder, self.recursiveScan.isChecked())
-                cached = set()
-            folder_tags = cached
+        paths = self.selected_file_paths() or self.all_file_paths()
+        if paths:
+            root = self._index_root_for_paths(paths)
+            if root:
+                self._index_root = root
+                try:
+                    folder_tags = PhotoIndex(root).load_tags_for_root()
+                except Exception:
+                    folder_tags = set()
 
         combined = []
         seen_lower: set[str] = set()
@@ -1856,33 +2011,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"Only IPTC-empty: {state}")
 
     def _ensure_folder_scan(self, folder: str, recursive: bool) -> None:
-        key = (folder, recursive)
-        if key in self._folder_tag_cache:
-            return
-        if key in self._folder_scans_inflight:
-            return
-        self._folder_scans_inflight.add(key)
-
-        token = self._selection_token
-        self.statusBar().showMessage("Scanning folder tags...")
-        worker = Worker(self.exif.scan_folder_tags, folder, recursive)
-
-        def _ok(tags: set[str]) -> None:
-            self._folder_tag_cache[key] = tags
-            self._folder_scans_inflight.discard(key)
-            if token == self._selection_token:
-                self.statusBar().showMessage("Ready")
-                self.refresh_known_tags()
-
-        def _err(msg: str) -> None:
-            self._folder_tag_cache[key] = set()
-            self._folder_scans_inflight.discard(key)
-            if token == self._selection_token:
-                self.statusBar().showMessage("Ready")
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        self._schedule_index_sync(folder)
 
     def _show_error(self, msg: str) -> None:
         QtWidgets.QMessageBox.critical(self, "Error", msg)
@@ -1907,6 +2036,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def _ok(res: TagMutationResult) -> None:
             if token == self._selection_token:
                 self._keywords_cache.update(res.updated_states)
+                self._update_index_states(res.updated_states)
                 self._apply_filter_visibility_changes(res.emptiness_by_path)
                 self.statusBar().showMessage(f"Resolved {res.changed_count} file(s)")
                 self.on_selection_changed()
