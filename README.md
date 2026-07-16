@@ -16,7 +16,7 @@ Features (MVP)
 - Filter: show only files with empty IPTC keywords
 
 Commands & shortcuts
-- Command line: press `:` to open, `:ls` to list commands, `:q`/`:quit` to quit, `Tab` to complete
+- Command line: press `:` to open; `:ls`, `:list`, `:h`, `:help`, or `F1` list commands; `:q`/`:quit` quits; `Tab` completes
 - `Esc` closes command line / exits text fields
 - Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus
 - Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files

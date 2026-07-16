@@ -53,7 +53,8 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="listcommands",
             description="List all commands",
             handler_name="_cmd_list_commands",
-            command=CommandBinding("listcommands", aliases=("ls",)),
+            command=CommandBinding("listcommands", aliases=("ls", "list", "h", "help")),
+            shortcuts=(ShortcutBinding("F1"),),
         ),
         ActionSpec(
             id="quit",
