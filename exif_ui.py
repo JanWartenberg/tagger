@@ -101,7 +101,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
-        self.files.setToolTip("Focus: f / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p")
+        self.files.setToolTip("Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p")
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -134,7 +134,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.keywordsList = QtWidgets.QListWidget()
         self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.keywordsList.setToolTip("Focus: l / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V")
+        self.keywordsList.setToolTip("Focus: l / Alt+3 / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V")
 
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
@@ -163,7 +163,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownList = QtWidgets.QListWidget()
         self.knownList.itemActivated.connect(self.add_keyword_from_known)
         self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
-        self.knownList.setToolTip("Focus: t / Ctrl+W J · Navigate: j/k, n/N")
+        self.knownList.setToolTip("Focus: t / Alt+2 / Ctrl+W J · Navigate: j/k, n/N")
 
         self.recursiveScan = QtWidgets.QCheckBox("Recursive scan")
         self.recursiveScan.setToolTip("Include subfolders when building tag repo")
@@ -474,6 +474,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_focus_add_edit_select_all": self._focus_add_edit_select_all,
             "_focus_pane_files": self._focus_pane_files,
             "_focus_pane_known": self._focus_pane_known,
+            "_focus_pane_keywords": self._focus_pane_keywords,
             "_toggle_keep_backup": self._toggle_keep_backup,
             "_toggle_only_iptc_empty": self._toggle_only_iptc_empty,
             "_focus_next_pane": self._focus_next_pane,
@@ -1056,6 +1057,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _focus_pane_known(self) -> None:
         self._focus_pane(self.knownList)
+
+    def _focus_pane_keywords(self) -> None:
+        self._focus_pane(self.keywordsList)
 
     def _focus_pane_left(self) -> None:
         self._focus_pane_by_direction("left")

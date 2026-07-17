@@ -126,6 +126,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Focus files pane",
             handler_name="_focus_pane_files",
             command=CommandBinding("focusfiles"),
+            shortcuts=(ShortcutBinding("Alt+1"),),
             key_routes=(KeyRoute(kind="single", sequence=("f",), scope="global_non_input"),),
         ),
         ActionSpec(
@@ -133,7 +134,14 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Focus known-tags pane",
             handler_name="_focus_pane_known",
             command=CommandBinding("focustags"),
+            shortcuts=(ShortcutBinding("Alt+2"),),
             key_routes=(KeyRoute(kind="single", sequence=("t",), scope="global_non_input"),),
+        ),
+        ActionSpec(
+            id="focuskeywords",
+            description="Focus selected-tags pane",
+            handler_name="_focus_pane_keywords",
+            shortcuts=(ShortcutBinding("Alt+3"),),
         ),
         ActionSpec(
             id="togglebackup",
