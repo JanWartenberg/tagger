@@ -1,5 +1,7 @@
 # Indexing Plan (D:\Fotos)
 
+> **Status:** This is a future-state plan and has not been fully implemented. During behavior-preserving refactors, the current executable behavior is authoritative; do not treat this document as the existing behavior specification.
+
 Goal: fast tag/date search for 1–3k photos without UI blocking.
 
 ## Scope
