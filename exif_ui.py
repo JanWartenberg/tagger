@@ -347,7 +347,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Extra shortcuts (work regardless of focus)
         self._shortcuts: list[QtGui.QShortcut] = []
-        self._vim_g_pending: dict[int, int] = {}
+        self._vim_repeated_key_pending: dict[tuple[str, int], int] = {}
         self._vim_space_pending: int | None = None
         self._vim_visual_keywords = False
         self._vim_visual_anchor = 0
@@ -539,8 +539,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _format_key_route_label(self, route: KeyRoute) -> str:
         if route.kind == "sequence":
-            if route.sequence == ("g", "g"):
-                return "gg"
+            if len(route.sequence) == 2 and route.sequence[0] == route.sequence[1]:
+                return "".join(route.sequence)
             return "+".join(route.sequence)
         return route.sequence[0]
 
@@ -718,20 +718,28 @@ class MainWindow(QtWidgets.QMainWindow):
         timeout_ms = route.timeout_ms or 600
         now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
 
-        if prefix == "g":
+        if prefix == suffix:
             if list_widget is None:
                 return False
-            key = id(list_widget)
-            last = self._vim_g_pending.get(key)
-            if token == prefix:
-                self._vim_g_pending[key] = now
-                return True
-            if token == suffix and last is not None and (now - last) <= timeout_ms:
-                self._vim_g_pending.pop(key, None)
+            if route.widget_refs:
+                allowed_widgets = {
+                    self._widget_refs[ref]
+                    for ref in route.widget_refs
+                    if ref in self._widget_refs
+                }
+                if list_widget not in allowed_widgets:
+                    return False
+            key = (prefix, id(list_widget))
+            last = self._vim_repeated_key_pending.get(key)
+            if token == prefix and last is not None and (now - last) <= timeout_ms:
+                self._vim_repeated_key_pending.pop(key, None)
                 self._dispatch_action(action_id)
                 return True
-            if last is not None and (now - last) > timeout_ms:
-                self._vim_g_pending.pop(key, None)
+            if token == prefix:
+                self._vim_repeated_key_pending[key] = now
+                return True
+            if last is not None:
+                self._vim_repeated_key_pending.pop(key, None)
             return False
 
         if prefix == "Space":
