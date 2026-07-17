@@ -96,6 +96,15 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="remove_selected_keywords",
             command=CommandBinding("removetags"),
             shortcuts=(ShortcutBinding("Backspace"), ShortcutBinding("Del")),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("d", "d"),
+                    scope="list_widgets",
+                    widget_refs=("keywordsList",),
+                    timeout_ms=600,
+                ),
+            ),
         ),
         ActionSpec(
             id="focusfilter",
@@ -252,6 +261,24 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
                     sequence=("Space", "y"),
                     scope="list_widgets",
                     widget_refs=("keywordsList",),
+                    timeout_ms=600,
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="yankcurrent",
+            description="Yank all tags from current file",
+            handler_name="_yank_current_file_tags",
+            command=CommandBinding("yankcurrent"),
+            shortcuts=(
+                ShortcutBinding("Ctrl+C", widget_ref="files", context=widget_shortcut),
+            ),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("Space", "y"),
+                    scope="list_widgets",
+                    widget_refs=("files",),
                     timeout_ms=600,
                 ),
             ),

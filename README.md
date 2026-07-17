@@ -13,7 +13,7 @@ Features (MVP)
 - "Resolve" button to merge+sync both fields when they differ
 - "Known tags": recent (last 100) + tags found in the same folder
 - Recursive scan toggle for known tags (default OFF)
-- Filter: show only files with empty IPTC keywords
+- Filter: show only files with empty IPTC keywords; after tagging, the image remains available for one step back so its tags can be copied
 
 Commands & shortcuts
 - Command line: press `:` to open; `:ls`, `:list`, `:h`, `:help`, or `F1` list commands; `:q`/`:quit` quits; `Tab` completes
@@ -22,7 +22,8 @@ Commands & shortcuts
 - Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files
 - Known tag filter: `/` or `Ctrl+F` focuses and selects text, `n/N` move in matches
 - Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
-- Tags: `Shift+V` visual select, `Ctrl+C` yank, `Ctrl+V` paste (current file)
+- Tags: `Shift+V` visual select, `Ctrl+C` yank selected tags, `Ctrl+V` paste (current file), `dd`/`Del`/`Backspace` delete selected tags
+- File list: `Ctrl+C` or `Space y` yanks all tags from the current file; `Ctrl+V` or `Space p` pastes them onto the current file
 - Toggles: `Ctrl+Shift+B` keep *_original backups, `Ctrl+Shift+E` only IPTC-empty
 
 Prerequisites

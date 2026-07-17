@@ -91,14 +91,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filter_processed = 0
         self._filter_first_chunk = True
         self._filter_switched = False
+        # Tagged files stay visible while selected, plus for one navigation step
+        # afterwards, so their keywords can be copied to the next image.
         self._filter_preserved: set[str] = set()
+        self._filter_previous_selection: set[str] = set()
 
         self._config = load_config()
 
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
-        self.files.setToolTip("Focus: f / Ctrl+W H · Navigate: j/k, gg/G")
+        self.files.setToolTip("Focus: f / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p")
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -142,7 +145,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addBtn.setToolTip("Add keyword to selected file(s) (Ctrl+Enter)")
         self.removeBtn = QtWidgets.QPushButton("Remove selected")
         self.removeBtn.clicked.connect(self.remove_selected_keywords)
-        self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace)")
+        self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace/dd)")
 
         self.keepBackup = QtWidgets.QCheckBox("Keep *_original backups (exiftool default)")
         self.keepBackup.setChecked(True)
@@ -486,6 +489,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_action_known_prev": self._action_known_prev,
             "_toggle_visual_keywords": self._toggle_visual_keywords,
             "_yank_selected_tags": self._yank_selected_tags,
+            "_yank_current_file_tags": self._yank_current_file_tags,
             "_paste_yanked_tags": self._paste_yanked_tags,
             "_escape_action": self._escape_action,
             "_open_command_line": self._open_command_line,
@@ -1138,6 +1142,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self._yanked_tags = tags
         self.statusBar().showMessage(f"Yanked {len(tags)} tag(s)")
 
+    def _yank_current_file_tags(self) -> None:
+        files = self.selected_file_paths()
+        if not files:
+            self.statusBar().showMessage("No file selected")
+            return
+        state = self._keywords_cache.get(files[0])
+        if state is None:
+            self.statusBar().showMessage("Tags are still loading")
+            return
+        self._yanked_tags = state.merged
+        if not self._yanked_tags:
+            self.statusBar().showMessage("Current file has no tags")
+            return
+        self.statusBar().showMessage(f"Yanked all {len(self._yanked_tags)} tag(s)")
+
     def _paste_yanked_tags(self) -> None:
         if not self._yanked_tags:
             self.statusBar().showMessage("Yank tags first")
@@ -1282,6 +1301,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache = {}
         self._filter_map = {}
         self._filter_preserved = set()
+        self._filter_previous_selection = set()
         self._folder_tag_cache = {}
         self._folder_scans_inflight = set()
         self._index_root = None
@@ -1568,7 +1588,9 @@ class MainWindow(QtWidgets.QMainWindow):
         token = self._filter_token
         if reset_preserved:
             self._filter_preserved = set()
+            self._filter_previous_selection = set()
         if not self.onlyUntagged.isChecked():
+            self._filter_previous_selection = set()
             for i in range(self.files.count()):
                 self.files.item(i).setHidden(False)
                 self.files.item(i).setBackground(QtGui.QBrush())
@@ -1845,10 +1867,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ensure_files_focus_visible()
 
     def _sync_filter_preserved_selection(self, selected_paths: list[str]) -> None:
-        if not self.onlyUntagged.isChecked() or not self._filter_preserved:
+        if not self.onlyUntagged.isChecked():
+            self._filter_previous_selection = set()
             return
+
         selected = {normalize_path(p) for p in selected_paths}
-        released = self._filter_preserved - selected
+        # Keep a just-tagged image visible when moving to the next result. This
+        # provides one step back for copying its tags without turning the filter
+        # into a growing list of already-tagged files.
+        allowed = selected | self._filter_previous_selection
+        released = self._filter_preserved - allowed
         if released:
             def _do():
                 for path in released:
@@ -1859,7 +1887,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     if st is not None:
                         it.setHidden(len(st.iptc) > 0)
             self._preserve_files_scroll(_do)
-        self._filter_preserved &= selected
+        self._filter_preserved &= allowed
+        self._filter_previous_selection = selected
 
     def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
         if not self.onlyUntagged.isChecked():
