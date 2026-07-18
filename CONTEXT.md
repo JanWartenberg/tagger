@@ -24,10 +24,22 @@ A pending tag mutation that has not yet been sent to ExifTool. TAGGER discards i
 A pending tag mutation already sent to ExifTool. It may complete after a Photo Workspace change, but it must not update the new Photo Workspace view.
 
 **Failed tag mutation**:
-A pending tag mutation that could not be written. TAGGER restores the last confirmed metadata state and exposes a retry instead of presenting the failed requested state as file truth.
+A pending tag mutation that could not be written. TAGGER restores the last confirmed metadata state and exposes a user-initiated retry instead of presenting the failed requested state as file truth. TAGGER does not retry it automatically. It persists for the application session after its photo leaves the Photo Workspace, and is shown again if that photo returns.
+
+**Unresolved mutation indicator**:
+A persistent, non-alarming attention marker on a photo with a failed tag mutation. It is distinct from the pending-mutation indicator and tells the user that an explicit retry remains available. It presents the normal retry guidance, not a technical failure reason.
+
+**Application session**:
+The lifetime of one running TAGGER process. Failed tag mutations and their unresolved mutation indicators exist only during this session and are not persisted across restart.
 
 **Partial tag mutation**:
 A multi-photo tag mutation with both confirmed and failed photo writes. Confirmed photos retain their changes; only failed photos are restored, marked failed, and included in a retry.
+
+**Superseding tag mutation**:
+A later requested tag change for the same photo that covers failed intent for one or more tag identities. The later intent wins for each covered tag; only unrelated failed intent remains visible and retryable.
+
+**Tag intent**:
+A requested add or remove operation for one tag identity on one photo. Tag intents are compared case-insensitively. A mutation may contain multiple tag intents. When replayed after a fresh read, it takes precedence for its tag identity while unrelated external metadata changes remain intact.
 
 **Pending mutation sequence**:
 The ordered pending tag mutations for one photo. If an earlier mutation fails, later pending mutations remain requested and are recomputed from the last confirmed metadata state rather than discarded.
