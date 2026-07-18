@@ -1,6 +1,6 @@
 # Reliable Tag Mutations
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement
