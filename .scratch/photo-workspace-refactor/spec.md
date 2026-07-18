@@ -1,6 +1,6 @@
 # Photo Workspace Refactor
 
-Status: ready-for-agent
+Status: completed
 
 ## Problem Statement
 
@@ -103,4 +103,4 @@ All observable behavior and stable outside interfaces remain unchanged. The refa
 
 - Frozen-snapshot IPTC-empty filtering is recorded as deferred follow-up work. Activating that future behavior would capture the photos that are empty at activation time and keep the resulting list fixed until the filter is reapplied.
 - The architecture review also identified tag mutation, indexing, and action dispatch as later deepening opportunities. They are intentionally independent from this refactor.
-- The environment used for agent work has Python but not PyQt or pytest; the repository's checked-in virtual environment is Windows-specific. This is why the pure model test seam is mandatory and Qt acceptance remains a Windows step.
+- The repository's checked-in virtual environment is Windows-specific. Linux agent validation passed with the available system PyQt6, while the required Windows offscreen acceptance remains a Windows-environment step.

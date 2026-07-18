@@ -5,12 +5,17 @@ from typing import Callable
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
-from exif_tool import ExifTool, ExifToolError, KeywordState
+from exif_tool import ExifTool, KeywordState
 from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
 from photo_workspace import PhotoWorkspace, PhotoWorkspaceSnapshot
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
-from utils import SUPPORTED_EXTS, dedupe_casefold, extract_image_paths_from_urls, normalize_path
+from utils import (
+    SUPPORTED_EXTS,
+    dedupe_casefold,
+    extract_image_paths_from_urls,
+    normalize_path,
+)
 
 
 DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
@@ -22,7 +27,9 @@ class FileListWidget(QtWidgets.QListWidget):
     def __init__(self) -> None:
         super().__init__()
         self.setAcceptDrops(True)
-        self.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+        )
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -76,7 +83,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
-        self._mutation_queue: list[tuple[Callable[[], TagMutationResult], str | None]] = []
+        self._mutation_queue: list[
+            tuple[Callable[[], TagMutationResult], str | None]
+        ] = []
         self._mutation_inflight = False
         self._keywords_cache: dict[str, KeywordState] = {}
         self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
@@ -91,13 +100,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.add_files)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
-        self.files.setToolTip("Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p")
+        self.files.setToolTip(
+            "Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p"
+        )
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
-        self.selectedLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.selectedLabel.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
 
         self.dateLabel = QtWidgets.QLabel("")
-        self.dateLabel.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.dateLabel.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
         self.copyDateBtn = QtWidgets.QPushButton("Copy EXIF date → XMP")
         self.copyDateBtn.setToolTip("Copy EXIF DateTimeOriginal to XMP:CreateDate")
         self.copyDateBtn.clicked.connect(self.copy_exif_date_to_xmp)
@@ -106,7 +121,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.previewLabel.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.previewLabel.setMinimumHeight(220)
         self.previewLabel.setSizePolicy(
-            QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Expanding,
         )
         self.previewLabel.setContentsMargins(8, 8, 8, 8)
         self.previewLabel.setStyleSheet(
@@ -123,8 +139,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.resolveBtn.setToolTip("Resolve IPTC/XMP mismatch (Ctrl+R)")
 
         self.keywordsList = QtWidgets.QListWidget()
-        self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.keywordsList.setToolTip("Focus: l / Alt+3 / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V")
+        self.keywordsList.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.keywordsList.setToolTip(
+            "Focus: l / Alt+3 / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V"
+        )
 
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
@@ -137,9 +157,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.removeBtn.clicked.connect(self.remove_selected_keywords)
         self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace/dd)")
 
-        self.keepBackup = QtWidgets.QCheckBox("Keep *_original backups (exiftool default)")
+        self.keepBackup = QtWidgets.QCheckBox(
+            "Keep *_original backups (exiftool default)"
+        )
         self.keepBackup.setChecked(False)
-        self.keepBackup.setToolTip("If enabled, exiftool keeps *_original backups (Ctrl+Shift+B)")
+        self.keepBackup.setToolTip(
+            "If enabled, exiftool keeps *_original backups (Ctrl+Shift+B)"
+        )
 
         self.knownFilter = QtWidgets.QLineEdit()
         self.knownFilter.setPlaceholderText("Filter known tags...")
@@ -161,13 +185,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recursiveScan.toggled.connect(self.force_refresh_known_tags)
 
         self.onlyUntagged = QtWidgets.QCheckBox("Only IPTC-empty")
-        self.onlyUntagged.setToolTip("Show only files without IPTC keywords (Ctrl+Shift+E)")
+        self.onlyUntagged.setToolTip(
+            "Show only files without IPTC keywords (Ctrl+Shift+E)"
+        )
         self.onlyUntagged.toggled.connect(
-            lambda _checked: self.apply_iptc_filter_async(reset_preserved=True)
+            lambda _checked: self.apply_iptc_filter_async()
         )
         self.dbSearchEdit = QtWidgets.QLineEdit()
         self.dbSearchEdit.setPlaceholderText("Search DB tags/date...")
-        self.dbSearchEdit.setToolTip("Reverse search in the SQLite index: tag:foo or date:2024")
+        self.dbSearchEdit.setToolTip(
+            "Reverse search in the SQLite index: tag:foo or date:2024"
+        )
         self.dbSearchEdit.returnPressed.connect(self.apply_db_search)
         self.dbSearchBtn = QtWidgets.QPushButton("Search")
         self.dbSearchBtn.clicked.connect(self.apply_db_search)
@@ -294,7 +322,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._cmdHint = QtWidgets.QLabel(self)
         self._cmdHint.setVisible(False)
-        self._cmdHint.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._cmdHint.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
         self._cmdHint.setStyleSheet(
             "QLabel { background: palette(window); border: 1px solid palette(mid); "
             "border-radius: 4px; padding: 2px 6px; }"
@@ -302,7 +332,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._tagHint = QtWidgets.QLabel(self)
         self._tagHint.setVisible(False)
-        self._tagHint.setAlignment(QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        self._tagHint.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
         self._tagHint.setStyleSheet(
             "QLabel { background: palette(window); border: 1px solid palette(mid); "
             "border-radius: 4px; padding: 2px 6px; }"
@@ -353,7 +385,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _init_actions(self) -> None:
         specs = build_action_specs()
         self._actions_by_id = {spec.id: spec for spec in specs}
-        self._listed_actions = [spec for spec in specs if spec.command is not None and spec.show_in_help]
+        self._listed_actions = [
+            spec for spec in specs if spec.command is not None and spec.show_in_help
+        ]
         self._widget_refs = self._build_widget_refs()
         self._action_handlers = self._build_action_handlers()
         self._commands_by_name = {}
@@ -432,7 +466,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _index_missing_paths(self, root: str, paths: list[str]) -> None:
         index = PhotoIndex(root)
         existing = index.has_photos(paths)
-        missing = [normalize_path(p) for p in paths if normalize_path(p) not in existing]
+        missing = [
+            normalize_path(p) for p in paths if normalize_path(p) not in existing
+        ]
         if not missing:
             return
 
@@ -499,7 +535,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 shortcut = QtGui.QShortcut(QtGui.QKeySequence(binding.sequence), widget)
                 shortcut.setContext(binding.context)
-                shortcut.activated.connect(lambda action_id=spec.id: self._dispatch_action(action_id))
+                shortcut.activated.connect(
+                    lambda action_id=spec.id: self._dispatch_action(action_id)
+                )
                 self._shortcuts.append(shortcut)
 
     def _index_commands_from_actions(self) -> None:
@@ -517,7 +555,9 @@ class MainWindow(QtWidgets.QMainWindow):
             raise RuntimeError(f"Unknown action: {action_id}")
         handler = self._action_handlers.get(spec.handler_name)
         if handler is None:
-            raise RuntimeError(f"Missing handler for action: {spec.id} ({spec.handler_name})")
+            raise RuntimeError(
+                f"Missing handler for action: {spec.id} ({spec.handler_name})"
+            )
         handler()
 
     def _dispatch_command(self, name: str, args: list[str]) -> None:
@@ -543,8 +583,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if command is not None and spec.id in {"listcommands", "quit"}:
             labels.append(f":{command.name}")
             labels.extend(f":{alias}" for alias in command.aliases)
-        labels.extend(binding.sequence for binding in spec.shortcuts if binding.show_in_help)
-        labels.extend(self._format_key_route_label(route) for route in spec.key_routes if route.show_in_help)
+        labels.extend(
+            binding.sequence for binding in spec.shortcuts if binding.show_in_help
+        )
+        labels.extend(
+            self._format_key_route_label(route)
+            for route in spec.key_routes
+            if route.show_in_help
+        )
         labels.extend(trigger.label for trigger in spec.native_triggers)
         return labels
 
@@ -582,7 +628,9 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.add_files(paths)
                     event.acceptProposedAction()
                     return True
-        if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(event, QtGui.QKeyEvent):
+        if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(
+            event, QtGui.QKeyEvent
+        ):
             if self._handle_shortcut_override(event):
                 return True
         if et == QtCore.QEvent.Type.KeyPress and isinstance(event, QtGui.QKeyEvent):
@@ -593,7 +641,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._last_left_pane = obj
         return super().eventFilter(obj, event)
 
-    def _list_from_obj(self, obj: QtCore.QObject | None) -> QtWidgets.QListWidget | None:
+    def _list_from_obj(
+        self, obj: QtCore.QObject | None
+    ) -> QtWidgets.QListWidget | None:
         cur = obj
         while cur is not None:
             if cur in (self.files, self.knownList, self.keywordsList):
@@ -604,7 +654,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 break
         return None
 
-    def _resolve_current_list_widget(self, obj: QtCore.QObject | None = None) -> QtWidgets.QListWidget | None:
+    def _resolve_current_list_widget(
+        self, obj: QtCore.QObject | None = None
+    ) -> QtWidgets.QListWidget | None:
         return self._list_from_obj(obj) or self._list_from_obj(self.focusWidget())
 
     def _event_token(self, event: QtGui.QKeyEvent) -> str | None:
@@ -671,7 +723,10 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> ActionSpec | None:
         for spec in self._actions_by_id.values():
             for route in spec.key_routes:
-                if route.scope != scope or route.kind not in ("single", "widget_specific"):
+                if route.scope != scope or route.kind not in (
+                    "single",
+                    "widget_specific",
+                ):
                     continue
                 if route.sequence != (token,):
                     continue
@@ -689,7 +744,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         list_widget = self._resolve_current_list_widget()
         for scope in ("global_non_input", "list_widgets"):
-            if self._find_matching_single_route(token, scope, self.focusWidget(), list_widget) is not None:
+            if (
+                self._find_matching_single_route(
+                    token, scope, self.focusWidget(), list_widget
+                )
+                is not None
+            ):
                 event.accept()
                 return True
         return False
@@ -754,7 +814,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     return True
                 self._vim_space_pending = None
                 return False
-            if self._vim_space_pending is not None and (now - self._vim_space_pending) > timeout_ms:
+            if (
+                self._vim_space_pending is not None
+                and (now - self._vim_space_pending) > timeout_ms
+            ):
                 self._vim_space_pending = None
             return False
 
@@ -768,7 +831,9 @@ class MainWindow(QtWidgets.QMainWindow):
         focus = self.focusWidget()
         list_widget = self._resolve_current_list_widget(obj)
 
-        if not isinstance(focus, QtWidgets.QLineEdit) and self._mods_ok(event.modifiers()):
+        if not isinstance(focus, QtWidgets.QLineEdit) and self._mods_ok(
+            event.modifiers()
+        ):
             for scope in ("global_non_input", "list_widgets"):
                 match = self._find_matching_single_route(token, scope, obj, list_widget)
                 if match is not None:
@@ -777,10 +842,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 for spec in self._actions_by_id.values():
                     for route in spec.key_routes:
                         if route.scope == scope and route.kind == "sequence":
-                            if self._handle_prefix_route(route, spec.id, token, obj, list_widget):
+                            if self._handle_prefix_route(
+                                route, spec.id, token, obj, list_widget
+                            ):
                                 return True
 
-        widget_match = self._find_matching_single_route(token, "widget_exact", obj, list_widget)
+        widget_match = self._find_matching_single_route(
+            token, "widget_exact", obj, list_widget
+        )
         if widget_match is not None:
             self._dispatch_action(widget_match.id)
             return True
@@ -788,7 +857,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for spec in self._actions_by_id.values():
             for route in spec.key_routes:
                 if route.scope == "widget_exact" and route.kind == "sequence":
-                    if self._handle_prefix_route(route, spec.id, token, obj, list_widget):
+                    if self._handle_prefix_route(
+                        route, spec.id, token, obj, list_widget
+                    ):
                         return True
 
         return False
@@ -802,7 +873,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         row = lst.currentRow()
         if row < 0:
-            row = self._first_visible_row(lst) if delta >= 0 else self._last_visible_row(lst)
+            row = (
+                self._first_visible_row(lst)
+                if delta >= 0
+                else self._last_visible_row(lst)
+            )
         else:
             row = self._next_visible_row(lst, row, delta)
         if row is None:
@@ -839,7 +914,18 @@ class MainWindow(QtWidgets.QMainWindow):
             lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
 
+    def _visible_file_rows(self) -> tuple[int, ...]:
+        """Return file-widget rows from the workspace's logical visibility."""
+        snapshot = self.photo_workspace.snapshot()
+        visible_paths = set(snapshot.visible_paths)
+        return tuple(
+            index for index, path in enumerate(snapshot.paths) if path in visible_paths
+        )
+
     def _first_visible_row(self, lst: QtWidgets.QListWidget) -> int | None:
+        if lst is self.files:
+            rows = self._visible_file_rows()
+            return rows[0] if rows else None
         for i in range(lst.count()):
             it = lst.item(i)
             if it is not None and not it.isHidden():
@@ -847,15 +933,26 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _last_visible_row(self, lst: QtWidgets.QListWidget) -> int | None:
+        if lst is self.files:
+            rows = self._visible_file_rows()
+            return rows[-1] if rows else None
         for i in range(lst.count() - 1, -1, -1):
             it = lst.item(i)
             if it is not None and not it.isHidden():
                 return i
         return None
 
-    def _next_visible_row(self, lst: QtWidgets.QListWidget, start: int, delta: int) -> int | None:
+    def _next_visible_row(
+        self, lst: QtWidgets.QListWidget, start: int, delta: int
+    ) -> int | None:
         if delta == 0:
             return start
+        if lst is self.files:
+            rows = self._visible_file_rows()
+            if start not in rows:
+                return rows[0] if delta > 0 and rows else rows[-1] if rows else None
+            next_index = rows.index(start) + (1 if delta > 0 else -1)
+            return rows[next_index] if 0 <= next_index < len(rows) else start
         step = 1 if delta > 0 else -1
         i = start + step
         while 0 <= i < lst.count():
@@ -1041,11 +1138,16 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _cmd_list_commands(self, _args: list[str] | None = None) -> None:
         lines: list[str] = []
-        for spec in sorted(self._listed_actions, key=lambda action: action.command.name if action.command else action.id):
+        for spec in sorted(
+            self._listed_actions,
+            key=lambda action: action.command.name if action.command else action.id,
+        ):
             command = spec.command
             if command is None:
                 continue
-            alias = f" (aliases: {', '.join(command.aliases)})" if command.aliases else ""
+            alias = (
+                f" (aliases: {', '.join(command.aliases)})" if command.aliases else ""
+            )
             labels = self._action_help_labels(spec)
             shorts = f" [{', '.join(labels)}]" if labels else ""
             lines.append(f"{command.name}{alias} — {spec.description}{shorts}")
@@ -1127,14 +1229,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self.keywordsList.setSelectionMode(
                 QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
             )
-            self._select_list_range(self.keywordsList, self._vim_visual_anchor, self._vim_visual_anchor)
+            self._select_list_range(
+                self.keywordsList, self._vim_visual_anchor, self._vim_visual_anchor
+            )
         else:
             self.keywordsList.setSelectionMode(
                 QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
             )
             self._set_single_list_selection(self.keywordsList, self._vim_visual_anchor)
 
-    def _select_list_range(self, lst: QtWidgets.QListWidget, start: int, end: int) -> None:
+    def _select_list_range(
+        self, lst: QtWidgets.QListWidget, start: int, end: int
+    ) -> None:
         a = max(0, min(start, end))
         b = min(lst.count() - 1, max(start, end))
         lst.blockSignals(True)
@@ -1149,7 +1255,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _yank_selected_tags(self) -> None:
         items = self.keywordsList.selectedItems()
-        tags = [it.text().strip() for it in items if it is not None and it.text().strip()]
+        tags = [
+            it.text().strip() for it in items if it is not None and it.text().strip()
+        ]
         tags = dedupe_casefold(tags)
         if not tags:
             self.statusBar().showMessage("No tags selected")
@@ -1204,7 +1312,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._set_single_list_selection(pane, 0)
             else:
                 pane.setCurrentRow(0)
-        elif pane is self.keywordsList and not self._vim_visual_keywords and pane.currentRow() >= 0:
+        elif (
+            pane is self.keywordsList
+            and not self._vim_visual_keywords
+            and pane.currentRow() >= 0
+        ):
             self._set_single_list_selection(pane, pane.currentRow())
         pane.setFocus()
 
@@ -1226,7 +1338,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_pane_by_direction(self, direction: str) -> None:
         # NOTE: If pane layout grows more complex, revisit shortcut coherence.
         focus = self.focusWidget()
-        current = focus if focus in (self.files, self.knownList, self.keywordsList) else None
+        current = (
+            focus if focus in (self.files, self.knownList, self.keywordsList) else None
+        )
         if current is None:
             self._focus_pane(self.files)
             return
@@ -1279,7 +1393,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def add_files(self, paths: list[str]) -> None:
         before = self.photo_workspace.snapshot()
-        snapshot = self.photo_workspace.add_paths(normalize_path(path) for path in paths)
+        snapshot = self.photo_workspace.add_paths(
+            normalize_path(path) for path in paths
+        )
         added_paths = [path for path in snapshot.paths if path not in before.paths]
         self._render_photo_workspace(snapshot)
         self.statusBar().showMessage(f"Added {len(added_paths)} files")
@@ -1328,7 +1444,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._reset_files_pane_for_reload()
 
         p = Path(folder)
-        paths = [str(x) for x in p.rglob("*") if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS]
+        paths = [
+            str(x)
+            for x in p.rglob("*")
+            if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS
+        ]
         if paths:
             self.add_files(paths)
         self._set_last_folder(folder)
@@ -1407,21 +1527,10 @@ class MainWindow(QtWidgets.QMainWindow):
         return st
 
     def on_selection_changed(self) -> None:
-        selected_items = self.files.selectedItems()
-        requested_paths = tuple(item.text() for item in selected_items)
+        requested_paths = tuple(item.text() for item in self.files.selectedItems())
         snapshot = self.photo_workspace.select_paths(requested_paths)
-        visible_paths = tuple(
-            self.files.item(index).text()
-            for index in range(self.files.count())
-            if not self.files.item(index).isHidden()
-        )
-        if snapshot.iptc_empty_filter_active and (
-            snapshot.visible_paths != visible_paths
-            or snapshot.selected_paths != requested_paths
-        ):
-            self._preserve_files_scroll(
-                lambda: self._render_photo_workspace(snapshot)
-            )
+        if snapshot.iptc_empty_filter_active:
+            self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
         sel = list(snapshot.selected_paths)
         if not sel:
             self.selectedLabel.setText("Drop JPG/JPEG files here")
@@ -1523,7 +1632,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _render_keywords(self, st: KeywordState) -> None:
         self._vim_visual_keywords = False
-        self.keywordsList.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.keywordsList.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.keywordsList.clear()
         for kw in st.merged:
             self.keywordsList.addItem(kw)
@@ -1558,7 +1669,9 @@ class MainWindow(QtWidgets.QMainWindow):
                         item = cand
                         break
             if item is not None:
-                view.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop)
+                view.scrollToItem(
+                    item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+                )
                 sb.setValue(sb.value() + top_offset)
 
     def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
@@ -1671,7 +1784,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _current_keywords_from_ui(self) -> list[str]:
         items = [self.keywordsList.item(i) for i in range(self.keywordsList.count())]
-        return [it.text().strip() for it in items if it is not None and it.text().strip()]
+        return [
+            it.text().strip() for it in items if it is not None and it.text().strip()
+        ]
 
     def _optimistic_mutation(
         self,
@@ -1787,9 +1902,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._update_filter_label(snapshot)
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
 
-    def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
+    def _apply_filter_visibility_changes(
+        self, emptiness_by_path: dict[str, bool]
+    ) -> None:
         """Render filter facts accepted by the workspace after a tag mutation."""
-        if not self.onlyUntagged.isChecked():
+        if not self.photo_workspace.snapshot().iptc_empty_filter_active:
             return
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)
@@ -1804,7 +1921,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._apply_add_tag(tag)
 
     def add_keyword_from_known(self, item=None) -> None:
-        it = item if isinstance(item, QtWidgets.QListWidgetItem) else self.knownList.currentItem()
+        it = (
+            item
+            if isinstance(item, QtWidgets.QListWidgetItem)
+            else self.knownList.currentItem()
+        )
         if it is None:
             return
         tag = (it.text() or "").strip()
@@ -1817,7 +1938,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        if self.onlyUntagged.isChecked():
+        if self.photo_workspace.snapshot().iptc_empty_filter_active:
             self.photo_workspace.preserve_selected_paths_after_tagging(files)
         optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
         if optimistic.updated_states:
@@ -1839,7 +1960,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        if self.onlyUntagged.isChecked():
+        if self.photo_workspace.snapshot().iptc_empty_filter_active:
             self.photo_workspace.preserve_selected_paths_after_tagging(files)
         items = self.keywordsList.selectedItems()
         if not items:
@@ -1854,7 +1975,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if optimistic.updated_states:
             self._apply_tag_mutation_result(optimistic)
-        self.statusBar().showMessage(f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)")
+        self.statusBar().showMessage(
+            f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)"
+        )
         self._enqueue_tag_mutation(
             lambda: self.tag_mutations.remove_tags(
                 files,

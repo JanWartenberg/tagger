@@ -3,7 +3,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Iterable
+
+
+class PhotoWorkspaceViewMode(str, Enum):
+    """The logical view currently shown by the Photo Workspace."""
+
+    NORMAL = "normal"
+    IPTC_EMPTY = "iptc_empty"
+    DATABASE_SEARCH = "database_search"
 
 
 @dataclass(frozen=True)
@@ -14,6 +23,7 @@ class PhotoWorkspaceSnapshot:
     visible_paths: tuple[str, ...]
     selected_paths: tuple[str, ...]
     active_path: str | None
+    view_mode: PhotoWorkspaceViewMode = PhotoWorkspaceViewMode.NORMAL
     filter_operation_id: int | None = None
     filter_processed: int = 0
     filter_total: int = 0
@@ -37,10 +47,9 @@ class PhotoWorkspace:
         self._paths: list[str] = []
         self._visible: set[str] = set()
         self._selected: set[str] = set()
-        self._database_search_active = False
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
 
         self._operation = 0
-        self._iptc_empty_filter_active = False
         self._filter_running = False
         self._batches: list[tuple[str, ...]] = []
         self._inflight: IptcEmptyFilterBatch | None = None
@@ -61,12 +70,17 @@ class PhotoWorkspace:
             visible_paths=visible,
             selected_paths=selected,
             active_path=selected[0] if selected else None,
+            view_mode=self._view_mode,
             filter_operation_id=self._operation if self._filter_running else None,
             filter_processed=self._processed,
             filter_total=len(self._paths),
-            iptc_empty_filter_active=self._iptc_empty_filter_active,
+            iptc_empty_filter_active=(
+                self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            ),
             filter_view_switched=self._switched,
-            database_search_active=self._database_search_active,
+            database_search_active=(
+                self._view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH
+            ),
         )
 
     def add_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
@@ -86,8 +100,7 @@ class PhotoWorkspace:
         self._paths = []
         self._visible = set()
         self._selected = set()
-        self._database_search_active = False
-        self._iptc_empty_filter_active = False
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._filter_running = False
         self._batches = []
         self._inflight = None
@@ -103,7 +116,7 @@ class PhotoWorkspace:
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
         """Apply a user selection and repair it against the visible paths."""
         self._selected = set(paths) & self._visible
-        if self._iptc_empty_filter_active:
+        if self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
             self._release_expired_preserved_paths()
             self._previous_selection = set(self._selected)
         if self._filter_running:
@@ -112,7 +125,8 @@ class PhotoWorkspace:
         return self.snapshot()
 
     def set_visible_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
-        """Set visibility for an adapter-owned view mode not yet migrated here."""
+        """Set the visible paths for an externally supplied logical view."""
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._visible = set(paths) & set(self._paths)
         self._repair_selection()
         return self.snapshot()
@@ -122,14 +136,14 @@ class PhotoWorkspace:
     ) -> PhotoWorkspaceSnapshot:
         """Show loaded database-search matches and invalidate IPTC filter work."""
         self.clear_iptc_empty_filter()
-        self._database_search_active = True
+        self._view_mode = PhotoWorkspaceViewMode.DATABASE_SEARCH
         self._visible = set(matching_paths) & set(self._paths)
         self._repair_selection()
         return self.snapshot()
 
     def clear_database_search(self) -> PhotoWorkspaceSnapshot:
         """Clear the database-search view and restore all loaded paths."""
-        self._database_search_active = False
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._visible = set(self._paths)
         self._repair_selection()
         return self.snapshot()
@@ -139,8 +153,7 @@ class PhotoWorkspace:
     ) -> PhotoWorkspaceSnapshot:
         """Start an IPTC-empty operation and prepare its metadata batches."""
         self._operation += 1
-        self._database_search_active = False
-        self._iptc_empty_filter_active = True
+        self._view_mode = PhotoWorkspaceViewMode.IPTC_EMPTY
         self._filter_running = True
         self._inflight = None
         self._processed = 0
@@ -168,7 +181,7 @@ class PhotoWorkspace:
     def clear_iptc_empty_filter(self) -> PhotoWorkspaceSnapshot:
         """Disable the filter and invalidate every outstanding batch result."""
         self._operation += 1
-        self._iptc_empty_filter_active = False
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._filter_running = False
         self._batches = []
         self._inflight = None
@@ -185,9 +198,7 @@ class PhotoWorkspace:
         """Return the next requested metadata batch, if one is available."""
         if not self._filter_running or self._inflight is not None or not self._batches:
             return None
-        self._inflight = IptcEmptyFilterBatch(
-            self._operation, self._batches.pop(0)
-        )
+        self._inflight = IptcEmptyFilterBatch(self._operation, self._batches.pop(0))
         return self._inflight
 
     def accepts_iptc_empty_filter_result(self, operation_id: int) -> bool:
@@ -225,9 +236,7 @@ class PhotoWorkspace:
             self._filter_running = False
         return self.snapshot()
 
-    def fail_iptc_empty_filter_batch(
-        self, operation_id: int
-    ) -> PhotoWorkspaceSnapshot:
+    def fail_iptc_empty_filter_batch(self, operation_id: int) -> PhotoWorkspaceSnapshot:
         """Stop a failed operation and restore its last successful view."""
         batch = self._inflight
         if (
@@ -247,7 +256,7 @@ class PhotoWorkspace:
         self, paths: Iterable[str]
     ) -> PhotoWorkspaceSnapshot:
         """Keep tagged selected paths visible for the current and next selection."""
-        if self._iptc_empty_filter_active:
+        if self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
             self._preserved.update(set(paths) & set(self._paths))
             self._matches.update(self._preserved)
             if self._switched or not self._filter_running:
@@ -260,7 +269,7 @@ class PhotoWorkspace:
         self, emptiness_by_path: dict[str, bool]
     ) -> PhotoWorkspaceSnapshot:
         """Apply IPTC facts obtained while a filter is active."""
-        if not self._iptc_empty_filter_active:
+        if self._view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
             return self.snapshot()
 
         known = set(self._paths)

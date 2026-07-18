@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from photo_workspace import PhotoWorkspace
+from photo_workspace import PhotoWorkspace, PhotoWorkspaceViewMode
 
 
 class DatabaseSearchTests(unittest.TestCase):
@@ -12,7 +12,9 @@ class DatabaseSearchTests(unittest.TestCase):
         self.workspace = PhotoWorkspace()
         self.workspace.add_paths(["one.jpg", "two.jpg", "three.jpg"])
 
-    def test_search_shows_only_loaded_matches_and_preserves_visible_selection(self) -> None:
+    def test_search_shows_only_loaded_matches_and_preserves_visible_selection(
+        self,
+    ) -> None:
         self.workspace.select_paths(["two.jpg"])
 
         snapshot = self.workspace.apply_database_search_matches(
@@ -21,6 +23,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
         self.assertEqual(snapshot.visible_paths, ("two.jpg",))
         self.assertEqual(snapshot.selected_paths, ("two.jpg",))
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
         self.assertTrue(snapshot.database_search_active)
 
     def test_search_corrects_hidden_selection_to_the_first_visible_match(self) -> None:
@@ -40,6 +43,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
         self.assertEqual(snapshot.visible_paths, ("one.jpg", "two.jpg", "three.jpg"))
         self.assertEqual(snapshot.selected_paths, ("two.jpg",))
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.NORMAL)
         self.assertFalse(snapshot.database_search_active)
 
     def test_search_invalidates_inflight_iptc_filter_work(self) -> None:
@@ -60,6 +64,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
         snapshot = self.workspace.start_iptc_empty_filter(1, 1)
 
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.IPTC_EMPTY)
         self.assertFalse(snapshot.database_search_active)
         self.assertTrue(snapshot.iptc_empty_filter_active)
 

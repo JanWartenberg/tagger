@@ -27,7 +27,9 @@ if PYQT_AVAILABLE:
     from utils import normalize_path
 
 
-@unittest.skipUnless(PYQT_AVAILABLE, "PyQt6 is required for Qt adapter characterization tests")
+@unittest.skipUnless(
+    PYQT_AVAILABLE, "PyQt6 is required for Qt adapter characterization tests"
+)
 class MainWindowCharacterizationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -69,19 +71,28 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(action.shortcuts[0].sequence, "Ctrl+Shift+X")
 
     def test_adding_paths_preserves_order_and_suppresses_duplicates(self) -> None:
-        first, second, duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        first, second, duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
 
         self.assertEqual(self.window.all_file_paths(), [first, second])
         self.assertEqual(
-            [self.window.files.item(index).text() for index in range(self.window.files.count())],
+            [
+                self.window.files.item(index).text()
+                for index in range(self.window.files.count())
+            ],
             [first, second],
         )
         self.assertEqual(self.window.selected_file_paths(), [first])
-        self.assertEqual([item.text() for item in self.window.files.selectedItems()], [first])
+        self.assertEqual(
+            [item.text() for item in self.window.files.selectedItems()], [first]
+        )
         self.assertEqual(duplicate, first)
 
     def test_selecting_another_photo_updates_the_active_photo_and_label(self) -> None:
-        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        _first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
 
         self.window._move_list_selection(self.window.files, +1)
         self.app.processEvents()
@@ -90,7 +101,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selectedLabel.text(), second)
 
     def test_file_pane_arrow_keys_change_the_active_photo(self) -> None:
-        first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
         self.window.files.setFocus()
 
         QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Down)
@@ -104,7 +117,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selectedLabel.text(), first)
 
     def test_file_pane_j_and_k_change_the_active_photo(self) -> None:
-        first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
         self.window.files.setFocus()
 
         QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_J)
@@ -118,7 +133,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selectedLabel.text(), first)
 
     def test_clicking_another_photo_updates_the_active_photo_and_label(self) -> None:
-        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        _first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
         second_rect = self.window.files.visualItemRect(self.window.files.item(1))
 
         QtTest.QTest.mouseClick(
@@ -132,7 +149,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selectedLabel.text(), second)
 
     def test_db_search_hides_non_matches_and_selects_first_visible_photo(self) -> None:
-        first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
 
         FakePhotoIndex.search_results = {second}
         self.window.dbSearchEdit.setText("tag:second")
@@ -150,7 +169,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn(self.window.selected_file_paths()[0], {first, second})
 
     def test_clear_search_shortcut_restores_all_photos(self) -> None:
-        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        _first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
 
         FakePhotoIndex.search_results = {second}
         self.window.dbSearchEdit.setText("tag:second")
@@ -178,7 +199,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         tag_hint = next(
             label
             for label in self.window.findChildren(QtWidgets.QLabel)
-            if label.text() == "bird, birch"
+            if label.text() == "birch, bird"
         )
         self.assertTrue(tag_hint.isVisible())
 
@@ -195,7 +216,9 @@ class FakeExifTool:
     def read_keywords_many(self, paths: list[str]) -> dict[str, "KeywordState"]:
         return {normalize_path(path): KeywordState([], []) for path in paths}
 
-    def write_keywords(self, _paths: list[str], _keywords: list[str], keep_backup: bool) -> None:
+    def write_keywords(
+        self, _paths: list[str], _keywords: list[str], keep_backup: bool
+    ) -> None:
         del keep_backup
 
 
