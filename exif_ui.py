@@ -473,6 +473,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "add_keyword_from_input": self.add_keyword_from_input,
             "remove_selected_keywords": self.remove_selected_keywords,
             "_focus_known_filter_select_all": self._focus_known_filter_select_all,
+            "_focus_db_search_select_all": self._focus_db_search_select_all,
             "_focus_add_edit_select_all": self._focus_add_edit_select_all,
             "_focus_pane_files": self._focus_pane_files,
             "_focus_pane_known": self._focus_pane_known,
@@ -2044,6 +2045,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_known_filter_select_all(self) -> None:
         self.knownFilter.setFocus()
         self.knownFilter.selectAll()
+
+    def _focus_db_search_select_all(self) -> None:
+        self.dbSearchEdit.setFocus()
+        self.dbSearchEdit.selectAll()
 
     def _focus_add_edit_select_all(self) -> None:
         self.addEdit.setFocus()

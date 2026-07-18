@@ -114,6 +114,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+F"), ShortcutBinding("/")),
         ),
         ActionSpec(
+            id="focusdbsearch",
+            description="Focus photo-tag search",
+            handler_name="_focus_db_search_select_all",
+            shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
+        ),
+        ActionSpec(
             id="focusadd",
             description="Focus add-keyword input",
             handler_name="_focus_add_edit_select_all",
