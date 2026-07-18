@@ -877,6 +877,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.cmdLine.isVisible():
             self._close_command_line()
             return
+        self._hide_tag_matches()
         fw = self.focusWidget()
         if isinstance(fw, QtWidgets.QLineEdit):
             fw.clearFocus()
@@ -1572,8 +1573,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 changed = True
             self.files.setCurrentItem(target)
             self.files.scrollToItem(target)
-            self.files.setFocus()
             if changed:
+                self.files.setFocus()
                 QtCore.QTimer.singleShot(0, self.on_selection_changed)
             return
         for i in range(self.files.count()):
