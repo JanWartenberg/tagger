@@ -511,6 +511,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_cmd_quit": lambda: self._cmd_quit(),
             "add_folder_dialog": self.add_folder_dialog,
             "force_refresh_known_tags": self.force_refresh_known_tags,
+            "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
             "resolve_mismatch": self.resolve_mismatch,
             "add_keyword_from_input": self.add_keyword_from_input,
             "remove_selected_keywords": self.remove_selected_keywords,
@@ -1548,7 +1549,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     QtWidgets.QStyle.StandardPixmap.SP_MessageBoxCritical
                 )
             )
-            item.setToolTip("Failed to save tag changes")
+            item.setToolTip("Failed to save tag changes; retry with :retry")
         else:
             item.setIcon(QtGui.QIcon())
             item.setToolTip("")
@@ -1567,7 +1568,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if status is MutationStatus.PENDING:
             self.mutationStatusLabel.setText("Saving tag changes…")
         elif status is MutationStatus.FAILED:
-            self.mutationStatusLabel.setText("Failed to save tag changes")
+            self.mutationStatusLabel.setText("Failed to save tag changes — use :retry")
         else:
             self.mutationStatusLabel.setText("")
 
@@ -1848,9 +1849,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 if state is None and current and normalize_path(path) == current:
                     keywords = self._current_keywords_from_ui()
                     state = KeywordState(keywords, keywords)
-                if state is None:
-                    continue
-                self._pending_tag_mutations.remember_confirmed({path: state})
+                if state is not None:
+                    self._pending_tag_mutations.remember_confirmed({path: state})
             transforms[path] = state_transform
 
         if not transforms:
@@ -1891,13 +1891,19 @@ class MainWindow(QtWidgets.QMainWindow):
         result: TagMutationResult,
         pending_mutation: PendingTagMutation | None,
     ) -> None:
+        restored: dict[str, KeywordState] = {}
         if pending_mutation is None:
             self._pending_tag_mutations.remember_confirmed(result.updated_states)
         else:
             self._pending_tag_mutations.succeed(pending_mutation, result.updated_states)
+            restored = self._pending_tag_mutations.fail(
+                pending_mutation, list(result.failed_paths)
+            )
         self._keywords_cache.update(result.updated_states)
+        self._keywords_cache.update(restored)
         self._update_index_states(result.updated_states)
-        self._refresh_file_mutation_indicators(list(result.updated_states))
+        affected_paths = list(result.updated_states) + list(restored)
+        self._refresh_file_mutation_indicators(affected_paths)
         self._refresh_current_keywords_view_from_cache()
         self._apply_filter_visibility_changes(result.emptiness_by_path)
 
@@ -1936,7 +1942,12 @@ class MainWindow(QtWidgets.QMainWindow):
         def _ok(result: TagMutationResult) -> None:
             self._mutation_inflight = False
             self._apply_tag_mutation_result(result, queued.pending_mutation)
-            if queued.status_message:
+            if result.failed_paths:
+                self.statusBar().showMessage(
+                    f"{len(result.updated_states)} succeeded, "
+                    f"{len(result.failed_paths)} failed — use :retry"
+                )
+            elif queued.status_message:
                 self.statusBar().showMessage(queued.status_message)
             self._process_tag_mutation_queue()
 
@@ -2076,6 +2087,32 @@ class MainWindow(QtWidgets.QMainWindow):
             ),
             pending_mutation,
             f"Removed {len(remove)} tag(s) from {len(files)} file(s)",
+        )
+
+    def retry_failed_tag_mutations(self) -> None:
+        retry = self._pending_tag_mutations.retry_failed(self.selected_file_paths())
+        if retry is None:
+            self.statusBar().showMessage("No failed tag changes for selected photos")
+            return
+        paths = list(retry.transforms)
+        displayed = {
+            path: self._pending_tag_mutations.metadata_for(path) for path in paths
+        }
+        self._keywords_cache.update(
+            {path: state for path, state in displayed.items() if state is not None}
+        )
+        self._refresh_file_mutation_indicators(paths)
+        self._refresh_current_keywords_view_from_cache()
+        self.statusBar().showMessage(f"Retrying tag changes for {len(paths)} photo(s)")
+        self._enqueue_tag_mutation(
+            lambda: self.tag_mutations.replace_keywords(
+                paths,
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self.exif.read_keywords,
+                transform=lambda path, state: retry.transforms[path](state).merged,
+            ),
+            retry,
+            f"Retried tag changes for {len(paths)} photo(s)",
         )
 
     def force_refresh_known_tags(self) -> None:

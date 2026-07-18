@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable
 
 from exif_tool import ExifTool, KeywordState
@@ -15,6 +15,7 @@ class TagMutationResult:
     emptiness_by_path: dict[str, bool]
     processed_count: int
     changed_count: int
+    failed_paths: dict[str, str] = field(default_factory=dict)
 
 
 class TagMutationService:
@@ -73,11 +74,16 @@ class TagMutationService:
     ) -> TagMutationResult:
         updated_states: dict[str, KeywordState] = {}
         emptiness_by_path: dict[str, bool] = {}
+        failed_paths: dict[str, str] = {}
 
         for path in file_paths:
-            current = load_state(path)
-            keywords = self._normalize_keywords(transform(path, current))
-            self.exif.write_keywords([path], keywords, keep_backup=keep_backup)
+            try:
+                current = load_state(path)
+                keywords = self._normalize_keywords(transform(path, current))
+                self.exif.write_keywords([path], keywords, keep_backup=keep_backup)
+            except Exception as error:
+                failed_paths[path] = str(error)
+                continue
             updated_state = self._state_with_keywords(current, keywords)
             updated_states[path] = updated_state
             emptiness_by_path[path] = len(keywords) == 0
@@ -86,7 +92,8 @@ class TagMutationService:
             updated_states=updated_states,
             emptiness_by_path=emptiness_by_path,
             processed_count=len(file_paths),
-            changed_count=len(file_paths),
+            changed_count=len(updated_states),
+            failed_paths=failed_paths,
         )
 
     def resolve_mismatches(

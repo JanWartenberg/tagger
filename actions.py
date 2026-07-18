@@ -77,6 +77,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("F5"),),
         ),
         ActionSpec(
+            id="retry",
+            description="Retry failed tag changes for selected photos",
+            handler_name="retry_failed_tag_mutations",
+            command=CommandBinding("retry"),
+        ),
+        ActionSpec(
             id="resolve",
             description="Resolve IPTC/XMP mismatch",
             handler_name="resolve_mismatch",

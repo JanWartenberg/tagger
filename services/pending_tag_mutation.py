@@ -57,9 +57,12 @@ class PendingTagMutationCoordinator:
             self._remove_record(path, mutation)
             self._recompute_display(path)
 
-    def fail(self, mutation: PendingTagMutation) -> dict[str, KeywordState]:
+    def fail(
+        self, mutation: PendingTagMutation, paths: list[str] | None = None
+    ) -> dict[str, KeywordState]:
         displayed: dict[str, KeywordState] = {}
-        for path in mutation.transforms:
+        affected_paths = paths if paths is not None else list(mutation.transforms)
+        for path in affected_paths:
             for record in self._records_by_path.get(path, []):
                 if record.mutation == mutation:
                     record.status = MutationStatus.FAILED
@@ -69,6 +72,30 @@ class PendingTagMutationCoordinator:
             if state is not None:
                 displayed[path] = state
         return displayed
+
+    def retry_failed(self, paths: list[str]) -> PendingTagMutation | None:
+        transforms: dict[str, StateTransform] = {}
+        for path in paths:
+            failed = [
+                record
+                for record in self._records_by_path.get(path, [])
+                if record.status is MutationStatus.FAILED
+            ]
+            if not failed:
+                continue
+            transforms[path] = self._compose_transforms(
+                [record.mutation.transforms[path] for record in failed]
+            )
+            self._records_by_path[path] = [
+                record
+                for record in self._records_by_path[path]
+                if record.status is not MutationStatus.FAILED
+            ]
+            if not self._records_by_path[path]:
+                self._records_by_path.pop(path)
+            self._recompute_display(path)
+
+        return self.begin(transforms) if transforms else None
 
     def metadata_for(self, path: str) -> KeywordState | None:
         return self._displayed_states.get(path)
@@ -83,6 +110,14 @@ class PendingTagMutationCoordinator:
         if any(record.status is MutationStatus.FAILED for record in records):
             return MutationStatus.FAILED
         return None
+
+    def _compose_transforms(self, transforms: list[StateTransform]) -> StateTransform:
+        def _apply(state: KeywordState) -> KeywordState:
+            for transform in transforms:
+                state = transform(state)
+            return state
+
+        return _apply
 
     def _remove_record(self, path: str, mutation: PendingTagMutation) -> None:
         records = self._records_by_path.get(path, [])

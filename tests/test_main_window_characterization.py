@@ -175,6 +175,54 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.mutationStatusLabel.text(), "")
         self.assertNotEqual(first, second)
 
+    def test_partial_batch_marks_only_failed_photo_and_retry_resubmits_only_it(
+        self,
+    ) -> None:
+        first, second = self._add_paths("one.jpg", "two.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [first, second])
+        FakeExifTool.write_failures = [False, True]
+
+        self.window.addEdit.setText("added")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+        self._wait_until(lambda: not self.window.files.item(1).icon().isNull())
+
+        self.assertTrue(self.window.files.item(0).icon().isNull())
+        self.assertEqual(
+            FakePhotoIndex.states_by_path[first].merged, ["added", "confirmed"]
+        )
+        self.assertNotIn(second, FakePhotoIndex.states_by_path)
+        self.assertIn("1 succeeded, 1 failed", self.window.statusBar().currentMessage())
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+        self.assertIn("Failed", self.window.mutationStatusLabel.text())
+
+        self.window._dispatch_command("retry", [])
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 3)
+        self._wait_until(lambda: self.window.files.item(1).icon().isNull())
+
+        self.assertEqual(FakeExifTool.write_calls[2], (second, ["added", "confirmed"]))
+        self.assertEqual(
+            len([path for path, _tags in FakeExifTool.write_calls if path == first]), 1
+        )
+        self.assertEqual(
+            FakePhotoIndex.states_by_path[second].merged, ["added", "confirmed"]
+        )
+
     def test_later_tag_mutation_uses_fresh_external_metadata_after_earlier_failure(
         self,
     ) -> None:
