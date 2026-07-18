@@ -138,7 +138,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.removeBtn.setToolTip("Remove selected tags from image (Del/Backspace/dd)")
 
         self.keepBackup = QtWidgets.QCheckBox("Keep *_original backups (exiftool default)")
-        self.keepBackup.setChecked(True)
+        self.keepBackup.setChecked(False)
         self.keepBackup.setToolTip("If enabled, exiftool keeps *_original backups (Ctrl+Shift+B)")
 
         self.knownFilter = QtWidgets.QLineEdit()
@@ -462,6 +462,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "remove_selected_keywords": self.remove_selected_keywords,
             "_focus_known_filter_select_all": self._focus_known_filter_select_all,
             "_focus_db_search_select_all": self._focus_db_search_select_all,
+            "clear_db_search": self.clear_db_search,
             "_focus_add_edit_select_all": self._focus_add_edit_select_all,
             "_focus_pane_files": self._focus_pane_files,
             "_focus_pane_known": self._focus_pane_known,
@@ -812,6 +813,11 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             if lst is self.keywordsList:
                 self._set_single_list_selection(lst, row)
+            elif lst is self.files:
+                lst.setCurrentRow(
+                    row,
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+                )
             else:
                 lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
@@ -824,6 +830,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if lst is self.keywordsList and not self._vim_visual_keywords:
             self._set_single_list_selection(lst, row)
+        elif lst is self.files:
+            lst.setCurrentRow(
+                row,
+                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
         else:
             lst.setCurrentRow(row)
         lst.scrollToItem(lst.currentItem())
@@ -1550,58 +1561,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 view.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop)
                 sb.setValue(sb.value() + top_offset)
 
-    def _ensure_files_focus_visible(self) -> None:
-        if self.files.count() == 0:
-            return
-        changed = False
-
-        hidden_selected = [it for it in self.files.selectedItems() if it.isHidden()]
-        for it in hidden_selected:
-            it.setSelected(False)
-            changed = True
-
-        current = self.files.currentItem()
-        if current is not None and current.isHidden():
-            self.files.setCurrentRow(-1)
-            changed = True
-
-        selected_visible = [it for it in self.files.selectedItems() if not it.isHidden()]
-        if selected_visible:
-            target = current if current in selected_visible else selected_visible[0]
-            if target is not current:
-                changed = True
-            self.files.setCurrentItem(target)
-            self.files.scrollToItem(target)
-            if changed:
-                self.files.setFocus()
-                QtCore.QTimer.singleShot(0, self.on_selection_changed)
-            return
-        for i in range(self.files.count()):
-            it = self.files.item(i)
-            if it is not None and not it.isHidden():
-                self.files.clearSelection()
-                it.setSelected(True)
-                self.files.setCurrentItem(it)
-                self.files.scrollToItem(it)
-                self.files.setFocus()
-                changed = True
-                if changed:
-                    QtCore.QTimer.singleShot(0, self.on_selection_changed)
-                return
-
-        # No visible items left (e.g. empty-filter yields 0): hard-reset selection/current.
-        self.files.clearSelection()
-        self.files.setCurrentRow(-1)
-        if changed:
-            QtCore.QTimer.singleShot(0, self.on_selection_changed)
-
     def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
         """Ask the workspace for IPTC-empty work and schedule its next batch."""
         del reset_preserved  # The workspace resets preservation for each operation.
         before = self.selected_file_paths()
         if not self.onlyUntagged.isChecked():
             snapshot = self.photo_workspace.clear_iptc_empty_filter()
-            self._render_filter_snapshot(snapshot, before)
+            self._render_photo_workspace_snapshot(snapshot, before)
             self.filterInfoLabel.setText("")
             return
 
@@ -1610,7 +1576,7 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.start_iptc_empty_filter(
             first_size=max(20, visible_rows * 2), batch_size=80
         )
-        self._render_filter_snapshot(snapshot, before)
+        self._render_photo_workspace_snapshot(snapshot, before)
         if not snapshot.paths:
             self.filterInfoLabel.setText("")
             return
@@ -1636,7 +1602,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             if not was_current:
                 return
-            self._render_filter_snapshot(snapshot, before)
+            self._render_photo_workspace_snapshot(snapshot, before)
             self._update_filter_label(snapshot)
             self.statusBar().showMessage(
                 f"Filtering IPTC-empty... "
@@ -1654,7 +1620,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             if not was_current:
                 return
-            self._render_filter_snapshot(snapshot, before)
+            self._render_photo_workspace_snapshot(snapshot, before)
             self.statusBar().showMessage("Error")
             self._show_error(msg)
             self.filterInfoLabel.setText("")
@@ -1663,12 +1629,15 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.signals.error.connect(_err)
         self.pool.start(worker)
 
-    def _render_filter_snapshot(
+    def _render_photo_workspace_snapshot(
         self, snapshot: PhotoWorkspaceSnapshot, previous_selection: list[str]
-    ) -> None:
+    ) -> bool:
+        """Render a workspace transition and refresh details after selection changes."""
         self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
-        if list(snapshot.selected_paths) != previous_selection:
+        selection_changed = list(snapshot.selected_paths) != previous_selection
+        if selection_changed:
             self.on_selection_changed()
+        return selection_changed
 
     def _update_filter_label(self, snapshot: PhotoWorkspaceSnapshot) -> None:
         if not snapshot.iptc_empty_filter_active:
@@ -1783,48 +1752,40 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
-        self._apply_db_search_results(None)
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.clear_database_search()
+        selection_changed = self._render_photo_workspace_snapshot(snapshot, before)
         self.statusBar().showMessage("DB search cleared")
-        self.on_selection_changed()
+        if not selection_changed:
+            self.on_selection_changed()
 
     def apply_db_search(self) -> None:
         query = (self.dbSearchEdit.text() or "").strip()
         if not query:
             self.clear_db_search()
             return
-        if self.onlyUntagged.isChecked():
-            self.onlyUntagged.setChecked(False)
         root = self._index_root_for_paths(self.all_file_paths())
         if not root:
             self.statusBar().showMessage("No index root available")
             return
         try:
-            matches = set(PhotoIndex(root).search_photos(query))
+            matches = PhotoIndex(root).search_photos(query)
         except Exception as e:
             self._show_error(str(e))
             return
-        self._apply_db_search_results(matches)
+
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.apply_database_search_matches(
+            normalize_path(path) for path in matches
+        )
+        self.onlyUntagged.blockSignals(True)
+        try:
+            self.onlyUntagged.setChecked(snapshot.iptc_empty_filter_active)
+        finally:
+            self.onlyUntagged.blockSignals(False)
+        self._render_photo_workspace_snapshot(snapshot, before)
+        self._update_filter_label(snapshot)
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
-
-    def _apply_db_search_results(self, matches: set[str] | None) -> None:
-        def _do() -> None:
-            first_visible_row: int | None = None
-            for i in range(self.files.count()):
-                it = self.files.item(i)
-                if it is None:
-                    continue
-                show = True if matches is None else normalize_path(it.text()) in matches
-                it.setHidden(not show)
-                if show and first_visible_row is None:
-                    first_visible_row = i
-
-            current = self.files.currentItem()
-            current_visible = current is not None and not current.isHidden()
-            if first_visible_row is not None and not current_visible:
-                self.files.setCurrentRow(first_visible_row)
-
-        self._preserve_files_scroll(_do)
-        self._ensure_files_focus_visible()
 
     def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
         """Render filter facts accepted by the workspace after a tag mutation."""
@@ -1832,7 +1793,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)
-        self._render_filter_snapshot(snapshot, before)
+        self._render_photo_workspace_snapshot(snapshot, before)
         self._update_filter_label(snapshot)
 
     def add_keyword_from_input(self) -> None:

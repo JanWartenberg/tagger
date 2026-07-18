@@ -19,6 +19,7 @@ class PhotoWorkspaceSnapshot:
     filter_total: int = 0
     iptc_empty_filter_active: bool = False
     filter_view_switched: bool = False
+    database_search_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class PhotoWorkspace:
         self._paths: list[str] = []
         self._visible: set[str] = set()
         self._selected: set[str] = set()
+        self._database_search_active = False
 
         self._operation = 0
         self._iptc_empty_filter_active = False
@@ -64,6 +66,7 @@ class PhotoWorkspace:
             filter_total=len(self._paths),
             iptc_empty_filter_active=self._iptc_empty_filter_active,
             filter_view_switched=self._switched,
+            database_search_active=self._database_search_active,
         )
 
     def add_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
@@ -83,6 +86,7 @@ class PhotoWorkspace:
         self._paths = []
         self._visible = set()
         self._selected = set()
+        self._database_search_active = False
         self._iptc_empty_filter_active = False
         self._filter_running = False
         self._batches = []
@@ -113,11 +117,29 @@ class PhotoWorkspace:
         self._repair_selection()
         return self.snapshot()
 
+    def apply_database_search_matches(
+        self, matching_paths: Iterable[str]
+    ) -> PhotoWorkspaceSnapshot:
+        """Show loaded database-search matches and invalidate IPTC filter work."""
+        self.clear_iptc_empty_filter()
+        self._database_search_active = True
+        self._visible = set(matching_paths) & set(self._paths)
+        self._repair_selection()
+        return self.snapshot()
+
+    def clear_database_search(self) -> PhotoWorkspaceSnapshot:
+        """Clear the database-search view and restore all loaded paths."""
+        self._database_search_active = False
+        self._visible = set(self._paths)
+        self._repair_selection()
+        return self.snapshot()
+
     def start_iptc_empty_filter(
         self, first_size: int, batch_size: int
     ) -> PhotoWorkspaceSnapshot:
         """Start an IPTC-empty operation and prepare its metadata batches."""
         self._operation += 1
+        self._database_search_active = False
         self._iptc_empty_filter_active = True
         self._filter_running = True
         self._inflight = None

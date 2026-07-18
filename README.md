@@ -21,7 +21,7 @@ Commands & shortcuts
 - Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus
 - Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files
 - Known tag filter: `/` or `Ctrl+F` focuses and selects text, `n/N` move in matches
-- Photo-tag search: `Ctrl+Shift+F` focuses and selects the DB tag/date search text
+- Photo-tag search: `Ctrl+Shift+F` focuses and selects the DB tag/date search text; `Ctrl+Shift+X` or `:clearsearch`/`:clear` clears it
 - Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
 - Tags: `Shift+V` visual select, `Ctrl+C` yank selected tags, `Ctrl+V` paste (current file), `dd`/`Del`/`Backspace` delete selected tags
 - File list: `Ctrl+C` or `Space y` yanks all tags from the current file; `Ctrl+V` or `Space p` pastes them onto the current file
@@ -44,4 +44,4 @@ python tagger.py
 ```
 
 Notes
-- By default exiftool creates `*_original` backup files. You can disable this via the checkbox.
+- TAGGER disables exiftool `*_original` backups by default. Enable the checkbox when a backup is wanted.

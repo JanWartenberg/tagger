@@ -120,6 +120,13 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
         ),
         ActionSpec(
+            id="clearsearch",
+            description="Clear photo-tag search",
+            handler_name="clear_db_search",
+            command=CommandBinding("clearsearch", aliases=("clear",)),
+            shortcuts=(ShortcutBinding("Ctrl+Shift+X"),),
+        ),
+        ActionSpec(
             id="focusadd",
             description="Focus add-keyword input",
             handler_name="_focus_add_edit_select_all",
@@ -145,8 +152,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="focuskeywords",
-            description="Focus selected-tags pane",
+            description="Focus current-tags pane",
             handler_name="_focus_pane_keywords",
+            command=CommandBinding("focuscurrenttags"),
             shortcuts=(ShortcutBinding("Alt+3"),),
         ),
         ActionSpec(

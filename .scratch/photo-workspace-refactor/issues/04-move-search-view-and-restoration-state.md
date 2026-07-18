@@ -1,6 +1,6 @@
 # Move database-search visibility and restoration state into PhotoWorkspace
 
-Status: ready-for-agent
+Status: completed
 Blocked by: 03
 
 ## Goal
@@ -16,6 +16,12 @@ Move the current database-search application and clearing behavior behind the Ph
 - Search-result behavior does not alter folder loading, metadata formats, or normal tagging behavior.
 - `INDEXING_PLAN.md` is not implemented or used as a behavior authority in this ticket.
 - Pure and Windows adapter tests pass.
+
+## Comments
+
+- Moved database-search visibility, selection repair, active-view state, and restoration into `PhotoWorkspace`.
+- `MainWindow` retains query parsing and SQLite access, normalizes returned paths, and renders workspace snapshots while preserving scroll anchoring.
+- Validation: `python3 -m unittest discover -s tests -v` (18 pure tests passed; 4 PyQt6 adapter tests skipped in the Linux agent environment).
 
 ## Preparation
 

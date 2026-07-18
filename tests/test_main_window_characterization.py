@@ -52,6 +52,22 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         return [normalize_path(path) for path in paths]
 
+    def test_backups_are_disabled_by_default(self) -> None:
+        self.assertFalse(self.window.keepBackup.isChecked())
+
+    def test_focus_current_tags_command_is_listed_with_its_shortcut(self) -> None:
+        action = self.window._actions_by_id["focuskeywords"]
+
+        self.assertEqual(action.command.name, "focuscurrenttags")
+        self.assertEqual(action.shortcuts[0].sequence, "Alt+3")
+
+    def test_clear_search_action_has_command_alias_and_shortcut(self) -> None:
+        action = self.window._actions_by_id["clearsearch"]
+
+        self.assertEqual(action.command.name, "clearsearch")
+        self.assertEqual(action.command.aliases, ("clear",))
+        self.assertEqual(action.shortcuts[0].sequence, "Ctrl+Shift+X")
+
     def test_adding_paths_preserves_order_and_suppresses_duplicates(self) -> None:
         first, second, duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
 
@@ -67,7 +83,49 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def test_selecting_another_photo_updates_the_active_photo_and_label(self) -> None:
         _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
 
-        self.window.files.setCurrentRow(1)
+        self.window._move_list_selection(self.window.files, +1)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.selectedLabel.text(), second)
+
+    def test_file_pane_arrow_keys_change_the_active_photo(self) -> None:
+        first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        self.window.files.setFocus()
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Down)
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.selectedLabel.text(), second)
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Up)
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual(self.window.selectedLabel.text(), first)
+
+    def test_file_pane_j_and_k_change_the_active_photo(self) -> None:
+        first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        self.window.files.setFocus()
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_J)
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.selectedLabel.text(), second)
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_K)
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual(self.window.selectedLabel.text(), first)
+
+    def test_clicking_another_photo_updates_the_active_photo_and_label(self) -> None:
+        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+        second_rect = self.window.files.visualItemRect(self.window.files.item(1))
+
+        QtTest.QTest.mouseClick(
+            self.window.files.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=second_rect.center(),
+        )
         self.app.processEvents()
 
         self.assertEqual(self.window.selected_file_paths(), [second])
@@ -85,11 +143,31 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(1).isHidden())
         self.assertEqual(self.window.selected_file_paths(), [second])
 
-        self.window.clear_db_search()
+        self.window._dispatch_command("clear", [])
         self.app.processEvents()
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
         self.assertIn(self.window.selected_file_paths()[0], {first, second})
+
+    def test_clear_search_shortcut_restores_all_photos(self) -> None:
+        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.apply_db_search()
+        self.app.processEvents()
+
+        QtTest.QTest.keyClick(
+            self.window,
+            QtCore.Qt.Key.Key_X,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        self.app.processEvents()
+
+        self.assertFalse(self.window.files.item(0).isHidden())
+        self.assertFalse(self.window.files.item(1).isHidden())
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
 
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
         self.window.knownList.addItems(["bird", "birch"])
@@ -132,6 +210,12 @@ class FakePhotoIndex:
 
     def load_tags_for_root(self) -> set[str]:
         return set()
+
+    def update_states(self, _states: dict[str, "KeywordState"]) -> None:
+        pass
+
+    def has_photos(self, paths: list[str]) -> set[str]:
+        return {normalize_path(path) for path in paths}
 
     def search_photos(self, _query: str) -> set[str]:
         return self.search_results
