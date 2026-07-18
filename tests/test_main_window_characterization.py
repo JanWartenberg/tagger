@@ -223,6 +223,148 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             FakePhotoIndex.states_by_path[second].merged, ["added", "confirmed"]
         )
 
+    def test_retryall_retries_all_failed_photos_but_not_pending_ones(self) -> None:
+        first, second, pending = self._add_paths("one.jpg", "two.jpg", "three.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+        FakeExifTool.write_failures = [True, True]
+
+        self.window.addEdit.setText("added")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+        self._wait_until(lambda: not self.window.files.item(1).icon().isNull())
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(2),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        FakeExifTool.block_writes()
+        self.window.addEdit.setText("still-pending")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 3)
+
+        self.window._dispatch_command("retryall", [])
+        FakeExifTool.release_writes()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 5)
+        self._wait_until(lambda: self.window.files.item(0).icon().isNull())
+        self._wait_until(lambda: self.window.files.item(1).icon().isNull())
+        self._wait_until(lambda: self.window.files.item(2).icon().isNull())
+
+        self.assertEqual(
+            [path for path, _tags in FakeExifTool.write_calls[3:]], [first, second]
+        )
+        self.assertEqual(
+            len([path for path, _tags in FakeExifTool.write_calls if path == pending]),
+            1,
+        )
+
+    def test_retryall_excludes_failed_mutations_outside_the_current_workspace(
+        self,
+    ) -> None:
+        (departed,) = self._add_paths("departed.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.write_failures = [True]
+        self.window.addEdit.setText("departed-failure")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 1)
+        self._wait_until(lambda: not self.window.files.item(0).icon().isNull())
+
+        replacement = normalize_path(str(Path("C:/photos") / "replacement.jpg"))
+        self.window.replace_photo_workspace([replacement])
+        self._wait_until(lambda: self.window.selected_file_paths() == [replacement])
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.write_failures = [True]
+        self.window.addEdit.setText("replacement-failure")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+        self._wait_until(lambda: not self.window.files.item(0).icon().isNull())
+
+        self.window._dispatch_command("retryall", [])
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 3)
+        self._wait_until(lambda: self.window.files.item(0).icon().isNull())
+
+        self.assertEqual(
+            [path for path, _tags in FakeExifTool.write_calls],
+            [departed, replacement, replacement],
+        )
+
+    def test_workspace_replacement_discards_queued_writes_and_ignores_inflight_ui_completion(
+        self,
+    ) -> None:
+        (departed,) = self._add_paths("departed.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+
+        self.window.addEdit.setText("inflight")
+        self.window.add_keyword_from_input()
+        self._wait_until(FakeExifTool.write_started.is_set)
+        self.window.addEdit.setText("discarded")
+        self.window.add_keyword_from_input()
+
+        replacement = normalize_path(str(Path("C:/photos") / "replacement.jpg"))
+        self.window.replace_photo_workspace([replacement])
+        self._wait_until(lambda: self.window.selected_file_paths() == [replacement])
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+
+        FakeExifTool.release_writes()
+        self._wait_until(lambda: departed in FakePhotoIndex.states_by_path)
+        self._wait_until(lambda: not self.window._mutation_inflight)
+
+        self.assertEqual(len(FakeExifTool.write_calls), 1)
+        self.assertEqual(
+            FakePhotoIndex.states_by_path[departed].merged, ["confirmed", "inflight"]
+        )
+        self.assertEqual(self.window.all_file_paths(), [replacement])
+        self.assertEqual(self.window.selected_file_paths(), [replacement])
+        self.assertEqual(
+            [
+                self.window.keywordsList.item(index).text()
+                for index in range(self.window.keywordsList.count())
+            ],
+            ["confirmed"],
+        )
+
+    def test_workspace_replacement_keeps_queued_writes_for_photos_that_remain(
+        self,
+    ) -> None:
+        departed, remaining = self._add_paths("departed.jpg", "remaining.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+
+        self.window.addEdit.setText("inflight")
+        self.window.add_keyword_from_input()
+        self._wait_until(FakeExifTool.write_started.is_set)
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.addEdit.setText("queued")
+        self.window.add_keyword_from_input()
+
+        self.window.replace_photo_workspace([remaining])
+        FakeExifTool.release_writes()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+        self._wait_until(lambda: self.window.selected_file_paths() == [remaining])
+        self._wait_until(
+            lambda: [
+                self.window.keywordsList.item(index).text()
+                for index in range(self.window.keywordsList.count())
+            ]
+            == ["confirmed", "queued"]
+        )
+
+        self.assertEqual(
+            [path for path, _tags in FakeExifTool.write_calls], [departed, remaining]
+        )
+
     def test_later_tag_mutation_uses_fresh_external_metadata_after_earlier_failure(
         self,
     ) -> None:

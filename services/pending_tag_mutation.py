@@ -73,6 +73,14 @@ class PendingTagMutationCoordinator:
                 displayed[path] = state
         return displayed
 
+    def discard(
+        self, mutation: PendingTagMutation, paths: list[str] | None = None
+    ) -> None:
+        affected_paths = paths if paths is not None else list(mutation.transforms)
+        for path in affected_paths:
+            self._remove_record(path, mutation)
+            self._recompute_display(path)
+
     def retry_failed(self, paths: list[str]) -> PendingTagMutation | None:
         transforms: dict[str, StateTransform] = {}
         for path in paths:

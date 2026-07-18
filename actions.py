@@ -83,6 +83,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("retry"),
         ),
         ActionSpec(
+            id="retryall",
+            description="Retry all failed tag changes in the Photo Workspace",
+            handler_name="retry_all_failed_tag_mutations",
+            command=CommandBinding("retryall"),
+        ),
+        ActionSpec(
             id="resolve",
             description="Resolve IPTC/XMP mismatch",
             handler_name="resolve_mismatch",
