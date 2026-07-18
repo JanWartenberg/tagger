@@ -64,6 +64,15 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual([item.text() for item in self.window.files.selectedItems()], [first])
         self.assertEqual(duplicate, first)
 
+    def test_selecting_another_photo_updates_the_active_photo_and_label(self) -> None:
+        _first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
+
+        self.window.files.setCurrentRow(1)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.selectedLabel.text(), second)
+
     def test_db_search_hides_non_matches_and_selects_first_visible_photo(self) -> None:
         first, second, _duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
 

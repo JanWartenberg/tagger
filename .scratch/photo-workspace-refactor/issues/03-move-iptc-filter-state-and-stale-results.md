@@ -1,6 +1,6 @@
 # Move IPTC-empty filter state and stale-result rules into PhotoWorkspace
 
-Status: ready-for-agent
+Status: completed
 Blocked by: 02
 
 ## Goal
@@ -16,6 +16,12 @@ Move logical IPTC-empty filter state from `MainWindow` into `PhotoWorkspace`, le
 - Progressive result behavior, scroll anchoring, and selection correction stay materially equivalent to the current application.
 - No filter-state rules are duplicated in Qt code.
 - Pure and Windows adapter tests pass.
+
+## Comments
+
+- Implemented the IPTC-empty operation state, progressive batches, stale-result rejection, failure restoration, and one-step tagging preservation in `PhotoWorkspace`.
+- `MainWindow` now schedules metadata reads and renders workspace snapshots; it no longer keeps filter state or applies filter visibility rules itself.
+- Validation: `python3 -m unittest discover -s tests -v` (13 pure tests passed; 4 PyQt6 adapter tests skipped in the Linux agent environment).
 
 ## Out of scope
 

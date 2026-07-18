@@ -17,6 +17,13 @@ Move the current database-search application and clearing behavior behind the Ph
 - `INDEXING_PLAN.md` is not implemented or used as a behavior authority in this ticket.
 - Pure and Windows adapter tests pass.
 
+## Preparation
+
+- Keep the SQLite query in `MainWindow`; pass only normalized matching paths to the Photo Workspace seam.
+- Add intent-level workspace operations for applying search matches and clearing search. They should return snapshots, restrict matches to loaded paths, repair selection, and own the logical view to restore.
+- Preserve current interaction ordering: applying a database search first disables the IPTC-empty filter; clearing search restores the currently expected unfiltered visibility. Qt continues to preserve scroll anchoring while rendering snapshots.
+- Extend pure tests for loaded-path restriction, empty matches, clearing search, active-selection repair, and stale IPTC work after a search transition. Extend the existing Windows adapter characterization test for search rendering and restoration.
+
 ## Out of scope
 
 - Completing indexed reverse search (`:search`, `:back`, and full search-result mode) described in `INDEXING_PLAN.md`.

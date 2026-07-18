@@ -38,6 +38,16 @@ class PhotoWorkspaceTests(unittest.TestCase):
         self.assertEqual(snapshot.selected_paths, ("three.jpg",))
         self.assertEqual(snapshot.active_path, "three.jpg")
 
+    def test_clearing_user_selection_does_not_reactivate_the_first_photo(self) -> None:
+        workspace = PhotoWorkspace()
+        workspace.add_paths(["one.jpg", "two.jpg"])
+        workspace.select_paths(["two.jpg"])
+
+        snapshot = workspace.select_paths([])
+
+        self.assertEqual(snapshot.selected_paths, ())
+        self.assertIsNone(snapshot.active_path)
+
     def test_hiding_active_photo_selects_first_remaining_visible_photo(self) -> None:
         workspace = PhotoWorkspace()
         workspace.add_paths(["one.jpg", "two.jpg", "three.jpg"])

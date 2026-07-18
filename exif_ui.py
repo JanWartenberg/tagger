@@ -84,18 +84,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
         self._selection_token = 0
-        self._filter_token = 0
-        self._filter_queue: list[list[str]] = []
-        self._filter_map: dict[str, QtWidgets.QListWidgetItem] = {}
-        self._filter_shown = 0
-        self._filter_total = 0
-        self._filter_processed = 0
-        self._filter_first_chunk = True
-        self._filter_switched = False
-        # Tagged files stay visible while selected, plus for one navigation step
-        # afterwards, so their keywords can be copied to the next image.
-        self._filter_preserved: set[str] = set()
-        self._filter_previous_selection: set[str] = set()
         self.photo_workspace = PhotoWorkspace()
 
         self._config = load_config()
@@ -1303,14 +1291,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # Cancel in-flight async work that would render stale UI.
         self._selection_token += 1
         self._preview_token += 1
-        self._filter_token += 1
-        self._filter_queue = []
-
         # Reset caches tied to previous file lists.
         self._keywords_cache = {}
-        self._filter_map = {}
-        self._filter_preserved = set()
-        self._filter_previous_selection = set()
         self._folder_tag_cache = {}
         self._folder_scans_inflight = set()
         self._index_root = None
@@ -1414,11 +1396,23 @@ class MainWindow(QtWidgets.QMainWindow):
         return st
 
     def on_selection_changed(self) -> None:
-        self.photo_workspace.select_paths(it.text() for it in self.files.selectedItems())
-        sel = self.selected_file_paths()
+        selected_items = self.files.selectedItems()
+        requested_paths = tuple(item.text() for item in selected_items)
+        snapshot = self.photo_workspace.select_paths(requested_paths)
+        visible_paths = tuple(
+            self.files.item(index).text()
+            for index in range(self.files.count())
+            if not self.files.item(index).isHidden()
+        )
+        if snapshot.iptc_empty_filter_active and (
+            snapshot.visible_paths != visible_paths
+            or snapshot.selected_paths != requested_paths
+        ):
+            self._preserve_files_scroll(
+                lambda: self._render_photo_workspace(snapshot)
+            )
+        sel = list(snapshot.selected_paths)
         if not sel:
-            if self.onlyUntagged.isChecked():
-                self._sync_filter_preserved_selection([])
             self.selectedLabel.setText("Drop JPG/JPEG files here")
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
@@ -1437,9 +1431,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._selection_token += 1
         token = self._selection_token
         self.statusBar().showMessage("Reading keywords...")
-
-        if self.onlyUntagged.isChecked():
-            self._sync_filter_preserved_selection(sel)
 
         worker = Worker(self.exif.read_keywords, current)
 
@@ -1605,123 +1596,65 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QTimer.singleShot(0, self.on_selection_changed)
 
     def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
-        self._filter_token += 1
-        token = self._filter_token
-        if reset_preserved:
-            self._filter_preserved = set()
-            self._filter_previous_selection = set()
+        """Ask the workspace for IPTC-empty work and schedule its next batch."""
+        del reset_preserved  # The workspace resets preservation for each operation.
+        before = self.selected_file_paths()
         if not self.onlyUntagged.isChecked():
-            self._filter_previous_selection = set()
-            for i in range(self.files.count()):
-                self.files.item(i).setHidden(False)
-                self.files.item(i).setBackground(QtGui.QBrush())
+            snapshot = self.photo_workspace.clear_iptc_empty_filter()
+            self._render_filter_snapshot(snapshot, before)
             self.filterInfoLabel.setText("")
             return
 
-        paths = self.all_file_paths()
-        if not paths:
-            return
-
-        # Build map, but keep list visible until first chunk completes.
-        self._filter_map = {}
-        for i in range(self.files.count()):
-            it = self.files.item(i)
-            it.setHidden(False)
-            self._filter_map[normalize_path(it.text())] = it
-
-        self._filter_total = self.files.count()
-        self._filter_shown = 0
-        self._filter_processed = 0
-        self._filter_first_chunk = True
-        self._filter_switched = False
-        self.filterInfoLabel.setText(f"…/{self._filter_total}")
-
-        # First chunk ~ a few screens; rest uses larger chunks.
         row_h = self.files.sizeHintForRow(0) or self.files.fontMetrics().height() + 4
         visible_rows = max(10, int(self.files.viewport().height() / max(1, row_h)))
-        first_chunk_size = max(20, visible_rows * 2)
-        chunk_size = 80
-        first = paths[:first_chunk_size]
-        rest = paths[first_chunk_size:]
-        self._filter_queue = [first] if first else []
-        if rest:
-            self._filter_queue.extend(
-                [rest[i : i + chunk_size] for i in range(0, len(rest), chunk_size)]
-            )
-        self.statusBar().showMessage("Filtering IPTC-empty...")
-        self._process_next_filter_chunk(token)
-
-    def _process_next_filter_chunk(self, token: int) -> None:
-        if token != self._filter_token:
+        snapshot = self.photo_workspace.start_iptc_empty_filter(
+            first_size=max(20, visible_rows * 2), batch_size=80
+        )
+        self._render_filter_snapshot(snapshot, before)
+        if not snapshot.paths:
+            self.filterInfoLabel.setText("")
             return
-        if not self._filter_queue:
-            if self.onlyUntagged.isChecked() and not self._filter_switched:
-                def _do_finish_empty():
-                    for it in self._filter_map.values():
-                        it.setHidden(True)
-                    self._ensure_files_focus_visible()
-                self._preserve_files_scroll(_do_finish_empty)
-                self.filterInfoLabel.setText(f"0/{self._filter_total}")
+        self._update_filter_label(snapshot)
+        self.statusBar().showMessage("Filtering IPTC-empty...")
+        self._process_next_filter_chunk()
+
+    def _process_next_filter_chunk(self) -> None:
+        batch = self.photo_workspace.next_iptc_empty_filter_batch()
+        if batch is None:
             self.statusBar().showMessage("Ready")
             return
 
-        chunk = self._filter_queue.pop(0)
-        worker = Worker(self.exif.scan_iptc_empty, chunk)
+        worker = Worker(self.exif.scan_iptc_empty, list(batch.paths))
 
         def _ok(empty: set[str]) -> None:
-            if token != self._filter_token:
-                return
-            empty_norm = {normalize_path(p) for p in empty}
-            empty_norm |= self._filter_preserved
-            if self._filter_first_chunk:
-                if empty_norm:
-                    # Switch to filtered view only when we have first results.
-                    self._filter_switched = True
-                    def _do_first():
-                        for it in self._filter_map.values():
-                            it.setHidden(True)
-                        for p in empty_norm:
-                            it = self._filter_map.get(p)
-                            if it is not None:
-                                it.setHidden(False)
-                                self._filter_shown += 1
-                        self._ensure_files_focus_visible()
-                    self._preserve_files_scroll(_do_first)
-                self._filter_first_chunk = False
-            else:
-                if not self._filter_switched and empty_norm:
-                    self._filter_switched = True
-                    def _do_switch():
-                        for it in self._filter_map.values():
-                            it.setHidden(True)
-                        for p in empty_norm:
-                            it = self._filter_map.get(p)
-                            if it is not None:
-                                it.setHidden(False)
-                                self._filter_shown += 1
-                        self._ensure_files_focus_visible()
-                    self._preserve_files_scroll(_do_switch)
-                elif self._filter_switched:
-                    def _do_next():
-                        for p in empty_norm:
-                            it = self._filter_map.get(p)
-                            if it is not None and it.isHidden():
-                                it.setHidden(False)
-                                self._filter_shown += 1
-                    self._preserve_files_scroll(_do_next)
-            self._filter_processed += len(chunk)
-            if self._filter_switched:
-                self.filterInfoLabel.setText(f"{self._filter_shown}/{self._filter_total}")
-            else:
-                self.filterInfoLabel.setText(f"…/{self._filter_total}")
-            self.statusBar().showMessage(
-                f"Filtering IPTC-empty... {self._filter_processed}/{self._filter_total}"
+            was_current = self.photo_workspace.accepts_iptc_empty_filter_result(
+                batch.operation_id
             )
-            QtCore.QTimer.singleShot(0, lambda: self._process_next_filter_chunk(token))
+            before = self.selected_file_paths()
+            snapshot = self.photo_workspace.accept_iptc_empty_filter_batch(
+                batch.operation_id, (normalize_path(path) for path in empty)
+            )
+            if not was_current:
+                return
+            self._render_filter_snapshot(snapshot, before)
+            self._update_filter_label(snapshot)
+            self.statusBar().showMessage(
+                f"Filtering IPTC-empty... "
+                f"{snapshot.filter_processed}/{snapshot.filter_total}"
+            )
+            QtCore.QTimer.singleShot(0, self._process_next_filter_chunk)
 
         def _err(msg: str) -> None:
-            if token != self._filter_token:
+            was_current = self.photo_workspace.accepts_iptc_empty_filter_result(
+                batch.operation_id
+            )
+            before = self.selected_file_paths()
+            snapshot = self.photo_workspace.fail_iptc_empty_filter_batch(
+                batch.operation_id
+            )
+            if not was_current:
                 return
+            self._render_filter_snapshot(snapshot, before)
             self.statusBar().showMessage("Error")
             self._show_error(msg)
             self.filterInfoLabel.setText("")
@@ -1729,6 +1662,23 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
         self.pool.start(worker)
+
+    def _render_filter_snapshot(
+        self, snapshot: PhotoWorkspaceSnapshot, previous_selection: list[str]
+    ) -> None:
+        self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
+        if list(snapshot.selected_paths) != previous_selection:
+            self.on_selection_changed()
+
+    def _update_filter_label(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        if not snapshot.iptc_empty_filter_active:
+            self.filterInfoLabel.setText("")
+        elif snapshot.filter_view_switched or snapshot.filter_operation_id is None:
+            self.filterInfoLabel.setText(
+                f"{len(snapshot.visible_paths)}/{snapshot.filter_total}"
+            )
+        else:
+            self.filterInfoLabel.setText(f"…/{snapshot.filter_total}")
 
     def _refresh_current_keywords_view_from_cache(self) -> None:
         sel = self.selected_file_paths()
@@ -1831,17 +1781,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 return it
         return None
 
-    def _update_filter_label(self) -> None:
-        if not self.onlyUntagged.isChecked():
-            self.filterInfoLabel.setText("")
-            return
-        total = self.files.count()
-        shown = 0
-        for i in range(self.files.count()):
-            if not self.files.item(i).isHidden():
-                shown += 1
-        self.filterInfoLabel.setText(f"{shown}/{total}")
-
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
         self._apply_db_search_results(None)
@@ -1887,45 +1826,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._preserve_files_scroll(_do)
         self._ensure_files_focus_visible()
 
-    def _sync_filter_preserved_selection(self, selected_paths: list[str]) -> None:
-        if not self.onlyUntagged.isChecked():
-            self._filter_previous_selection = set()
-            return
-
-        selected = {normalize_path(p) for p in selected_paths}
-        # Keep a just-tagged image visible when moving to the next result. This
-        # provides one step back for copying its tags without turning the filter
-        # into a growing list of already-tagged files.
-        allowed = selected | self._filter_previous_selection
-        released = self._filter_preserved - allowed
-        if released:
-            def _do():
-                for path in released:
-                    it = self._find_item_by_path(path)
-                    if it is None:
-                        continue
-                    st = self._keywords_cache.get(path)
-                    if st is not None:
-                        it.setHidden(len(st.iptc) > 0)
-            self._preserve_files_scroll(_do)
-        self._filter_preserved &= allowed
-        self._filter_previous_selection = selected
-
     def _apply_filter_visibility_changes(self, emptiness_by_path: dict[str, bool]) -> None:
+        """Render filter facts accepted by the workspace after a tag mutation."""
         if not self.onlyUntagged.isChecked():
             return
-        def _do():
-            for path, is_empty in emptiness_by_path.items():
-                it = self._find_item_by_path(path)
-                if it is None:
-                    continue
-                if normalize_path(path) in self._filter_preserved:
-                    it.setHidden(False)
-                else:
-                    it.setHidden(not is_empty)
-        self._preserve_files_scroll(_do)
-        self._ensure_files_focus_visible()
-        self._update_filter_label()
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)
+        self._render_filter_snapshot(snapshot, before)
+        self._update_filter_label(snapshot)
 
     def add_keyword_from_input(self) -> None:
         tag = self.addEdit.text().strip()
@@ -1949,7 +1857,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
         if self.onlyUntagged.isChecked():
-            self._filter_preserved = {normalize_path(p) for p in files}
+            self.photo_workspace.preserve_selected_paths_after_tagging(files)
         optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
         if optimistic.updated_states:
             self._apply_tag_mutation_result(optimistic)
@@ -1971,7 +1879,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
         if self.onlyUntagged.isChecked():
-            self._filter_preserved = {normalize_path(p) for p in files}
+            self.photo_workspace.preserve_selected_paths_after_tagging(files)
         items = self.keywordsList.selectedItems()
         if not items:
             self.statusBar().showMessage("No keywords selected")

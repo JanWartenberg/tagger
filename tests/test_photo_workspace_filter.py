@@ -30,6 +30,18 @@ class IptcEmptyFilterTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ("two.jpg",))
         self.assertEqual(snapshot.selected_paths, ("two.jpg",))
 
+    def test_failed_later_batch_preserves_prior_filter_result_and_selection(self) -> None:
+        self.workspace.start_iptc_empty_filter(1, 1)
+        first_batch = self.workspace.next_iptc_empty_filter_batch()
+        self.workspace.accept_iptc_empty_filter_batch(first_batch.operation_id, ["one.jpg"])
+        self.workspace.select_paths(["one.jpg"])
+        failing_batch = self.workspace.next_iptc_empty_filter_batch()
+
+        snapshot = self.workspace.fail_iptc_empty_filter_batch(failing_batch.operation_id)
+
+        self.assertEqual(snapshot.visible_paths, ("one.jpg",))
+        self.assertEqual(snapshot.selected_paths, ("one.jpg",))
+
     def test_empty_final_result_hides_all_photos(self) -> None:
         self.workspace.start_iptc_empty_filter(3, 3)
         batch = self.workspace.next_iptc_empty_filter_batch()
@@ -39,6 +51,32 @@ class IptcEmptyFilterTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ())
         self.assertEqual(snapshot.selected_paths, ())
 
+    def test_clearing_filter_restores_all_photos_and_invalidates_work(self) -> None:
+        started = self.workspace.start_iptc_empty_filter(1, 1)
+        batch = self.workspace.next_iptc_empty_filter_batch()
+
+        snapshot = self.workspace.clear_iptc_empty_filter()
+        stale_snapshot = self.workspace.accept_iptc_empty_filter_batch(
+            batch.operation_id, ["one.jpg"]
+        )
+
+        self.assertIsNotNone(started.filter_operation_id)
+        self.assertEqual(snapshot.visible_paths, ("one.jpg", "two.jpg", "three.jpg"))
+        self.assertIsNone(snapshot.filter_operation_id)
+        self.assertEqual(stale_snapshot, snapshot)
+
+    def test_reload_invalidates_work_without_reusing_its_operation_identity(self) -> None:
+        self.workspace.start_iptc_empty_filter(1, 1)
+        stale_batch = self.workspace.next_iptc_empty_filter_batch()
+        self.workspace.reload_paths(["four.jpg"])
+        self.workspace.start_iptc_empty_filter(1, 1)
+
+        snapshot = self.workspace.accept_iptc_empty_filter_batch(
+            stale_batch.operation_id, ["one.jpg"]
+        )
+
+        self.assertEqual(snapshot.paths, ("four.jpg",))
+        self.assertEqual(snapshot.filter_processed, 0)
     def test_tagged_selected_photo_remains_visible_for_one_selection_step(self) -> None:
         self.workspace.start_iptc_empty_filter(3, 3)
         batch = self.workspace.next_iptc_empty_filter_batch()
