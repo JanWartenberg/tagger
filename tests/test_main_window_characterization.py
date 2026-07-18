@@ -8,6 +8,8 @@ state or rendering details.
 from __future__ import annotations
 
 import os
+import threading
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -42,11 +44,19 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.index_patch.start()
         self.addCleanup(self.index_patch.stop)
         self.addCleanup(self.exif_patch.stop)
+        FakeExifTool.reset()
+        FakePhotoIndex.reset()
         self.window = MainWindow()
         self.window.show()
         self.window.activateWindow()
         self.app.processEvents()
-        self.addCleanup(self.window.close)
+        self.addCleanup(self._close_window)
+
+    def _close_window(self) -> None:
+        FakeExifTool.release_writes()
+        self.window.pool.waitForDone(2000)
+        self.app.processEvents()
+        self.window.close()
 
     def _add_paths(self, *names: str) -> list[str]:
         paths = [str(Path("C:/photos") / name) for name in names]
@@ -54,8 +64,116 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         return [normalize_path(path) for path in paths]
 
+    def _wait_until(self, condition) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if condition():
+                return
+            QtTest.QTest.qWait(10)
+        self.fail("Timed out waiting for asynchronous UI work")
+
     def test_backups_are_disabled_by_default(self) -> None:
         self.assertFalse(self.window.keepBackup.isChecked())
+
+    def test_failed_single_photo_tag_write_restores_confirmed_tags_and_marks_the_photo(
+        self,
+    ) -> None:
+        (path,) = self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+        FakeExifTool.fail_writes = True
+
+        self.window.addEdit.setText("pending")
+        self.window.add_keyword_from_input()
+        self._wait_until(FakeExifTool.write_started.is_set)
+
+        item = next(
+            item
+            for item in (
+                self.window.files.item(index)
+                for index in range(self.window.files.count())
+            )
+            if item is not None and item.text() == path
+        )
+        self.assertFalse(item.icon().isNull())
+        self.assertIn("Saving", self.window.mutationStatusLabel.text())
+        self.assertEqual(
+            [
+                self.window.keywordsList.item(i).text()
+                for i in range(self.window.keywordsList.count())
+            ],
+            ["confirmed", "pending"],
+        )
+        self.assertTrue(self.window.addEdit.isEnabled())
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical"):
+            FakeExifTool.release_writes()
+            self._wait_until(lambda: "Failed" in self.window.mutationStatusLabel.text())
+
+        self.assertFalse(item.icon().isNull())
+        self.assertEqual(
+            [
+                self.window.keywordsList.item(i).text()
+                for i in range(self.window.keywordsList.count())
+            ],
+            ["confirmed"],
+        )
+
+    def test_successful_single_photo_tag_write_confirms_and_clears_the_pending_marker(
+        self,
+    ) -> None:
+        (path,) = self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+
+        self.window.addEdit.setText("pending")
+        self.window.add_keyword_from_input()
+        self._wait_until(FakeExifTool.write_started.is_set)
+
+        item = self.window.files.item(0)
+        self.assertFalse(item.icon().isNull())
+        self.assertIn("Saving", self.window.mutationStatusLabel.text())
+        self.assertEqual(FakePhotoIndex.states_by_path[path].merged, ["confirmed"])
+
+        FakeExifTool.release_writes()
+        self._wait_until(lambda: self.window.mutationStatusLabel.text() == "")
+
+        self.assertTrue(item.icon().isNull())
+        self.assertEqual(
+            FakePhotoIndex.states_by_path[path].merged,
+            ["confirmed", "pending"],
+        )
+        self.assertEqual(
+            [
+                self.window.keywordsList.item(i).text()
+                for i in range(self.window.keywordsList.count())
+            ],
+            ["confirmed", "pending"],
+        )
+        self.assertEqual(path, self.window.selected_file_paths()[0])
+
+    def test_detail_status_tracks_the_current_photo_while_another_photo_is_pending(
+        self,
+    ) -> None:
+        first, second = self._add_paths("one.jpg", "two.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+
+        self.window.addEdit.setText("pending")
+        self.window.add_keyword_from_input()
+        self._wait_until(FakeExifTool.write_started.is_set)
+        self.assertIn("Saving", self.window.mutationStatusLabel.text())
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.mutationStatusLabel.text(), "")
+        self.assertNotEqual(first, second)
 
     def test_focus_current_tags_command_is_listed_with_its_shortcut(self) -> None:
         action = self.window._actions_by_id["focuskeywords"]
@@ -210,20 +328,52 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
 
 class FakeExifTool:
+    fail_writes = False
+    write_started = threading.Event()
+    _allow_writes = threading.Event()
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.fail_writes = False
+        cls.write_started = threading.Event()
+        cls._allow_writes = threading.Event()
+        cls._allow_writes.set()
+
+    @classmethod
+    def block_writes(cls) -> None:
+        cls._allow_writes.clear()
+
+    @classmethod
+    def release_writes(cls) -> None:
+        cls._allow_writes.set()
+
     def read_keywords(self, _path: str) -> "KeywordState":
-        return KeywordState([], [])
+        return KeywordState(["confirmed"], ["confirmed"])
 
     def read_keywords_many(self, paths: list[str]) -> dict[str, "KeywordState"]:
-        return {normalize_path(path): KeywordState([], []) for path in paths}
+        return {
+            normalize_path(path): KeywordState(["confirmed"], ["confirmed"])
+            for path in paths
+        }
 
     def write_keywords(
         self, _paths: list[str], _keywords: list[str], keep_backup: bool
     ) -> None:
         del keep_backup
+        type(self).write_started.set()
+        type(self)._allow_writes.wait(timeout=2)
+        if type(self).fail_writes:
+            raise RuntimeError("simulated write failure")
 
 
 class FakePhotoIndex:
     search_results: set[str] = set()
+    states_by_path: dict[str, KeywordState] = {}
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.search_results = set()
+        cls.states_by_path = {}
 
     def __init__(self, _root: str) -> None:
         pass
@@ -234,8 +384,8 @@ class FakePhotoIndex:
     def load_tags_for_root(self) -> set[str]:
         return set()
 
-    def update_states(self, _states: dict[str, "KeywordState"]) -> None:
-        pass
+    def update_states(self, states: dict[str, "KeywordState"]) -> None:
+        type(self).states_by_path.update(states)
 
     def has_photos(self, paths: list[str]) -> set[str]:
         return {normalize_path(path) for path in paths}

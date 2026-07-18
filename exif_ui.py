@@ -1,4 +1,5 @@
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
@@ -8,6 +9,11 @@ from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
 from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
 from photo_workspace import PhotoWorkspace, PhotoWorkspaceSnapshot
+from services.pending_tag_mutation import (
+    MutationStatus,
+    PendingTagMutation,
+    PendingTagMutationCoordinator,
+)
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import (
@@ -74,6 +80,13 @@ class Worker(QtCore.QRunnable):
         self.signals.finished.emit(res)
 
 
+@dataclass(frozen=True)
+class QueuedTagMutation:
+    work: Callable[[], TagMutationResult]
+    status_message: str | None
+    pending_mutation: PendingTagMutation | None
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -83,10 +96,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
-        self._mutation_queue: list[
-            tuple[Callable[[], TagMutationResult], str | None]
-        ] = []
+        self._mutation_queue: list[QueuedTagMutation] = []
         self._mutation_inflight = False
+        self._pending_tag_mutations = PendingTagMutationCoordinator()
         self._keywords_cache: dict[str, KeywordState] = {}
         self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
         self._folder_scans_inflight: set[tuple[str, bool]] = set()
@@ -131,6 +143,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._preview_token = 0
         self._preview_image: QtGui.QImage | None = None
+        self.mutationStatusLabel = QtWidgets.QLabel("")
+        self.mutationStatusLabel.setStyleSheet("color: #1d4ed8;")
         self.mismatchLabel = QtWidgets.QLabel("")
         self.mismatchLabel.setStyleSheet("color: #b45309;")
         self.resolveBtn = QtWidgets.QPushButton("Resolve (sync both)")
@@ -236,6 +250,7 @@ class MainWindow(QtWidgets.QMainWindow):
         mismatchRow.setContentsMargins(0, 0, 0, 0)
         mismatchRow.addWidget(self.mismatchLabel, 1)
         mismatchRow.addWidget(self.resolveBtn)
+        tagsLayout.addWidget(self.mutationStatusLabel)
         tagsLayout.addWidget(mismatchRowW)
 
         tagsLayout.addWidget(QtWidgets.QLabel("Tags on image"))
@@ -1293,8 +1308,7 @@ class MainWindow(QtWidgets.QMainWindow):
             [target],
             lambda st: st.merged + self._yanked_tags,
         )
-        if optimistic.updated_states:
-            self._apply_tag_mutation_result(optimistic)
+        pending_mutation = self._apply_pending_tag_mutation(optimistic)
         self.statusBar().showMessage(f"Queued paste ({len(self._yanked_tags)} tag(s))")
         self._enqueue_tag_mutation(
             lambda: self.tag_mutations.add_tags(
@@ -1303,6 +1317,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
             ),
+            pending_mutation,
             f"Pasted {len(self._yanked_tags)} tag(s)",
         )
 
@@ -1503,6 +1518,7 @@ class MainWindow(QtWidgets.QMainWindow):
             selected_paths = set(snapshot.selected_paths)
             for path in snapshot.paths:
                 item = QtWidgets.QListWidgetItem(path)
+                self._set_file_mutation_indicator(item, path)
                 self.files.addItem(item)
                 item.setHidden(path not in visible_paths)
                 item.setSelected(path in selected_paths)
@@ -1512,6 +1528,46 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.files.setCurrentItem(item)
         finally:
             self.files.blockSignals(False)
+
+    def _set_file_mutation_indicator(
+        self, item: QtWidgets.QListWidgetItem, path: str
+    ) -> None:
+        status = self._pending_tag_mutations.status_for(path)
+        if status is MutationStatus.PENDING:
+            item.setIcon(
+                self.style().standardIcon(
+                    QtWidgets.QStyle.StandardPixmap.SP_BrowserReload
+                )
+            )
+            item.setToolTip("Saving tag changes")
+        elif status is MutationStatus.FAILED:
+            item.setIcon(
+                self.style().standardIcon(
+                    QtWidgets.QStyle.StandardPixmap.SP_MessageBoxCritical
+                )
+            )
+            item.setToolTip("Failed to save tag changes")
+        else:
+            item.setIcon(QtGui.QIcon())
+            item.setToolTip("")
+
+    def _refresh_file_mutation_indicators(self, paths: list[str]) -> None:
+        for path in paths:
+            item = self._find_item_by_path(path)
+            if item is not None:
+                self._set_file_mutation_indicator(item, path)
+
+    def _refresh_mutation_status_view(self) -> None:
+        selected = self.selected_file_paths()
+        status = (
+            self._pending_tag_mutations.status_for(selected[0]) if selected else None
+        )
+        if status is MutationStatus.PENDING:
+            self.mutationStatusLabel.setText("Saving tag changes…")
+        elif status is MutationStatus.FAILED:
+            self.mutationStatusLabel.setText("Failed to save tag changes")
+        else:
+            self.mutationStatusLabel.setText("")
 
     def all_file_paths(self) -> list[str]:
         return list(self.photo_workspace.snapshot().paths)
@@ -1534,6 +1590,7 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = list(snapshot.selected_paths)
         if not sel:
             self.selectedLabel.setText("Drop JPG/JPEG files here")
+            self.mutationStatusLabel.setText("")
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
             self.keywordsList.clear()
@@ -1546,6 +1603,7 @@ class MainWindow(QtWidgets.QMainWindow):
         current = sel[0]
         self.selectedLabel.setText(current)
         self.resolveBtn.setEnabled(False)
+        self._refresh_mutation_status_view()
         self._load_preview_async(current)
 
         self._selection_token += 1
@@ -1557,9 +1615,12 @@ class MainWindow(QtWidgets.QMainWindow):
         def _ok(st: KeywordState) -> None:
             if token != self._selection_token:
                 return
-            self._keywords_cache[current] = st
+            self._pending_tag_mutations.remember_confirmed({current: st})
+            displayed = self._pending_tag_mutations.metadata_for(current) or st
+            self._keywords_cache[current] = displayed
             self._update_index_states({current: st})
-            self._render_keywords(st)
+            self._render_keywords(displayed)
+            self._refresh_mutation_status_view()
             if st.date_display:
                 self.dateLabel.setText(f"Capture date: {st.date_display}")
             else:
@@ -1771,16 +1832,48 @@ class MainWindow(QtWidgets.QMainWindow):
         if st is None:
             return
         self._render_keywords(st)
+        self._refresh_mutation_status_view()
         if st.date_display:
             self.dateLabel.setText(f"Capture date: {st.date_display}")
         else:
             self.dateLabel.setText("Capture date: (missing)")
 
-    def _apply_tag_mutation_result(self, result: TagMutationResult) -> None:
+    def _apply_pending_tag_mutation(
+        self, result: TagMutationResult
+    ) -> PendingTagMutation | None:
+        if not result.updated_states:
+            return None
+        mutation = self._pending_tag_mutations.begin(result.updated_states)
+        self._keywords_cache.update(result.updated_states)
+        paths = list(result.updated_states)
+        self._refresh_file_mutation_indicators(paths)
+        self._refresh_current_keywords_view_from_cache()
+        return mutation
+
+    def _apply_tag_mutation_result(
+        self,
+        result: TagMutationResult,
+        pending_mutation: PendingTagMutation | None,
+    ) -> None:
+        if pending_mutation is None:
+            self._pending_tag_mutations.remember_confirmed(result.updated_states)
+        else:
+            self._pending_tag_mutations.succeed(pending_mutation, result.updated_states)
         self._keywords_cache.update(result.updated_states)
         self._update_index_states(result.updated_states)
+        self._refresh_file_mutation_indicators(list(result.updated_states))
         self._refresh_current_keywords_view_from_cache()
         self._apply_filter_visibility_changes(result.emptiness_by_path)
+
+    def _apply_tag_mutation_failure(
+        self, pending_mutation: PendingTagMutation | None
+    ) -> None:
+        if pending_mutation is None:
+            return
+        restored = self._pending_tag_mutations.fail(pending_mutation)
+        self._keywords_cache.update(restored)
+        self._refresh_file_mutation_indicators(list(restored))
+        self._refresh_current_keywords_view_from_cache()
 
     def _current_keywords_from_ui(self) -> list[str]:
         items = [self.keywordsList.item(i) for i in range(self.keywordsList.count())]
@@ -1805,6 +1898,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 st = KeywordState(kws, kws)
             if st is None:
                 continue
+            self._pending_tag_mutations.remember_confirmed({path: st})
             keywords = transform(st)
             keywords = dedupe_casefold([k.strip() for k in keywords if k.strip()])
             keywords.sort(key=lambda value: value.casefold())
@@ -1828,27 +1922,29 @@ class MainWindow(QtWidgets.QMainWindow):
     def _enqueue_tag_mutation(
         self,
         fn: Callable[[], TagMutationResult],
+        pending_mutation: PendingTagMutation | None,
         status: str | None = None,
     ) -> None:
-        self._mutation_queue.append((fn, status))
+        self._mutation_queue.append(QueuedTagMutation(fn, status, pending_mutation))
         self._process_tag_mutation_queue()
 
     def _process_tag_mutation_queue(self) -> None:
         if self._mutation_inflight or not self._mutation_queue:
             return
         self._mutation_inflight = True
-        fn, status = self._mutation_queue.pop(0)
-        worker = Worker(fn)
+        queued = self._mutation_queue.pop(0)
+        worker = Worker(queued.work)
 
         def _ok(result: TagMutationResult) -> None:
             self._mutation_inflight = False
-            self._apply_tag_mutation_result(result)
-            if status:
-                self.statusBar().showMessage(status)
+            self._apply_tag_mutation_result(result, queued.pending_mutation)
+            if queued.status_message:
+                self.statusBar().showMessage(queued.status_message)
             self._process_tag_mutation_queue()
 
         def _err(msg: str) -> None:
             self._mutation_inflight = False
+            self._apply_tag_mutation_failure(queued.pending_mutation)
             self.statusBar().showMessage("Error")
             self._show_error(msg)
             self._process_tag_mutation_queue()
@@ -1941,8 +2037,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.photo_workspace.snapshot().iptc_empty_filter_active:
             self.photo_workspace.preserve_selected_paths_after_tagging(files)
         optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
-        if optimistic.updated_states:
-            self._apply_tag_mutation_result(optimistic)
+        pending_mutation = self._apply_pending_tag_mutation(optimistic)
         add_recent_tag(tag)
         self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
         self._enqueue_tag_mutation(
@@ -1952,6 +2047,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
             ),
+            pending_mutation,
             f"Added '{tag}' to {len(files)} file(s)",
         )
 
@@ -1973,8 +2069,7 @@ class MainWindow(QtWidgets.QMainWindow):
             files,
             lambda st: [tag for tag in st.merged if tag.casefold() not in remove],
         )
-        if optimistic.updated_states:
-            self._apply_tag_mutation_result(optimistic)
+        pending_mutation = self._apply_pending_tag_mutation(optimistic)
         self.statusBar().showMessage(
             f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)"
         )
@@ -1985,6 +2080,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self._ensure_loaded,
             ),
+            pending_mutation,
             f"Removed {len(remove)} tag(s) from {len(files)} file(s)",
         )
 
