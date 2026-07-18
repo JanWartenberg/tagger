@@ -56,7 +56,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         first, second, duplicate = self._add_paths("first.jpg", "second.jpg", "first.jpg")
 
         self.assertEqual(self.window.all_file_paths(), [first, second])
+        self.assertEqual(
+            [self.window.files.item(index).text() for index in range(self.window.files.count())],
+            [first, second],
+        )
         self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual([item.text() for item in self.window.files.selectedItems()], [first])
         self.assertEqual(duplicate, first)
 
     def test_db_search_hides_non_matches_and_selects_first_visible_photo(self) -> None:

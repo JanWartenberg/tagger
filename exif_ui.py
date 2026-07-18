@@ -7,6 +7,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, ExifToolError, KeywordState
 from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
+from photo_workspace import PhotoWorkspace, PhotoWorkspaceSnapshot
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import SUPPORTED_EXTS, dedupe_casefold, extract_image_paths_from_urls, normalize_path
@@ -95,6 +96,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # afterwards, so their keywords can be copied to the next image.
         self._filter_preserved: set[str] = set()
         self._filter_previous_selection: set[str] = set()
+        self.photo_workspace = PhotoWorkspace()
 
         self._config = load_config()
 
@@ -1276,24 +1278,17 @@ class MainWindow(QtWidgets.QMainWindow):
         super().dropEvent(event)
 
     def add_files(self, paths: list[str]) -> None:
-        seen = set(self.all_file_paths())
-        added = 0
-        last_added_path = None
-        for p in paths:
-            p2 = normalize_path(p)
-            if p2 in seen:
-                continue
-            self.files.addItem(p2)
-            seen.add(p2)
-            added += 1
-            last_added_path = p2
-        self.statusBar().showMessage(f"Added {added} files")
-        if added and not self.files.selectedItems():
-            self.files.setCurrentRow(0)
+        before = self.photo_workspace.snapshot()
+        snapshot = self.photo_workspace.add_paths(normalize_path(path) for path in paths)
+        added_paths = [path for path in snapshot.paths if path not in before.paths]
+        self._render_photo_workspace(snapshot)
+        self.statusBar().showMessage(f"Added {len(added_paths)} files")
+        if snapshot.selected_paths != before.selected_paths:
+            self.on_selection_changed()
         if self.onlyUntagged.isChecked():
             self.apply_iptc_filter_async()
-        if last_added_path:
-            self._set_last_folder(str(Path(last_added_path).parent))
+        if added_paths:
+            self._set_last_folder(str(Path(added_paths[-1]).parent))
         root = self._index_root_for_paths(self.all_file_paths())
         if root:
             self._index_root = root
@@ -1319,14 +1314,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._folder_scans_inflight = set()
         self._index_root = None
 
-        # Clear list + selection without spamming selection-changed handlers mid-reset.
-        self.files.blockSignals(True)
-        try:
-            self.files.clearSelection()
-            self.files.setCurrentRow(-1)
-            self.files.clear()
-        finally:
-            self.files.blockSignals(False)
+        self._render_photo_workspace(self.photo_workspace.reload_paths([]))
 
         self.filterInfoLabel.setText("")
         self.on_selection_changed()
@@ -1393,11 +1381,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 return str(Path(self.files.item(0).text()).parent)
         return None
 
+    def _render_photo_workspace(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        self.files.blockSignals(True)
+        try:
+            self.files.clear()
+            visible_paths = set(snapshot.visible_paths)
+            selected_paths = set(snapshot.selected_paths)
+            for path in snapshot.paths:
+                item = QtWidgets.QListWidgetItem(path)
+                self.files.addItem(item)
+                item.setHidden(path not in visible_paths)
+                item.setSelected(path in selected_paths)
+            if snapshot.active_path is not None:
+                item = self._find_item_by_path(snapshot.active_path)
+                if item is not None:
+                    self.files.setCurrentItem(item)
+        finally:
+            self.files.blockSignals(False)
+
     def all_file_paths(self) -> list[str]:
-        return [self.files.item(i).text() for i in range(self.files.count())]
+        return list(self.photo_workspace.snapshot().paths)
 
     def selected_file_paths(self) -> list[str]:
-        return [it.text() for it in self.files.selectedItems()]
+        return list(self.photo_workspace.snapshot().selected_paths)
 
     def _ensure_loaded(self, path: str) -> KeywordState:
         st = self._keywords_cache.get(path)
@@ -1407,6 +1413,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return st
 
     def on_selection_changed(self) -> None:
+        self.photo_workspace.select_paths(it.text() for it in self.files.selectedItems())
         sel = self.selected_file_paths()
         if not sel:
             if self.onlyUntagged.isChecked():

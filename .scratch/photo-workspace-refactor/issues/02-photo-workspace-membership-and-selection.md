@@ -1,6 +1,6 @@
 # Introduce PhotoWorkspace for membership and selection
 
-Status: ready-for-agent
+Status: completed
 Blocked by: 01
 
 ## Goal
@@ -14,7 +14,7 @@ Use one mutable `PhotoWorkspace` object. Its interface accepts intent-level oper
 ## Acceptance criteria
 
 - The module lives in the repository's flat module structure and imports no Qt, ExifTool, SQLite, filesystem, or worker code.
-- It normalizes identities, preserves insertion order, and ignores duplicate adds.
+- It accepts normalized path identities, preserves insertion order, and ignores duplicate adds; the Qt adapter normalizes filesystem input before passing it in.
 - Reload clears prior Photo Workspace membership and state before accepting discovered paths.
 - Selection is ordered by display order; the first visible selected photo is active.
 - A visibility change that hides the active selection chooses the same replacement behavior as the current application; no visible result clears selection.
@@ -24,3 +24,10 @@ Use one mutable `PhotoWorkspace` object. Its interface accepts intent-level oper
 ## Out of scope
 
 - IPTC-empty filtering, search-result restoration, metadata reads, and worker scheduling.
+
+## Comments
+
+- Implemented by `photo_workspace.py`; `MainWindow` now adapts membership and selection through this module.
+- Pure test command run: `python3 -m unittest tests/test_photo_workspace.py -v` (5 passing tests).
+- Full suite command run: `python3 -m unittest discover -s tests -v` (5 passing pure tests; 3 Qt tests skipped because PyQt6 is unavailable in the agent environment).
+- Windows offscreen acceptance remains required before this slice is accepted.
