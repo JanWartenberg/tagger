@@ -34,7 +34,7 @@ Make queued tag mutations explicitly reliable: preserve responsive feedback whil
 - When a photo leaves the Photo Workspace, discard its queued mutations. Let already in-flight writes finish for file/index correctness, but never let their completion alter the new Photo Workspace view.
 - Define the result contract for complete success, complete failure, and partial success before applying UI or index changes.
 - Make the index reflect only confirmed persisted metadata.
-- Keep Photo Workspace responsible only for visibility rules based on confirmed emptiness facts.
+- Keep Photo Workspace responsible for IPTC-empty filter-view lifecycle: confirmed mutations do not revise an active filter view; an explicit user refilter computes a new view from current file metadata.
 
 ## Testing Decisions
 

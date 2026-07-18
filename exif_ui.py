@@ -1735,9 +1735,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 sb.setValue(sb.value() + top_offset)
 
-    def apply_iptc_filter_async(self, reset_preserved: bool = False) -> None:
+    def apply_iptc_filter_async(self) -> None:
         """Ask the workspace for IPTC-empty work and schedule its next batch."""
-        del reset_preserved  # The workspace resets preservation for each operation.
         before = self.selected_file_paths()
         if not self.onlyUntagged.isChecked():
             snapshot = self.photo_workspace.clear_iptc_empty_filter()
@@ -2034,8 +2033,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        if self.photo_workspace.snapshot().iptc_empty_filter_active:
-            self.photo_workspace.preserve_selected_paths_after_tagging(files)
         optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
         pending_mutation = self._apply_pending_tag_mutation(optimistic)
         add_recent_tag(tag)
@@ -2056,8 +2053,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        if self.photo_workspace.snapshot().iptc_empty_filter_active:
-            self.photo_workspace.preserve_selected_paths_after_tagging(files)
         items = self.keywordsList.selectedItems()
         if not items:
             self.statusBar().showMessage("No keywords selected")

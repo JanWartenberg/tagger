@@ -58,8 +58,6 @@ class PhotoWorkspace:
         self._switched = False
         self._baseline_visible: set[str] = set()
         self._baseline_selected: set[str] = set()
-        self._preserved: set[str] = set()
-        self._previous_selection: set[str] = set()
 
     def snapshot(self) -> PhotoWorkspaceSnapshot:
         """Return the immutable state used to render the workspace."""
@@ -109,16 +107,11 @@ class PhotoWorkspace:
         self._switched = False
         self._baseline_visible = set()
         self._baseline_selected = set()
-        self._preserved = set()
-        self._previous_selection = set()
         return self.add_paths(paths)
 
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
         """Apply a user selection and repair it against the visible paths."""
         self._selected = set(paths) & self._visible
-        if self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-            self._release_expired_preserved_paths()
-            self._previous_selection = set(self._selected)
         if self._filter_running:
             self._baseline_visible = set(self._visible)
             self._baseline_selected = set(self._selected)
@@ -161,8 +154,6 @@ class PhotoWorkspace:
         self._switched = False
         self._baseline_visible = set(self._visible)
         self._baseline_selected = set(self._selected)
-        self._preserved = set()
-        self._previous_selection = set(self._selected)
         self._visible = set(self._paths)
 
         first_size = max(1, first_size)
@@ -188,8 +179,6 @@ class PhotoWorkspace:
         self._processed = 0
         self._matches = set()
         self._switched = False
-        self._preserved = set()
-        self._previous_selection = set()
         self._visible = set(self._paths)
         self._repair_selection()
         return self.snapshot()
@@ -221,7 +210,6 @@ class PhotoWorkspace:
         self._inflight = None
         self._processed += len(batch.paths)
         self._matches.update(set(empty_paths) & set(batch.paths))
-        self._matches.update(self._preserved)
         if self._matches:
             self._switched = True
             self._visible = set(self._matches)
@@ -252,52 +240,12 @@ class PhotoWorkspace:
             self._repair_selection()
         return self.snapshot()
 
-    def preserve_selected_paths_after_tagging(
-        self, paths: Iterable[str]
-    ) -> PhotoWorkspaceSnapshot:
-        """Keep tagged selected paths visible for the current and next selection."""
-        if self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-            self._preserved.update(set(paths) & set(self._paths))
-            self._matches.update(self._preserved)
-            if self._switched or not self._filter_running:
-                self._switched = True
-                self._visible = set(self._matches)
-                self._repair_selection()
-        return self.snapshot()
-
     def apply_iptc_emptiness(
         self, emptiness_by_path: dict[str, bool]
     ) -> PhotoWorkspaceSnapshot:
-        """Apply IPTC facts obtained while a filter is active."""
-        if self._view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
-            return self.snapshot()
-
-        known = set(self._paths)
-        for path, is_empty in emptiness_by_path.items():
-            if path not in known:
-                continue
-            if is_empty:
-                self._matches.add(path)
-            elif path not in self._preserved:
-                self._matches.discard(path)
-        self._matches.update(self._preserved)
-
-        if self._switched or not self._filter_running:
-            self._switched = True
-            self._visible = set(self._matches)
-            self._repair_selection()
-        if self._filter_running:
-            self._baseline_visible = set(self._visible)
-            self._baseline_selected = set(self._selected)
+        """Keep the current IPTC-empty view stable after metadata mutations."""
+        del emptiness_by_path
         return self.snapshot()
-
-    def _release_expired_preserved_paths(self) -> None:
-        allowed = self._selected | self._previous_selection
-        released = self._preserved - allowed
-        self._preserved &= allowed
-        self._matches -= released
-        if self._switched:
-            self._visible -= released
 
     def _repair_selection(self) -> None:
         self._selected &= self._visible
