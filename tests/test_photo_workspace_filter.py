@@ -1,0 +1,56 @@
+from __future__ import annotations
+
+import unittest
+
+from photo_workspace import PhotoWorkspace
+
+
+class IptcEmptyFilterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.workspace = PhotoWorkspace()
+        self.workspace.add_paths(["one.jpg", "two.jpg", "three.jpg"])
+
+    def test_stale_batch_does_not_change_new_filter(self) -> None:
+        self.workspace.start_iptc_empty_filter(1, 1)
+        stale = self.workspace.next_iptc_empty_filter_batch()
+        self.workspace.start_iptc_empty_filter(1, 1)
+
+        snapshot = self.workspace.accept_iptc_empty_filter_batch(stale.operation_id, ["one.jpg"])
+
+        self.assertEqual(snapshot.visible_paths, ("one.jpg", "two.jpg", "three.jpg"))
+        self.assertEqual(snapshot.filter_processed, 0)
+
+    def test_failed_filter_restores_last_successful_view(self) -> None:
+        self.workspace.set_visible_paths(["two.jpg"])
+        self.workspace.start_iptc_empty_filter(1, 1)
+        batch = self.workspace.next_iptc_empty_filter_batch()
+
+        snapshot = self.workspace.fail_iptc_empty_filter_batch(batch.operation_id)
+
+        self.assertEqual(snapshot.visible_paths, ("two.jpg",))
+        self.assertEqual(snapshot.selected_paths, ("two.jpg",))
+
+    def test_empty_final_result_hides_all_photos(self) -> None:
+        self.workspace.start_iptc_empty_filter(3, 3)
+        batch = self.workspace.next_iptc_empty_filter_batch()
+
+        snapshot = self.workspace.accept_iptc_empty_filter_batch(batch.operation_id, [])
+
+        self.assertEqual(snapshot.visible_paths, ())
+        self.assertEqual(snapshot.selected_paths, ())
+
+    def test_tagged_selected_photo_remains_visible_for_one_selection_step(self) -> None:
+        self.workspace.start_iptc_empty_filter(3, 3)
+        batch = self.workspace.next_iptc_empty_filter_batch()
+        self.workspace.accept_iptc_empty_filter_batch(batch.operation_id, ["one.jpg", "two.jpg"])
+        self.workspace.preserve_selected_paths_after_tagging(["one.jpg"])
+
+        snapshot = self.workspace.select_paths(["two.jpg"])
+        self.assertIn("one.jpg", snapshot.visible_paths)
+
+        snapshot = self.workspace.select_paths(["three.jpg"])
+        self.assertNotIn("one.jpg", snapshot.visible_paths)
+
+
+if __name__ == "__main__":
+    unittest.main()
