@@ -13,6 +13,7 @@ from services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutation,
     PendingTagMutationCoordinator,
+    StateTransform,
 )
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
@@ -1304,18 +1305,17 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage("No files selected")
             return
         target = files[0]
-        optimistic = self._optimistic_mutation(
+        pending_mutation = self._begin_pending_tag_mutation(
             [target],
             lambda st: st.merged + self._yanked_tags,
         )
-        pending_mutation = self._apply_pending_tag_mutation(optimistic)
         self.statusBar().showMessage(f"Queued paste ({len(self._yanked_tags)} tag(s))")
         self._enqueue_tag_mutation(
             lambda: self.tag_mutations.add_tags(
                 [target],
                 self._yanked_tags,
                 keep_backup=self.keepBackup.isChecked(),
-                load_state=self._ensure_loaded,
+                load_state=self.exif.read_keywords,
             ),
             pending_mutation,
             f"Pasted {len(self._yanked_tags)} tag(s)",
@@ -1575,13 +1575,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def selected_file_paths(self) -> list[str]:
         return list(self.photo_workspace.snapshot().selected_paths)
 
-    def _ensure_loaded(self, path: str) -> KeywordState:
-        st = self._keywords_cache.get(path)
-        if st is None:
-            st = self.exif.read_keywords(path)
-            self._keywords_cache[path] = st
-        return st
-
     def on_selection_changed(self) -> None:
         requested_paths = tuple(item.text() for item in self.files.selectedItems())
         snapshot = self.photo_workspace.select_paths(requested_paths)
@@ -1837,17 +1830,59 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.dateLabel.setText("Capture date: (missing)")
 
-    def _apply_pending_tag_mutation(
-        self, result: TagMutationResult
+    def _begin_pending_tag_mutation(
+        self,
+        files: list[str],
+        transform: Callable[[KeywordState], list[str]],
     ) -> PendingTagMutation | None:
-        if not result.updated_states:
+        transforms: dict[str, StateTransform] = {}
+        selected = self.selected_file_paths()
+        current = normalize_path(selected[0]) if selected else None
+        state_transform = self._keyword_state_transform(transform)
+
+        for path in files:
+            if self._pending_tag_mutations.confirmed_for(path) is None:
+                state = self._keywords_cache.get(path)
+                if state is None and current and normalize_path(path) == current:
+                    keywords = self._current_keywords_from_ui()
+                    state = KeywordState(keywords, keywords)
+                if state is None:
+                    continue
+                self._pending_tag_mutations.remember_confirmed({path: state})
+            transforms[path] = state_transform
+
+        if not transforms:
             return None
-        mutation = self._pending_tag_mutations.begin(result.updated_states)
-        self._keywords_cache.update(result.updated_states)
-        paths = list(result.updated_states)
-        self._refresh_file_mutation_indicators(paths)
+        mutation = self._pending_tag_mutations.begin(transforms)
+        displayed = {
+            path: self._pending_tag_mutations.metadata_for(path) for path in transforms
+        }
+        self._keywords_cache.update(
+            {path: state for path, state in displayed.items() if state is not None}
+        )
+        self._refresh_file_mutation_indicators(list(transforms))
         self._refresh_current_keywords_view_from_cache()
         return mutation
+
+    def _keyword_state_transform(
+        self, transform: Callable[[KeywordState], list[str]]
+    ) -> StateTransform:
+        def _apply(state: KeywordState) -> KeywordState:
+            keywords = transform(state)
+            keywords = dedupe_casefold(
+                [keyword.strip() for keyword in keywords if keyword.strip()]
+            )
+            keywords.sort(key=lambda value: value.casefold())
+            return KeywordState(
+                keywords,
+                keywords,
+                state.date_original,
+                state.date_create,
+                state.date_xmp_create,
+                state.date_digitized,
+            )
+
+        return _apply
 
     def _apply_tag_mutation_result(
         self,
@@ -1879,44 +1914,6 @@ class MainWindow(QtWidgets.QMainWindow):
         return [
             it.text().strip() for it in items if it is not None and it.text().strip()
         ]
-
-    def _optimistic_mutation(
-        self,
-        files: list[str],
-        transform: Callable[[KeywordState], list[str]],
-    ) -> TagMutationResult:
-        updated_states: dict[str, KeywordState] = {}
-        emptiness_by_path: dict[str, bool] = {}
-        selected = self.selected_file_paths()
-        current = normalize_path(selected[0]) if selected else None
-
-        for path in files:
-            st = self._keywords_cache.get(path)
-            if st is None and current and normalize_path(path) == current:
-                kws = self._current_keywords_from_ui()
-                st = KeywordState(kws, kws)
-            if st is None:
-                continue
-            self._pending_tag_mutations.remember_confirmed({path: st})
-            keywords = transform(st)
-            keywords = dedupe_casefold([k.strip() for k in keywords if k.strip()])
-            keywords.sort(key=lambda value: value.casefold())
-            updated_states[path] = KeywordState(
-                keywords,
-                keywords,
-                st.date_original,
-                st.date_create,
-                st.date_xmp_create,
-                st.date_digitized,
-            )
-            emptiness_by_path[path] = len(keywords) == 0
-
-        return TagMutationResult(
-            updated_states=updated_states,
-            emptiness_by_path=emptiness_by_path,
-            processed_count=len(files),
-            changed_count=len(updated_states),
-        )
 
     def _enqueue_tag_mutation(
         self,
@@ -2033,8 +2030,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        optimistic = self._optimistic_mutation(files, lambda st: st.merged + [tag])
-        pending_mutation = self._apply_pending_tag_mutation(optimistic)
+        pending_mutation = self._begin_pending_tag_mutation(
+            files, lambda st: st.merged + [tag]
+        )
         add_recent_tag(tag)
         self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
         self._enqueue_tag_mutation(
@@ -2042,7 +2040,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 files,
                 tag,
                 keep_backup=self.keepBackup.isChecked(),
-                load_state=self._ensure_loaded,
+                load_state=self.exif.read_keywords,
             ),
             pending_mutation,
             f"Added '{tag}' to {len(files)} file(s)",
@@ -2060,11 +2058,10 @@ class MainWindow(QtWidgets.QMainWindow):
         remove = {it.text().strip().casefold() for it in items if it.text().strip()}
         if not remove:
             return
-        optimistic = self._optimistic_mutation(
+        pending_mutation = self._begin_pending_tag_mutation(
             files,
             lambda st: [tag for tag in st.merged if tag.casefold() not in remove],
         )
-        pending_mutation = self._apply_pending_tag_mutation(optimistic)
         self.statusBar().showMessage(
             f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)"
         )
@@ -2073,7 +2070,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 files,
                 remove,
                 keep_backup=self.keepBackup.isChecked(),
-                load_state=self._ensure_loaded,
+                load_state=self.exif.read_keywords,
             ),
             pending_mutation,
             f"Removed {len(remove)} tag(s) from {len(files)} file(s)",

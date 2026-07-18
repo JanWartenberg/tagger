@@ -175,6 +175,41 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.mutationStatusLabel.text(), "")
         self.assertNotEqual(first, second)
 
+    def test_later_tag_mutation_uses_fresh_external_metadata_after_earlier_failure(
+        self,
+    ) -> None:
+        (path,) = self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.block_writes()
+        FakeExifTool.write_failures = [True, False]
+
+        self.window.addEdit.setText("first")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 1)
+
+        self.window.addEdit.setText("second")
+        self.window.add_keyword_from_input()
+        FakeExifTool.states_by_path[path] = KeywordState(
+            ["confirmed", "external"], ["confirmed", "external"]
+        )
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical"):
+            FakeExifTool.release_writes()
+            self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+            self._wait_until(lambda: "Failed" in self.window.mutationStatusLabel.text())
+
+        self.assertEqual(
+            FakeExifTool.write_calls[1],
+            (path, ["confirmed", "external", "second"]),
+        )
+        self.assertEqual(
+            [
+                self.window.keywordsList.item(index).text()
+                for index in range(self.window.keywordsList.count())
+            ],
+            ["confirmed", "external", "second"],
+        )
+
     def test_focus_current_tags_command_is_listed_with_its_shortcut(self) -> None:
         action = self.window._actions_by_id["focuskeywords"]
 
@@ -329,12 +364,18 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
 class FakeExifTool:
     fail_writes = False
+    write_failures: list[bool] = []
+    write_calls: list[tuple[str, list[str]]] = []
+    states_by_path: dict[str, KeywordState] = {}
     write_started = threading.Event()
     _allow_writes = threading.Event()
 
     @classmethod
     def reset(cls) -> None:
         cls.fail_writes = False
+        cls.write_failures = []
+        cls.write_calls = []
+        cls.states_by_path = {}
         cls.write_started = threading.Event()
         cls._allow_writes = threading.Event()
         cls._allow_writes.set()
@@ -347,23 +388,28 @@ class FakeExifTool:
     def release_writes(cls) -> None:
         cls._allow_writes.set()
 
-    def read_keywords(self, _path: str) -> "KeywordState":
-        return KeywordState(["confirmed"], ["confirmed"])
+    def read_keywords(self, path: str) -> "KeywordState":
+        return type(self).states_by_path.get(
+            normalize_path(path), KeywordState(["confirmed"], ["confirmed"])
+        )
 
     def read_keywords_many(self, paths: list[str]) -> dict[str, "KeywordState"]:
-        return {
-            normalize_path(path): KeywordState(["confirmed"], ["confirmed"])
-            for path in paths
-        }
+        return {normalize_path(path): self.read_keywords(path) for path in paths}
 
     def write_keywords(
-        self, _paths: list[str], _keywords: list[str], keep_backup: bool
+        self, paths: list[str], keywords: list[str], keep_backup: bool
     ) -> None:
         del keep_backup
+        path = normalize_path(paths[0])
+        type(self).write_calls.append((path, list(keywords)))
         type(self).write_started.set()
         type(self)._allow_writes.wait(timeout=2)
-        if type(self).fail_writes:
+        failed = type(self).fail_writes or (
+            type(self).write_failures.pop(0) if type(self).write_failures else False
+        )
+        if failed:
             raise RuntimeError("simulated write failure")
+        type(self).states_by_path[path] = KeywordState(list(keywords), list(keywords))
 
 
 class FakePhotoIndex:
