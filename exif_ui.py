@@ -209,13 +209,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dbSearchEdit = QtWidgets.QLineEdit()
         self.dbSearchEdit.setPlaceholderText("Search DB tags/date...")
         self.dbSearchEdit.setToolTip(
-            "Reverse search in the SQLite index: tag:foo or date:2024"
+            "Reverse search in the SQLite index: tag:foo or date:2024 · "
+            "Focus: Ctrl+Shift+F"
         )
         self.dbSearchEdit.returnPressed.connect(self.apply_db_search)
         self.dbSearchBtn = QtWidgets.QPushButton("Search")
         self.dbSearchBtn.clicked.connect(self.apply_db_search)
         self.dbSearchClearBtn = QtWidgets.QPushButton("Clear")
         self.dbSearchClearBtn.clicked.connect(self.clear_db_search)
+        self.dbSearchClearBtn.setToolTip("Clear photo-tag search (Ctrl+Shift+X)")
         self.filterInfoLabel = QtWidgets.QLabel("")
         self.filterInfoLabel.setToolTip("Filter result count")
 

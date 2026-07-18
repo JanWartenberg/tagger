@@ -216,6 +216,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(action.command.name, "focuscurrenttags")
         self.assertEqual(action.shortcuts[0].sequence, "Alt+3")
 
+    def test_search_controls_explain_their_keyboard_shortcuts(self) -> None:
+        self.assertIn("Ctrl+Shift+F", self.window.dbSearchEdit.toolTip())
+        self.assertIn("Ctrl+Shift+X", self.window.dbSearchClearBtn.toolTip())
+
     def test_clear_search_action_has_command_alias_and_shortcut(self) -> None:
         action = self.window._actions_by_id["clearsearch"]
 
