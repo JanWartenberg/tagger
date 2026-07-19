@@ -1,6 +1,6 @@
 # Large Path-Set Index Queries
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -38,3 +38,13 @@ Make path-set index queries work for arbitrary Photo Workspace sizes by batching
 ## Further Notes
 
 This is suitable for direct ticketing; it is an internal reliability change with a contained seam.
+
+## Comments
+
+Completed: path-set membership and sync lookups now batch SQLite parameters at 500 paths.
+
+Validation completed:
+
+- `ruff check --no-cache indexing.py tests/test_indexing.py`
+- `python3 -m unittest discover -s tests -v` (46 tests)
+- `git diff --check`

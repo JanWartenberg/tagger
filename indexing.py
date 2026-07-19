@@ -10,6 +10,11 @@ from exif_tool import ExifTool, KeywordState
 from utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
 
 
+# SQLite commonly permits 999 bind variables. Keep path-set queries comfortably below
+# that limit so supported builds with the default limit can index large workspaces.
+_PATH_QUERY_BATCH_SIZE = 500
+
+
 def _normalize_root(root: str | Path) -> Path:
     return Path(root).resolve()
 
@@ -111,22 +116,30 @@ class PhotoIndex:
         if not normalized:
             return set()
         with self._connect() as conn:
-            placeholders = ",".join("?" for _ in normalized)
-            rows = conn.execute(
-                f"SELECT path FROM photos WHERE path IN ({placeholders})",
-                normalized,
-            ).fetchall()
-            return {str(row[0]) for row in rows}
+            found_paths: set[str] = set()
+            for offset in range(0, len(normalized), _PATH_QUERY_BATCH_SIZE):
+                batch = normalized[offset : offset + _PATH_QUERY_BATCH_SIZE]
+                placeholders = ",".join("?" for _ in batch)
+                rows = conn.execute(
+                    f"SELECT path FROM photos WHERE path IN ({placeholders})",
+                    batch,
+                ).fetchall()
+                found_paths.update(str(row[0]) for row in rows)
+            return found_paths
 
     def _photo_rows(self, conn: sqlite3.Connection, paths: list[str]) -> dict[str, sqlite3.Row]:
         if not paths:
             return {}
-        placeholders = ",".join("?" for _ in paths)
-        rows = conn.execute(
-            f"SELECT path, mtime, size, date_taken FROM photos WHERE path IN ({placeholders})",
-            paths,
-        ).fetchall()
-        return {row["path"]: row for row in rows}
+        rows_by_path: dict[str, sqlite3.Row] = {}
+        for offset in range(0, len(paths), _PATH_QUERY_BATCH_SIZE):
+            batch = paths[offset : offset + _PATH_QUERY_BATCH_SIZE]
+            placeholders = ",".join("?" for _ in batch)
+            rows = conn.execute(
+                f"SELECT path, mtime, size, date_taken FROM photos WHERE path IN ({placeholders})",
+                batch,
+            ).fetchall()
+            rows_by_path.update({row["path"]: row for row in rows})
+        return rows_by_path
 
     def _tag_id(self, conn: sqlite3.Connection, tag: str) -> int:
         tag = tag.strip()
