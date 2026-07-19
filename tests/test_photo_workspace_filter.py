@@ -23,7 +23,7 @@ class IptcEmptyFilterTests(unittest.TestCase):
         self.assertEqual(snapshot.filter_processed, 0)
 
     def test_failed_filter_restores_last_successful_view(self) -> None:
-        self.workspace.set_visible_paths(["two.jpg"])
+        self.workspace.apply_database_search_matches(["two.jpg"])
         self.workspace.start_iptc_empty_filter(1, 1)
         batch = self.workspace.next_iptc_empty_filter_batch()
 

@@ -8,7 +8,11 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
 from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
-from photo_workspace import PhotoWorkspace, PhotoWorkspaceSnapshot
+from photo_workspace import (
+    PhotoWorkspace,
+    PhotoWorkspaceSnapshot,
+    PhotoWorkspaceViewMode,
+)
 from services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutation,
@@ -1592,7 +1596,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_selection_changed(self) -> None:
         requested_paths = tuple(item.text() for item in self.files.selectedItems())
         snapshot = self.photo_workspace.select_paths(requested_paths)
-        if snapshot.iptc_empty_filter_active:
+        if snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
             self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
         sel = list(snapshot.selected_paths)
         if not sel:
@@ -1820,7 +1824,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return selection_changed
 
     def _update_filter_label(self, snapshot: PhotoWorkspaceSnapshot) -> None:
-        if not snapshot.iptc_empty_filter_active:
+        if snapshot.view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
             self.filterInfoLabel.setText("")
         elif snapshot.filter_view_switched or snapshot.filter_operation_id is None:
             self.filterInfoLabel.setText(
@@ -2053,7 +2057,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.onlyUntagged.blockSignals(True)
         try:
-            self.onlyUntagged.setChecked(snapshot.iptc_empty_filter_active)
+            self.onlyUntagged.setChecked(
+                snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            )
         finally:
             self.onlyUntagged.blockSignals(False)
         self._render_photo_workspace_snapshot(snapshot, before)
@@ -2064,7 +2070,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self, emptiness_by_path: dict[str, bool]
     ) -> None:
         """Render filter facts accepted by the workspace after a tag mutation."""
-        if not self.photo_workspace.snapshot().iptc_empty_filter_active:
+        if (
+            self.photo_workspace.snapshot().view_mode
+            is not PhotoWorkspaceViewMode.IPTC_EMPTY
+        ):
             return
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)

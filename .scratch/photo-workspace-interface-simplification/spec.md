@@ -1,6 +1,6 @@
 # Photo Workspace Interface Simplification
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -39,3 +39,17 @@ Make the PhotoWorkspace interface express its authoritative view state once, kee
 ## Further Notes
 
 This is suitable for direct ticketing after a short caller inventory; no grilling is currently required.
+
+## Comments
+
+Completed:
+
+- `PhotoWorkspaceViewMode` is the sole view-state representation in snapshots. The Qt adapter now compares that enum directly.
+- Removed the redundant IPTC/search active flags and the test-only `set_visible_paths` escape hatch.
+- Pure tests now set visibility through database-search intent and cover non-empty and empty result selection repair.
+
+Validation completed:
+
+- `ruff check --no-cache photo_workspace.py exif_ui.py tests/test_photo_workspace.py tests/test_photo_workspace_filter.py tests/test_photo_workspace_search.py`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (46 tests)
+- `git diff --check`

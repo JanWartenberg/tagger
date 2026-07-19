@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from photo_workspace import PhotoWorkspace
+from photo_workspace import PhotoWorkspace, PhotoWorkspaceViewMode
 
 
 class PhotoWorkspaceTests(unittest.TestCase):
@@ -48,23 +48,27 @@ class PhotoWorkspaceTests(unittest.TestCase):
         self.assertEqual(snapshot.selected_paths, ())
         self.assertIsNone(snapshot.active_path)
 
-    def test_hiding_active_photo_selects_first_remaining_visible_photo(self) -> None:
+    def test_database_search_hiding_active_photo_preserves_visible_selection(
+        self,
+    ) -> None:
         workspace = PhotoWorkspace()
         workspace.add_paths(["one.jpg", "two.jpg", "three.jpg"])
         workspace.select_paths(["two.jpg", "three.jpg"])
 
-        snapshot = workspace.set_visible_paths(["one.jpg", "three.jpg"])
+        snapshot = workspace.apply_database_search_matches(["one.jpg", "three.jpg"])
 
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
         self.assertEqual(snapshot.visible_paths, ("one.jpg", "three.jpg"))
         self.assertEqual(snapshot.selected_paths, ("three.jpg",))
         self.assertEqual(snapshot.active_path, "three.jpg")
 
-    def test_hiding_every_photo_clears_selection_and_active_photo(self) -> None:
+    def test_empty_database_search_clears_selection_and_active_photo(self) -> None:
         workspace = PhotoWorkspace()
         workspace.add_paths(["one.jpg", "two.jpg"])
 
-        snapshot = workspace.set_visible_paths([])
+        snapshot = workspace.apply_database_search_matches([])
 
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
         self.assertEqual(snapshot.visible_paths, ())
         self.assertEqual(snapshot.selected_paths, ())
         self.assertIsNone(snapshot.active_path)

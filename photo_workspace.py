@@ -27,9 +27,7 @@ class PhotoWorkspaceSnapshot:
     filter_operation_id: int | None = None
     filter_processed: int = 0
     filter_total: int = 0
-    iptc_empty_filter_active: bool = False
     filter_view_switched: bool = False
-    database_search_active: bool = False
 
 
 @dataclass(frozen=True)
@@ -72,13 +70,7 @@ class PhotoWorkspace:
             filter_operation_id=self._operation if self._filter_running else None,
             filter_processed=self._processed,
             filter_total=len(self._paths),
-            iptc_empty_filter_active=(
-                self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
-            ),
             filter_view_switched=self._switched,
-            database_search_active=(
-                self._view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH
-            ),
         )
 
     def add_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
@@ -115,13 +107,6 @@ class PhotoWorkspace:
         if self._filter_running:
             self._baseline_visible = set(self._visible)
             self._baseline_selected = set(self._selected)
-        return self.snapshot()
-
-    def set_visible_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
-        """Set the visible paths for an externally supplied logical view."""
-        self._view_mode = PhotoWorkspaceViewMode.NORMAL
-        self._visible = set(paths) & set(self._paths)
-        self._repair_selection()
         return self.snapshot()
 
     def apply_database_search_matches(

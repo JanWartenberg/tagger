@@ -24,7 +24,6 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ("two.jpg",))
         self.assertEqual(snapshot.selected_paths, ("two.jpg",))
         self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
-        self.assertTrue(snapshot.database_search_active)
 
     def test_search_corrects_hidden_selection_to_the_first_visible_match(self) -> None:
         self.workspace.select_paths(["two.jpg"])
@@ -44,7 +43,6 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ("one.jpg", "two.jpg", "three.jpg"))
         self.assertEqual(snapshot.selected_paths, ("two.jpg",))
         self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.NORMAL)
-        self.assertFalse(snapshot.database_search_active)
 
     def test_search_invalidates_inflight_iptc_filter_work(self) -> None:
         self.workspace.start_iptc_empty_filter(1, 1)
@@ -57,7 +55,7 @@ class DatabaseSearchTests(unittest.TestCase):
 
         self.assertEqual(snapshot, search_snapshot)
         self.assertEqual(snapshot.visible_paths, ("two.jpg",))
-        self.assertFalse(snapshot.iptc_empty_filter_active)
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
 
     def test_starting_iptc_filter_leaves_database_search_view(self) -> None:
         self.workspace.apply_database_search_matches(["two.jpg"])
@@ -65,8 +63,6 @@ class DatabaseSearchTests(unittest.TestCase):
         snapshot = self.workspace.start_iptc_empty_filter(1, 1)
 
         self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.IPTC_EMPTY)
-        self.assertFalse(snapshot.database_search_active)
-        self.assertTrue(snapshot.iptc_empty_filter_active)
 
 
 if __name__ == "__main__":
