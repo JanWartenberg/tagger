@@ -40,4 +40,6 @@ Reduce MainWindow to a Qt-facing adapter by moving coherent non-widget coordinat
 
 ## Further Notes
 
-Grilling is required before tickets: choose the first extraction, define its interface, and set a narrow migration boundary. This spec should be implemented incrementally, not as a single rewrite.
+The initial extraction has been chosen during the Background Photo Discovery and Index I/O grilling: introduce a separate Qt-free Coordinator module for background folder discovery and index I/O. Its narrow migration boundary is request identity, stale-result handling, completed-result ordering, background scheduling, and one serial index-write queue per root. MainWindow remains the Qt adapter and Photo Workspace remains the owner of logical workspace state. This does not extract input routing or tag-mutation coordination.
+
+Define the Coordinator module's interface before ticketing. This spec should be implemented incrementally, not as a single rewrite.
