@@ -108,8 +108,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._workspace_generation = 0
         self._pending_tag_mutations = PendingTagMutationCoordinator()
         self._keywords_cache: dict[str, KeywordState] = {}
-        self._folder_tag_cache: dict[tuple[str, bool], set[str]] = {}
-        self._folder_scans_inflight: set[tuple[str, bool]] = set()
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
         self._selection_token = 0
@@ -1450,8 +1448,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._preview_token += 1
         # Reset caches tied to previous file lists.
         self._keywords_cache = {}
-        self._folder_tag_cache = {}
-        self._folder_scans_inflight = set()
         self._index_root = None
 
         snapshot = self.photo_workspace.reload_paths(normalized_paths)
@@ -2255,9 +2251,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.onlyUntagged.setChecked(not self.onlyUntagged.isChecked())
         state = "ON" if self.onlyUntagged.isChecked() else "OFF"
         self.statusBar().showMessage(f"Only IPTC-empty: {state}")
-
-    def _ensure_folder_scan(self, folder: str, recursive: bool) -> None:
-        self._schedule_index_sync(folder)
 
     def _show_error(self, msg: str) -> None:
         QtWidgets.QMessageBox.critical(self, "Error", msg)

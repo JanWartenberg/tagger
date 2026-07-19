@@ -1,6 +1,6 @@
 # Main Window Dead-Code Cleanup
 
-Status: ready-for-agent
+Status: completed
 Priority: low
 
 ## Problem Statement
@@ -37,3 +37,19 @@ Remove verified-unused MainWindow state and helpers while preserving supported c
 ## Further Notes
 
 This is suitable for direct ticketing after a fresh reference inventory.
+
+## Comments
+
+Completed:
+
+- Removed the unread `_folder_tag_cache` and `_folder_scans_inflight` state, including their workspace-reload resets.
+- Removed the unreachable `_ensure_folder_scan(folder, recursive)` helper, which only delegated to the active index-sync path.
+
+Validation completed:
+
+- `rg -n '_folder_tag_cache|_folder_scans_inflight|_ensure_folder_scan' . --glob '*.py'` (no remaining references)
+- `ruff check --no-cache .`
+- `ruff format --check --no-cache exif_ui.py`
+- `python3 -m compileall -q exif_ui.py tests`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (46 tests)
+- `git diff --check`
