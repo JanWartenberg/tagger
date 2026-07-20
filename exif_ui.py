@@ -1,6 +1,7 @@
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 from typing import Callable
 
 from PyQt6 import QtCore, QtGui, QtWidgets
@@ -13,6 +14,20 @@ from photo_workspace import (
     PhotoWorkspaceSnapshot,
     PhotoWorkspaceViewMode,
 )
+from services.background_coordinator import (
+    BackgroundCoordinator,
+    BackgroundRunner,
+    DiscoveryAdapter,
+    DiscoveryCompleted,
+    DiscoveryEvent,
+    DiscoveryKind,
+    DiscoveryRequest,
+    IndexAdapter,
+)
+from services.photo_discovery import (
+    SUPPORTED_PHOTO_EXTENSIONS,
+    FileSystemPhotoDiscovery,
+)
 from services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutation,
@@ -21,12 +36,7 @@ from services.pending_tag_mutation import (
 )
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
-from utils import (
-    SUPPORTED_EXTS,
-    dedupe_casefold,
-    extract_image_paths_from_urls,
-    normalize_path,
-)
+from utils import dedupe_casefold, normalize_path
 
 
 DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
@@ -55,9 +65,9 @@ class FileListWidget(QtWidgets.QListWidget):
             super().dragMoveEvent(event)
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:
-        paths = extract_image_paths_from_urls(event.mimeData().urls())
-        if paths:
-            self.filesDropped.emit(paths)
+        urls = event.mimeData().urls()
+        if urls:
+            self.filesDropped.emit(urls)
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
@@ -85,6 +95,44 @@ class Worker(QtCore.QRunnable):
         self.signals.finished.emit(res)
 
 
+class QtBackgroundRunner:
+    """Submit coordinator work through TAGGER's existing global thread pool."""
+
+    def __init__(self, pool: QtCore.QThreadPool) -> None:
+        self._pool = pool
+
+    def submit(self, work: Callable[[], None]) -> None:
+        self._pool.start(Worker(work))
+
+
+class ExistingPhotoIndexAdapter:
+    """Adapt current PhotoIndex calls until the queued index migration arrives."""
+
+    def __init__(self, exif: ExifTool) -> None:
+        self._exif = exif
+
+    def is_initialized(self, root: str) -> bool:
+        return PhotoIndex(root).is_initialized()
+
+    def sync(self, root: str, paths: Sequence[str]) -> object:
+        del paths
+        return PhotoIndex(root).sync_root(self._exif)
+
+    def update_states(self, root: str, states: Mapping[str, object]) -> None:
+        keyword_states = {
+            path: state
+            for path, state in states.items()
+            if isinstance(state, KeywordState)
+        }
+        PhotoIndex(root).update_states(keyword_states)
+
+    def search(self, root: str, query: str) -> Sequence[str]:
+        return PhotoIndex(root).search_photos(query)
+
+    def load_known_tags(self, root: str) -> set[str]:
+        return PhotoIndex(root).load_tags_for_root()
+
+
 @dataclass(frozen=True)
 class QueuedTagMutation:
     paths: tuple[str, ...]
@@ -95,7 +143,15 @@ class QueuedTagMutation:
 
 
 class MainWindow(QtWidgets.QMainWindow):
-    def __init__(self) -> None:
+    backgroundDiscoveryEvent = QtCore.pyqtSignal(object)
+
+    def __init__(
+        self,
+        *,
+        discovery: DiscoveryAdapter | None = None,
+        background_runner: BackgroundRunner | None = None,
+        index_adapter: IndexAdapter | None = None,
+    ) -> None:
         super().__init__()
         self.setWindowTitle("TAGGER: Tool Annotator, Grouping Guiding EXIF Records")
         self.setAcceptDrops(True)
@@ -112,15 +168,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._index_sync_inflight: set[str] = set()
         self._selection_token = 0
         self.photo_workspace = PhotoWorkspace()
+        self._active_replacement_discovery: DiscoveryRequest | None = None
+        self._pending_additive_discoveries: set[int] = set()
+        self._coordinator_workspace_generation: int | None = None
 
         self._config = load_config()
+        self._background_coordinator = BackgroundCoordinator(
+            discovery=discovery or FileSystemPhotoDiscovery(),
+            index=index_adapter or ExistingPhotoIndexAdapter(self.exif),
+            runner=background_runner or QtBackgroundRunner(self.pool),
+            event_sink=self.backgroundDiscoveryEvent.emit,
+        )
+        self.backgroundDiscoveryEvent.connect(self._handle_discovery_event)
 
         self.files = FileListWidget()
-        self.files.filesDropped.connect(self.add_files)
+        self.files.filesDropped.connect(self.handle_dropped_urls)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
         self.files.setToolTip(
             "Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p"
         )
+        self.filesPaneMessage = QtWidgets.QLabel(self.files.viewport())
+        self.filesPaneMessage.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.filesPaneMessage.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self.filesPaneMessage.hide()
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(
@@ -637,6 +709,8 @@ class MainWindow(QtWidgets.QMainWindow):
         et = event.type()
         if obj is self.previewLabel and et == QtCore.QEvent.Type.Resize:
             self._update_preview_pixmap()
+        if obj is self.files.viewport() and et == QtCore.QEvent.Type.Resize:
+            self._position_files_pane_message()
         if et in (
             QtCore.QEvent.Type.DragEnter,
             QtCore.QEvent.Type.DragMove,
@@ -648,11 +722,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if et == QtCore.QEvent.Type.Drop:
             md = getattr(event, "mimeData", None)
             if callable(md) and event.mimeData().hasUrls():
-                paths = extract_image_paths_from_urls(event.mimeData().urls())
-                if paths:
-                    self.add_files(paths)
-                    event.acceptProposedAction()
-                    return True
+                self.handle_dropped_urls(event.mimeData().urls())
+                event.acceptProposedAction()
+                return True
         if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(
             event, QtGui.QKeyEvent
         ):
@@ -1409,11 +1481,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def dropEvent(self, event: QtGui.QDropEvent) -> None:
         if event.mimeData().hasUrls():
-            paths = extract_image_paths_from_urls(event.mimeData().urls())
-            if paths:
-                self.add_files(paths)
-                event.acceptProposedAction()
-                return
+            self.handle_dropped_urls(event.mimeData().urls())
+            event.acceptProposedAction()
+            return
         super().dropEvent(event)
 
     def add_files(self, paths: list[str]) -> None:
@@ -1422,10 +1492,10 @@ class MainWindow(QtWidgets.QMainWindow):
             normalize_path(path) for path in paths
         )
         added_paths = [path for path in snapshot.paths if path not in before.paths]
-        self._render_photo_workspace(snapshot)
+        if added_paths:
+            self._hide_files_pane_message()
+        self._render_photo_workspace_snapshot(snapshot, list(before.selected_paths))
         self.statusBar().showMessage(f"Added {len(added_paths)} files")
-        if snapshot.selected_paths != before.selected_paths:
-            self.on_selection_changed()
         if self.onlyUntagged.isChecked():
             self.apply_iptc_filter_async()
         if added_paths:
@@ -1439,8 +1509,13 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 self._schedule_index_sync(root)
 
-    def replace_photo_workspace(self, paths: list[str]) -> None:
+    def replace_photo_workspace(
+        self, paths: list[str], *, invalidate_discoveries: bool = True
+    ) -> None:
         normalized_paths = [normalize_path(path) for path in paths]
+        if invalidate_discoveries:
+            self._active_replacement_discovery = None
+            self._pending_additive_discoveries.clear()
         self._workspace_generation += 1
         self._discard_queued_tag_mutations(set(normalized_paths))
         # Cancel in-flight async work that would render stale UI.
@@ -1466,29 +1541,92 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         else:
             folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
-        if not folder:
+        if folder:
+            self._start_folder_discovery(folder)
+
+    def _start_folder_discovery(self, folder: str) -> None:
+        # A folder selection replaces the current workspace before discovery starts.
+        self._reset_files_pane_for_reload()
+        self._show_files_pane_message("Loading photos…")
+        request = self._background_coordinator.replace_workspace_from_folder(folder)
+        self._active_replacement_discovery = request
+        self._pending_additive_discoveries.clear()
+        self._coordinator_workspace_generation = request.workspace_generation
+        self._set_last_folder(folder)
+
+    def add_dropped_directory(self, folder: str) -> None:
+        """Discover one dropped directory without blocking the current workspace."""
+        request = self._background_coordinator.add_dropped_directory(folder)
+        if self._coordinator_workspace_generation is None:
+            self._coordinator_workspace_generation = request.workspace_generation
+        self._pending_additive_discoveries.add(request.request_id)
+        self.statusBar().showMessage("Loading photos…")
+
+    def handle_dropped_urls(self, urls: list[QtCore.QUrl]) -> None:
+        files: list[str] = []
+        directories: list[str] = []
+        for url in urls:
+            if not url.isLocalFile():
+                continue
+            path = Path(url.toLocalFile())
+            if path.is_dir():
+                directories.append(str(path))
+            elif path.suffix.lower() in SUPPORTED_PHOTO_EXTENSIONS:
+                files.append(str(path))
+        if files:
+            self.add_files(files)
+        for directory in directories:
+            self.add_dropped_directory(directory)
+
+    def _handle_discovery_event(self, event: DiscoveryEvent) -> None:
+        if event.kind is DiscoveryKind.REPLACEMENT:
+            request = self._active_replacement_discovery
+            if (
+                request is None
+                or event.workspace_generation != request.workspace_generation
+                or event.request_id != request.request_id
+            ):
+                return
+            self._active_replacement_discovery = None
+            if isinstance(event, DiscoveryCompleted):
+                self._hide_files_pane_message()
+                self.replace_photo_workspace(
+                    list(event.paths), invalidate_discoveries=False
+                )
+                root = self._index_root_for_paths(list(event.paths) or [event.root])
+                if root:
+                    self._index_root = root
+                self._schedule_index_sync(root)
+                if self.files.count() > 0:
+                    self.files.setFocus()
+            else:
+                self._show_files_pane_message("No photos loaded")
+                self.statusBar().showMessage(f"Loading photos failed: {event.error}")
             return
 
-        # Ctrl+O is treated as a (re)load: wipe the pane + right side first.
-        self._reset_files_pane_for_reload()
+        if (
+            event.workspace_generation != self._coordinator_workspace_generation
+            or event.request_id not in self._pending_additive_discoveries
+        ):
+            return
+        self._pending_additive_discoveries.remove(event.request_id)
+        if isinstance(event, DiscoveryCompleted):
+            self.add_files(list(event.paths))
+            if self._pending_additive_discoveries:
+                self.statusBar().showMessage("Loading photos…")
+        else:
+            self.statusBar().showMessage(f"Loading photos failed: {event.error}")
 
-        p = Path(folder)
-        paths = [
-            str(x)
-            for x in p.rglob("*")
-            if x.is_file() and x.suffix.lower() in SUPPORTED_EXTS
-        ]
-        if paths:
-            self.add_files(paths)
-        self._set_last_folder(folder)
-        root = self._index_root_for_paths(paths or [folder])
-        if root:
-            self._index_root = root
-        self._schedule_index_sync(root)
-        if self.files.count() > 0:
-            self.files.setFocus()
-            if self.files.currentRow() < 0:
-                self.files.setCurrentRow(0)
+    def _show_files_pane_message(self, message: str) -> None:
+        self.filesPaneMessage.setText(message)
+        self._position_files_pane_message()
+        self.filesPaneMessage.show()
+
+    def _hide_files_pane_message(self) -> None:
+        self.filesPaneMessage.hide()
+
+    def _position_files_pane_message(self) -> None:
+        self.filesPaneMessage.setGeometry(self.files.viewport().rect())
 
     def _set_last_folder(self, folder: str) -> None:
         try:

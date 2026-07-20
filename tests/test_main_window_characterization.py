@@ -8,9 +8,11 @@ state or rendering details.
 from __future__ import annotations
 
 import os
+import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,7 +48,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.addCleanup(self.exif_patch.stop)
         FakeExifTool.reset()
         FakePhotoIndex.reset()
-        self.window = MainWindow()
+        self.discovery = FakePhotoDiscovery()
+        self.discovery_runner = DeterministicCoordinatorRunner()
+        self.window = MainWindow(
+            discovery=self.discovery,
+            background_runner=self.discovery_runner,
+        )
         self.window.show()
         self.window.activateWindow()
         self.app.processEvents()
@@ -72,6 +79,114 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 return
             QtTest.QTest.qWait(10)
         self.fail("Timed out waiting for asynchronous UI work")
+
+    def _choose_folder(self, folder: str) -> None:
+        with patch(
+            "exif_ui.QtWidgets.QFileDialog.getExistingDirectory", return_value=folder
+        ):
+            self.window.add_folder_dialog()
+
+    def test_folder_discovery_clears_the_workspace_and_renders_paths_on_completion(
+        self,
+    ) -> None:
+        (old_path,) = self._add_paths("old.jpg")
+        folder = "/replacement"
+        self.discovery.results[folder] = [f"{folder}/one.jpg"]
+
+        self._choose_folder(folder)
+
+        self.assertEqual(self.window.all_file_paths(), [])
+        self.assertEqual(self.window.files.count(), 0)
+        self.assertTrue(self.window.filesPaneMessage.isVisible())
+        self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
+        self.assertNotEqual(self.window.selectedLabel.text(), old_path)
+
+        self.discovery_runner.run()
+        (loaded_path,) = [normalize_path(f"{folder}/one.jpg")]
+        self.assertEqual(self.window.all_file_paths(), [loaded_path])
+        self.assertEqual(self.window.selected_file_paths(), [loaded_path])
+        self.assertFalse(self.window.filesPaneMessage.isVisible())
+
+    def test_stale_folder_discovery_cannot_replace_a_newer_workspace(self) -> None:
+        first = "/first"
+        second = "/second"
+        self.discovery.results[first] = [f"{first}/one.jpg"]
+        self.discovery.results[second] = [f"{second}/two.jpg"]
+
+        self._choose_folder(first)
+        self._choose_folder(second)
+        self.discovery_runner.run()
+        self.assertEqual(self.window.all_file_paths(), [])
+
+        self.discovery_runner.run()
+        self.assertEqual(
+            self.window.all_file_paths(), [normalize_path(f"{second}/two.jpg")]
+        )
+
+    def test_dropped_directory_keeps_the_current_selection_until_it_appends(
+        self,
+    ) -> None:
+        first, second = self._add_paths("one.jpg", "two.jpg")
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+        with tempfile.TemporaryDirectory() as folder:
+            normalized_folder = normalize_path(folder)
+            self.discovery.results[normalized_folder] = [
+                f"{normalized_folder}/three.jpg"
+            ]
+
+            self.window.handle_dropped_urls([QtCore.QUrl.fromLocalFile(folder)])
+
+            self.assertEqual(self.window.selected_file_paths(), [second])
+            self.assertEqual(
+                self.window.statusBar().currentMessage(), "Loading photos…"
+            )
+
+            self.discovery_runner.run()
+            self.assertEqual(
+                self.window.all_file_paths(),
+                [first, second, normalize_path(f"{normalized_folder}/three.jpg")],
+            )
+            self.assertEqual(self.window.selected_file_paths(), [second])
+
+    def test_dropped_directories_append_in_drop_initiation_order(self) -> None:
+        (existing,) = self._add_paths("existing.jpg")
+        first = "/first-drop"
+        second = "/second-drop"
+        self.discovery.results[first] = [f"{first}/one.jpg"]
+        self.discovery.results[second] = [f"{second}/two.jpg"]
+
+        self.window.add_dropped_directory(first)
+        self.window.add_dropped_directory(second)
+        self.discovery_runner.run(1)
+        self.assertEqual(self.window.all_file_paths(), [existing])
+
+        self.discovery_runner.run()
+        self.assertEqual(
+            self.window.all_file_paths(),
+            [
+                existing,
+                normalize_path(f"{first}/one.jpg"),
+                normalize_path(f"{second}/two.jpg"),
+            ],
+        )
+
+    def test_failed_folder_discovery_uses_footer_feedback_without_a_modal(self) -> None:
+        folder = "/broken"
+        self.discovery.results[folder] = RuntimeError("discovery failed")
+
+        self._choose_folder(folder)
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.discovery_runner.run()
+
+        self.assertEqual(self.window.all_file_paths(), [])
+        self.assertTrue(self.window.filesPaneMessage.isVisible())
+        self.assertEqual(self.window.filesPaneMessage.text(), "No photos loaded")
+        self.assertIn("Loading photos failed", self.window.statusBar().currentMessage())
+        critical.assert_not_called()
 
     def test_backups_are_disabled_by_default(self) -> None:
         self.assertFalse(self.window.keepBackup.isChecked())
@@ -554,6 +669,28 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertFalse(tag_hint.isVisible())
         self.assertIsNot(self.window.focusWidget(), self.window.addEdit)
+
+
+class DeterministicCoordinatorRunner:
+    def __init__(self) -> None:
+        self.scheduled: list[Callable[[], None]] = []
+
+    def submit(self, work: Callable[[], None]) -> None:
+        self.scheduled.append(work)
+
+    def run(self, index: int = 0) -> None:
+        self.scheduled.pop(index)()
+
+
+class FakePhotoDiscovery:
+    def __init__(self) -> None:
+        self.results: dict[str, list[str] | Exception] = {}
+
+    def discover(self, root: str) -> list[str]:
+        result = self.results[root]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeExifTool:
