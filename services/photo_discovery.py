@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-SUPPORTED_PHOTO_EXTENSIONS = {".jpg", ".jpeg"}
+from utils import SUPPORTED_EXTS
+
+
+SUPPORTED_PHOTO_EXTENSIONS = SUPPORTED_EXTS
 
 
 class FileSystemPhotoDiscovery:

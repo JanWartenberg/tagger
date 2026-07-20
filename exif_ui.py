@@ -114,8 +114,8 @@ class QtBackgroundRunner:
         self._pool.start(Worker(work))
 
 
-class ExistingPhotoIndexAdapter:
-    """Adapt current PhotoIndex calls until the queued index migration arrives."""
+class PhotoIndexAdapter:
+    """Run PhotoIndex work behind the Coordinator's index-adapter protocol."""
 
     def __init__(self, exif: ExifTool) -> None:
         self._exif = exif
@@ -197,7 +197,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._config = load_config()
         self._background_coordinator = BackgroundCoordinator(
             discovery=discovery or FileSystemPhotoDiscovery(),
-            index=index_adapter or ExistingPhotoIndexAdapter(self.exif),
+            index=index_adapter or PhotoIndexAdapter(self.exif),
             runner=background_runner or QtBackgroundRunner(self.pool),
             event_sink=self.backgroundDiscoveryEvent.emit,
         )
@@ -1582,12 +1582,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if event.root != self._index_root:
                 return
             if isinstance(event.result, IndexSyncResult):
-                self.statusBar().showMessage(
-                    f"Index ready: {event.result.updated_count} updated, "
-                    f"{event.result.deleted_count} removed"
-                )
+                if not self._has_active_search_for(event.root):
+                    self.statusBar().showMessage(
+                        f"Index ready: {event.result.updated_count} updated, "
+                        f"{event.result.deleted_count} removed"
+                    )
                 self.force_refresh_known_tags()
-            elif event.result is None:
+            elif event.result is None and not self._has_active_search_for(event.root):
                 self.statusBar().showMessage("Index ready")
             return
         if isinstance(event, IndexWriteFailed):
@@ -1595,9 +1596,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.root != self._index_root:
             return
         if isinstance(event, IndexWriteFailed):
-            self.statusBar().showMessage("Index update failed")
+            if not self._has_active_search_for(event.root):
+                self.statusBar().showMessage("Index update failed")
             return
         self.force_refresh_known_tags()
+
+    def _has_active_search_for(self, root: str) -> bool:
+        request = self._active_search_request
+        return request is not None and request.root == root
 
     def _handle_index_read_event(
         self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed

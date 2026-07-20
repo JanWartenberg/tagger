@@ -28,6 +28,11 @@ else:
 if PYQT_AVAILABLE:
     from exif_tool import KeywordState
     from exif_ui import MainWindow
+    from services.background_coordinator import (
+        IndexEnsureCompleted,
+        IndexWriteFailed,
+        IndexOperationKind,
+    )
     from utils import normalize_path
 
 
@@ -190,6 +195,37 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window.filesPaneMessage.isVisible())
         self.assertEqual(self.window.filesPaneMessage.text(), "No photos loaded")
         self.assertIn("Loading photos failed", self.window.statusBar().currentMessage())
+        critical.assert_not_called()
+
+    def test_stale_index_events_do_not_replace_current_footer_feedback(self) -> None:
+        self._add_paths("one.jpg")
+        self.window.statusBar().showMessage("Searching index…")
+
+        self.window.backgroundDiscoveryEvent.emit(
+            IndexEnsureCompleted(root="/stale", result=None)
+        )
+        self.app.processEvents()
+
+        self.assertEqual(self.window.statusBar().currentMessage(), "Searching index…")
+
+    def test_current_index_failure_uses_footer_feedback_without_a_modal(self) -> None:
+        self._add_paths("one.jpg")
+        root = self.window._index_root
+        self.assertIsNotNone(root)
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.window.backgroundDiscoveryEvent.emit(
+                IndexWriteFailed(
+                    root=root,
+                    operation=IndexOperationKind.UPDATE_STATES,
+                    error="index failed",
+                )
+            )
+            self.app.processEvents()
+
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "Index update failed"
+        )
         critical.assert_not_called()
 
     def test_backups_are_disabled_by_default(self) -> None:
