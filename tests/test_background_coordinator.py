@@ -10,6 +10,8 @@ from services.background_coordinator import (
     DiscoveryKind,
     IndexEnsureCompleted,
     IndexOperationKind,
+    IndexSearchCompleted,
+    KnownTagsCompleted,
     IndexWriteCompleted,
     IndexWriteFailed,
 )
@@ -31,6 +33,8 @@ class FakeIndex:
         self.initialized: set[str] = set()
         self.calls: list[tuple[str, str, object]] = []
         self.fail_next: set[tuple[str, str]] = set()
+        self.search_results: dict[tuple[str, str], list[str]] = {}
+        self.known_tags: dict[str, set[str]] = {}
 
     def is_initialized(self, root: str) -> bool:
         self.calls.append(("initialized", root, None))
@@ -55,12 +59,12 @@ class FakeIndex:
             raise RuntimeError("update failed")
 
     def search(self, root: str, query: str) -> list[str]:
-        del root, query
-        return []
+        self.calls.append(("search", root, query))
+        return self.search_results.get((root, query), [])
 
     def load_known_tags(self, root: str) -> set[str]:
-        del root
-        return set()
+        self.calls.append(("known", root, None))
+        return self.known_tags.get(root, set())
 
 
 class FakeDiscovery:
@@ -294,6 +298,61 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
                     result={"paths": ("/photos/one.jpg",)},
                 )
             ],
+        )
+
+    def test_read_runs_without_waiting_for_a_root_write(self) -> None:
+        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
+        self.index.search_results[("/photos", "tag:bird")] = ["/photos/one.jpg"]
+        request = self.coordinator.search_index(
+            "/photos", "tag:bird", workspace_generation=4
+        )
+
+        self.assertEqual(len(self.runner.scheduled), 2)
+        self.runner.run(1)
+
+        self.assertEqual(
+            self.events,
+            [
+                IndexSearchCompleted(
+                    request=request,
+                    paths=("/photos/one.jpg",),
+                )
+            ],
+        )
+
+    def test_superseded_search_does_not_emit_a_ui_eligible_result(self) -> None:
+        self.index.search_results[("/photos", "first")] = ["/photos/first.jpg"]
+        self.index.search_results[("/photos", "second")] = ["/photos/second.jpg"]
+
+        self.coordinator.search_index("/photos", "first", workspace_generation=4)
+        current = self.coordinator.search_index(
+            "/photos", "second", workspace_generation=4
+        )
+        self.runner.run(0)
+        self.runner.run(0)
+
+        self.assertEqual(
+            self.events,
+            [
+                IndexSearchCompleted(
+                    request=current,
+                    paths=("/photos/second.jpg",),
+                )
+            ],
+        )
+
+    def test_superseded_known_tag_refresh_does_not_emit_a_result(self) -> None:
+        self.index.known_tags["/first"] = {"first"}
+        self.index.known_tags["/second"] = {"second"}
+
+        self.coordinator.load_known_tags("/first", workspace_generation=1)
+        current = self.coordinator.load_known_tags("/second", workspace_generation=2)
+        self.runner.run(0)
+        self.runner.run(0)
+
+        self.assertEqual(
+            self.events,
+            [KnownTagsCompleted(request=current, tags=frozenset({"second"}))],
         )
 
     def test_different_roots_can_be_scheduled_independently(self) -> None:

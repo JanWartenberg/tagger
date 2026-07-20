@@ -622,6 +622,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {second}
         self.window.dbSearchEdit.setText("tag:second")
         self.window.apply_db_search()
+        self.assertFalse(self.window.files.item(0).isHidden())
+        self.assertFalse(self.window.files.item(1).isHidden())
+        self.discovery_runner.run_index_work()
         self.app.processEvents()
 
         self.assertTrue(self.window.files.item(0).isHidden())
@@ -634,6 +637,79 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(1).isHidden())
         self.assertIn(self.window.selected_file_paths()[0], {first, second})
 
+    def test_newer_search_supersedes_an_older_background_result(self) -> None:
+        first, second, _duplicate = self._add_paths(
+            "first.jpg", "second.jpg", "first.jpg"
+        )
+        FakePhotoIndex.search_results = {first}
+        self.window.dbSearchEdit.setText("tag:first")
+        self.window.apply_db_search()
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.apply_db_search()
+
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.files.item(0).isHidden())
+        self.assertFalse(self.window.files.item(1).isHidden())
+        self.assertEqual(self.window.selected_file_paths(), [second])
+
+    def test_known_tag_filter_uses_the_loaded_snapshot_without_a_read(self) -> None:
+        self._add_paths("one.jpg")
+        FakePhotoIndex.known_tags = {"coordinator-bird", "coordinator-beach"}
+        self.window.force_refresh_known_tags()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.assertIn(
+            "coordinator-bird",
+            [
+                self.window.knownList.item(index).text()
+                for index in range(self.window.knownList.count())
+            ],
+        )
+
+        reads_before_filter = FakePhotoIndex.known_tag_reads
+        self.window.knownFilter.setText("bird")
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.known_tag_reads, reads_before_filter)
+        self.assertEqual(
+            [
+                self.window.knownList.item(index).text()
+                for index in range(self.window.knownList.count())
+            ],
+            ["coordinator-bird"],
+        )
+
+    def test_known_tags_remain_visible_until_the_current_read_completes(self) -> None:
+        self._add_paths("one.jpg")
+        FakePhotoIndex.known_tags = {"first-snapshot"}
+        self.window.force_refresh_known_tags()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        FakePhotoIndex.known_tags = {"second-snapshot"}
+        self.window.force_refresh_known_tags()
+
+        self.assertIn(
+            "first-snapshot",
+            [
+                self.window.knownList.item(index).text()
+                for index in range(self.window.knownList.count())
+            ],
+        )
+
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.assertIn(
+            "second-snapshot",
+            [
+                self.window.knownList.item(index).text()
+                for index in range(self.window.knownList.count())
+            ],
+        )
+
     def test_clear_search_shortcut_restores_all_photos(self) -> None:
         _first, second, _duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
@@ -642,6 +718,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {second}
         self.window.dbSearchEdit.setText("tag:second")
         self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
         self.app.processEvents()
 
         QtTest.QTest.keyClick(
@@ -686,7 +763,7 @@ class DeterministicCoordinatorRunner:
         self.scheduled.pop(index)()
 
     def run_index_work(self) -> None:
-        while self.scheduled and self.scheduled[0].__name__ == "<lambda>":
+        while self.scheduled and self.scheduled[0].__name__ != "work":
             self.run()
 
     def run_discovery(self, index: int = 0) -> None:
@@ -762,11 +839,15 @@ class FakeExifTool:
 class FakePhotoIndex:
     search_results: set[str] = set()
     states_by_path: dict[str, KeywordState] = {}
+    known_tags: set[str] = set()
+    known_tag_reads = 0
 
     @classmethod
     def reset(cls) -> None:
         cls.search_results = set()
         cls.states_by_path = {}
+        cls.known_tags = set()
+        cls.known_tag_reads = 0
 
     def __init__(self, _root: str) -> None:
         pass
@@ -775,7 +856,8 @@ class FakePhotoIndex:
         return True
 
     def load_tags_for_root(self) -> set[str]:
-        return set()
+        type(self).known_tag_reads += 1
+        return type(self).known_tags
 
     def update_states(self, states: dict[str, "KeywordState"]) -> None:
         type(self).states_by_path.update(states)

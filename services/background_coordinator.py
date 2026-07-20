@@ -49,6 +49,11 @@ class IndexOperationKind(Enum):
     UPDATE_STATES = "update_states"
 
 
+class IndexReadKind(Enum):
+    SEARCH = "search"
+    KNOWN_TAGS = "known_tags"
+
+
 @dataclass(frozen=True)
 class DiscoveryRequest:
     """The identity assigned to one folder-discovery request."""
@@ -109,8 +114,44 @@ class IndexWriteFailed:
     error: str
 
 
+@dataclass(frozen=True)
+class IndexReadRequest:
+    """Identity for an independently scheduled index read."""
+
+    kind: IndexReadKind
+    request_id: int
+    workspace_generation: int
+    root: str
+    query: str | None = None
+
+
+@dataclass(frozen=True)
+class IndexSearchCompleted:
+    request: IndexReadRequest
+    paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class KnownTagsCompleted:
+    request: IndexReadRequest
+    tags: frozenset[str]
+
+
+@dataclass(frozen=True)
+class IndexReadFailed:
+    request: IndexReadRequest
+    error: str
+
+
 DiscoveryEvent: TypeAlias = DiscoveryCompleted | DiscoveryFailed
-IndexEvent: TypeAlias = IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+IndexEvent: TypeAlias = (
+    IndexEnsureCompleted
+    | IndexWriteCompleted
+    | IndexWriteFailed
+    | IndexSearchCompleted
+    | KnownTagsCompleted
+    | IndexReadFailed
+)
 CoordinatorEvent: TypeAlias = DiscoveryEvent | IndexEvent
 
 
@@ -164,6 +205,9 @@ class BackgroundCoordinator:
         self._next_released_drop_sequence = 0
         self._completed_drops: dict[int, DiscoveryEvent] = {}
         self._index_queues: dict[str, _RootWriteQueue] = {}
+        self._next_index_read_request_id = 0
+        self._current_search_request_id: int | None = None
+        self._current_known_tags_request_id: int | None = None
 
     def replace_workspace_from_folder(self, root: str | Path) -> DiscoveryRequest:
         """Start a replacement discovery, invalidating all older workspace work."""
@@ -239,6 +283,66 @@ class BackgroundCoordinator:
         if work is not None:
             self._runner.submit(work)
 
+    def search_index(
+        self, root: str | Path, query: str, *, workspace_generation: int
+    ) -> IndexReadRequest:
+        """Read search matches in the background, superseding older searches."""
+        request = self._new_index_read_request(
+            IndexReadKind.SEARCH, root, workspace_generation, query
+        )
+        with self._lock:
+            self._current_search_request_id = request.request_id
+
+        def read() -> None:
+            self._run_index_read(request)
+
+        self._runner.submit(read)
+        return request
+
+    def load_known_tags(
+        self, root: str | Path, *, workspace_generation: int
+    ) -> IndexReadRequest:
+        """Read a known-tag snapshot in the background, superseding older reads."""
+        request = self._new_index_read_request(
+            IndexReadKind.KNOWN_TAGS, root, workspace_generation
+        )
+        with self._lock:
+            self._current_known_tags_request_id = request.request_id
+
+        def read() -> None:
+            self._run_index_read(request)
+
+        self._runner.submit(read)
+        return request
+
+    def invalidate_search(self) -> None:
+        """Prevent an already-running search completion from being UI-eligible."""
+        with self._lock:
+            self._current_search_request_id = None
+
+    def invalidate_known_tags(self) -> None:
+        """Prevent an already-running known-tag completion from being UI-eligible."""
+        with self._lock:
+            self._current_known_tags_request_id = None
+
+    def _new_index_read_request(
+        self,
+        kind: IndexReadKind,
+        root: str | Path,
+        workspace_generation: int,
+        query: str | None = None,
+    ) -> IndexReadRequest:
+        with self._lock:
+            request_id = self._next_index_read_request_id
+            self._next_index_read_request_id += 1
+        return IndexReadRequest(
+            kind=kind,
+            request_id=request_id,
+            workspace_generation=workspace_generation,
+            root=_normalize_path(root),
+            query=query,
+        )
+
     def _new_request_id(self) -> int:
         request_id = self._next_request_id
         self._next_request_id += 1
@@ -294,6 +398,33 @@ class BackgroundCoordinator:
 
         for accepted in events:
             self._event_sink(accepted)
+
+    def _run_index_read(self, request: IndexReadRequest) -> None:
+        try:
+            if request.kind is IndexReadKind.SEARCH:
+                paths = self._index.search(request.root, request.query or "")
+                event: IndexEvent = IndexSearchCompleted(request, tuple(paths))
+            else:
+                event = KnownTagsCompleted(
+                    request, frozenset(self._index.load_known_tags(request.root))
+                )
+        except Exception as error:
+            event = IndexReadFailed(request, str(error))
+        self._accept_index_read(event)
+
+    def _accept_index_read(
+        self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
+    ) -> None:
+        request = event.request
+        with self._lock:
+            current_id = (
+                self._current_search_request_id
+                if request.kind is IndexReadKind.SEARCH
+                else self._current_known_tags_request_id
+            )
+            if request.request_id != current_id:
+                return
+        self._event_sink(event)
 
     def _enqueue_index_operation(self, root: str, operation: _IndexOperation) -> None:
         with self._lock:

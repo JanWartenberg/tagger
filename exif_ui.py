@@ -25,8 +25,13 @@ from services.background_coordinator import (
     DiscoveryRequest,
     IndexAdapter,
     IndexEnsureCompleted,
+    IndexReadFailed,
+    IndexReadKind,
+    IndexReadRequest,
+    IndexSearchCompleted,
     IndexWriteCompleted,
     IndexWriteFailed,
+    KnownTagsCompleted,
 )
 from services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
@@ -179,6 +184,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache: dict[str, KeywordState] = {}
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
+        self._known_tags_snapshot: set[str] = set()
+        self._known_tags_root: str | None = None
+        self._active_known_tags_request: IndexReadRequest | None = None
+        self._active_search_request: IndexReadRequest | None = None
         self._selection_token = 0
         self.photo_workspace = PhotoWorkspace()
         self._active_replacement_discovery: DiscoveryRequest | None = None
@@ -272,7 +281,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.knownFilter = QtWidgets.QLineEdit()
         self.knownFilter.setPlaceholderText("Filter known tags...")
-        self.knownFilter.textChanged.connect(self.refresh_known_tags)
+        self.knownFilter.textChanged.connect(self._render_known_tags)
         self.knownFilter.returnPressed.connect(self._focus_first_known_tag)
         self.knownFilter.setToolTip("Focus: / or Ctrl+F")
         self.knownRefreshBtn = QtWidgets.QPushButton("Refresh")
@@ -516,11 +525,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _index_root_for_paths(self, paths: list[str]) -> str | None:
         root = resolve_index_root(paths, preferred_root=DEFAULT_INDEX_ROOT)
         return str(root) if root is not None else self._index_root
-
-    def _photo_index(self, root: str | None) -> PhotoIndex | None:
-        if not root:
-            return None
-        return PhotoIndex(root)
 
     def _schedule_index_sync(self, root: str | None, paths: list[str]) -> None:
         if not root:
@@ -1472,6 +1476,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self, paths: list[str], *, invalidate_discoveries: bool = True
     ) -> None:
         normalized_paths = [normalize_path(path) for path in paths]
+        self._active_search_request = None
+        self._active_known_tags_request = None
+        self._background_coordinator.invalidate_search()
+        self._background_coordinator.invalidate_known_tags()
         if invalidate_discoveries:
             self._active_replacement_discovery = None
             self._pending_additive_discoveries.clear()
@@ -1539,15 +1547,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _handle_coordinator_event(self, event: CoordinatorEvent) -> None:
         if isinstance(
-            event, (IndexEnsureCompleted, IndexWriteCompleted, IndexWriteFailed)
+            event,
+            (
+                IndexEnsureCompleted,
+                IndexWriteCompleted,
+                IndexWriteFailed,
+                IndexSearchCompleted,
+                KnownTagsCompleted,
+                IndexReadFailed,
+            ),
         ):
             self._handle_index_event(event)
             return
         self._handle_discovery_event(event)
 
     def _handle_index_event(
-        self, event: IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+        self,
+        event: (
+            IndexEnsureCompleted
+            | IndexWriteCompleted
+            | IndexWriteFailed
+            | IndexSearchCompleted
+            | KnownTagsCompleted
+            | IndexReadFailed
+        ),
     ) -> None:
+        if isinstance(
+            event, (IndexSearchCompleted, KnownTagsCompleted, IndexReadFailed)
+        ):
+            self._handle_index_read_event(event)
+            return
         if isinstance(event, IndexEnsureCompleted):
             self._index_sync_inflight.discard(event.root)
             if event.root != self._index_root:
@@ -1557,7 +1586,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Index ready: {event.result.updated_count} updated, "
                     f"{event.result.deleted_count} removed"
                 )
-                self.refresh_known_tags()
+                self.force_refresh_known_tags()
             elif event.result is None:
                 self.statusBar().showMessage("Index ready")
             return
@@ -1568,7 +1597,38 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(event, IndexWriteFailed):
             self.statusBar().showMessage("Index update failed")
             return
-        self.refresh_known_tags()
+        self.force_refresh_known_tags()
+
+    def _handle_index_read_event(
+        self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
+    ) -> None:
+        request = event.request
+        if request.kind is IndexReadKind.SEARCH:
+            if (
+                request != self._active_search_request
+                or request.workspace_generation != self._workspace_generation
+                or request.root != self._index_root
+            ):
+                return
+            if isinstance(event, IndexReadFailed):
+                self.statusBar().showMessage("Search failed")
+                return
+            self._apply_db_search_result(event.paths)
+            return
+
+        if (
+            request != self._active_known_tags_request
+            or request.workspace_generation != self._workspace_generation
+            or request.root != self._index_root
+        ):
+            return
+        if isinstance(event, IndexReadFailed):
+            self.statusBar().showMessage("Known-tag refresh failed")
+            return
+        if isinstance(event, KnownTagsCompleted):
+            self._known_tags_snapshot = set(event.tags)
+            self._known_tags_root = request.root
+            self._render_known_tags()
 
     def _handle_discovery_event(self, event: DiscoveryEvent) -> None:
         if event.kind is DiscoveryKind.REPLACEMENT:
@@ -2155,6 +2215,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
+        self._active_search_request = None
+        self._background_coordinator.invalidate_search()
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.clear_database_search()
         selection_changed = self._render_photo_workspace_snapshot(snapshot, before)
@@ -2171,12 +2233,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if not root:
             self.statusBar().showMessage("No index root available")
             return
-        try:
-            matches = PhotoIndex(root).search_photos(query)
-        except Exception as e:
-            self._show_error(str(e))
-            return
+        self._index_root = root
+        self._active_search_request = self._background_coordinator.search_index(
+            root, query, workspace_generation=self._workspace_generation
+        )
+        self.statusBar().showMessage("Searching index…")
 
+    def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.apply_database_search_matches(
             normalize_path(path) for path in matches
@@ -2315,44 +2378,38 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def force_refresh_known_tags(self) -> None:
-        self.refresh_known_tags()
+        self._render_known_tags()
+        paths = self.selected_file_paths() or self.all_file_paths()
+        root = self._index_root_for_paths(paths) if paths else None
+        if not root:
+            return
+        self._index_root = root
+        self._active_known_tags_request = self._background_coordinator.load_known_tags(
+            root, workspace_generation=self._workspace_generation
+        )
 
     def refresh_known_tags(self) -> None:
+        self._render_known_tags()
+        paths = self.selected_file_paths() or self.all_file_paths()
+        root = self._index_root_for_paths(paths) if paths else None
+        if root and normalize_path(root) != self._known_tags_root:
+            self.force_refresh_known_tags()
+
+    def _render_known_tags(self) -> None:
         filter_text = (self.knownFilter.text() or "").strip().casefold()
         recent = load_recent_tags()
-
-        folder_tags: set[str] = set()
-        paths = self.selected_file_paths() or self.all_file_paths()
-        if paths:
-            root = self._index_root_for_paths(paths)
-            if root:
-                self._index_root = root
-                try:
-                    folder_tags = PhotoIndex(root).load_tags_for_root()
-                except Exception:
-                    folder_tags = set()
-
         combined = []
         seen_lower: set[str] = set()
-        for t in recent:
-            tl = t.casefold()
-            if tl in seen_lower:
+        for tag in recent + sorted(self._known_tags_snapshot, key=str.casefold):
+            normalized = tag.casefold()
+            if normalized in seen_lower:
                 continue
-            seen_lower.add(tl)
-            combined.append(t)
-        for t in sorted(folder_tags, key=lambda s: s.casefold()):
-            tl = t.casefold()
-            if tl in seen_lower:
-                continue
-            seen_lower.add(tl)
-            combined.append(t)
-
+            seen_lower.add(normalized)
+            combined.append(tag)
         if filter_text:
-            combined = [t for t in combined if filter_text in t.casefold()]
-
+            combined = [tag for tag in combined if filter_text in tag.casefold()]
         self.knownList.clear()
-        for t in combined:
-            self.knownList.addItem(t)
+        self.knownList.addItems(combined)
 
     def _focus_first_known_tag(self) -> None:
         if self.knownList.count() == 0:
