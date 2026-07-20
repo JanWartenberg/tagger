@@ -19,7 +19,9 @@ def _normalize_root(root: str | Path) -> Path:
     return Path(root).resolve()
 
 
-def resolve_index_root(paths: list[str | Path], preferred_root: str | Path | None = None) -> Path | None:
+def resolve_index_root(
+    paths: list[str | Path], preferred_root: str | Path | None = None
+) -> Path | None:
     candidates = [Path(p).resolve() for p in paths if str(p).strip()]
     if not candidates:
         if preferred_root is not None:
@@ -31,7 +33,10 @@ def resolve_index_root(paths: list[str | Path], preferred_root: str | Path | Non
         pref = _normalize_root(preferred_root)
         if pref.exists():
             try:
-                if all(os.path.commonpath([str(pref), str(p)]) == str(pref) for p in candidates):
+                if all(
+                    os.path.commonpath([str(pref), str(p)]) == str(pref)
+                    for p in candidates
+                ):
                     return pref
             except Exception:
                 pass
@@ -102,13 +107,21 @@ class PhotoIndex:
             """
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_photos_date_taken ON photos(date_taken)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_tags_tag_id ON photo_tags(tag_id)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_path ON photo_tags(photo_path)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photos_date_taken ON photos(date_taken)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photo_tags_tag_id ON photo_tags(tag_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_path ON photo_tags(photo_path)"
+        )
 
     def is_initialized(self) -> bool:
         with self._connect() as conn:
-            row = conn.execute("SELECT value FROM meta WHERE key = ?", ("initialized",)).fetchone()
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = ?", ("initialized",)
+            ).fetchone()
             return bool(row and str(row[0]) == "1")
 
     def has_photos(self, paths: list[str]) -> set[str]:
@@ -127,7 +140,9 @@ class PhotoIndex:
                 found_paths.update(str(row[0]) for row in rows)
             return found_paths
 
-    def _photo_rows(self, conn: sqlite3.Connection, paths: list[str]) -> dict[str, sqlite3.Row]:
+    def _photo_rows(
+        self, conn: sqlite3.Connection, paths: list[str]
+    ) -> dict[str, sqlite3.Row]:
         if not paths:
             return {}
         rows_by_path: dict[str, sqlite3.Row] = {}
@@ -151,7 +166,9 @@ class PhotoIndex:
 
     def load_known_tags(self) -> set[str]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT tag FROM tags ORDER BY tag COLLATE NOCASE").fetchall()
+            rows = conn.execute(
+                "SELECT tag FROM tags ORDER BY tag COLLATE NOCASE"
+            ).fetchall()
             return {str(row[0]) for row in rows}
 
     def load_tags_for_photo(self, photo_path: str) -> list[str]:
@@ -244,7 +261,9 @@ class PhotoIndex:
             ).fetchall()
             return {str(row[0]) for row in rows}
 
-    def upsert_state(self, conn: sqlite3.Connection, photo_path: str, state: KeywordState) -> None:
+    def upsert_state(
+        self, conn: sqlite3.Connection, photo_path: str, state: KeywordState
+    ) -> None:
         photo_path = normalize_path(photo_path)
         stat = Path(photo_path).stat()
         conn.execute(
@@ -256,7 +275,12 @@ class PhotoIndex:
               size=excluded.size,
               date_taken=excluded.date_taken
             """,
-            (photo_path, int(stat.st_mtime), int(stat.st_size), _date_taken_from_state(state)),
+            (
+                photo_path,
+                int(stat.st_mtime),
+                int(stat.st_size),
+                _date_taken_from_state(state),
+            ),
         )
         conn.execute("DELETE FROM photo_tags WHERE photo_path = ?", (photo_path,))
         tags = dedupe_casefold(state.merged)
@@ -284,11 +308,21 @@ class PhotoIndex:
                 )
 
     def sync_root(self, exif: ExifTool, recursive: bool = True) -> IndexSyncResult:
+        del recursive
+        paths = [
+            str(path)
+            for path in self.root.rglob("*")
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+        ]
+        return self.sync_paths(exif, paths)
+
+    def sync_paths(self, exif: ExifTool, paths: list[str]) -> IndexSyncResult:
+        """Synchronize the supplied discovery result without traversing the root."""
         root = self.root
         current_paths = [
-            normalize_path(str(p))
-            for p in root.rglob("*")
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTS
+            normalize_path(path)
+            for path in paths
+            if Path(path).suffix.lower() in SUPPORTED_EXTS
         ]
         current_set = set(current_paths)
 
@@ -308,7 +342,9 @@ class PhotoIndex:
                 if row is None:
                     changed.append(photo_path)
                     continue
-                if int(row["mtime"]) != int(stat.st_mtime) or int(row["size"]) != int(stat.st_size):
+                if int(row["mtime"]) != int(stat.st_mtime) or int(row["size"]) != int(
+                    stat.st_size
+                ):
                     changed.append(photo_path)
 
             if changed:

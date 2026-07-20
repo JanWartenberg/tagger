@@ -17,12 +17,16 @@ from photo_workspace import (
 from services.background_coordinator import (
     BackgroundCoordinator,
     BackgroundRunner,
+    CoordinatorEvent,
     DiscoveryAdapter,
     DiscoveryCompleted,
     DiscoveryEvent,
     DiscoveryKind,
     DiscoveryRequest,
     IndexAdapter,
+    IndexEnsureCompleted,
+    IndexWriteCompleted,
+    IndexWriteFailed,
 )
 from services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
@@ -115,8 +119,17 @@ class ExistingPhotoIndexAdapter:
         return PhotoIndex(root).is_initialized()
 
     def sync(self, root: str, paths: Sequence[str]) -> object:
-        del paths
-        return PhotoIndex(root).sync_root(self._exif)
+        return PhotoIndex(root).sync_paths(self._exif, list(paths))
+
+    def index_missing(self, root: str, paths: Sequence[str]) -> int:
+        index = PhotoIndex(root)
+        normalized_paths = [normalize_path(path) for path in paths]
+        existing = index.has_photos(normalized_paths)
+        missing = [path for path in normalized_paths if path not in existing]
+        if not missing:
+            return 0
+        index.update_states(self._exif.read_keywords_many(missing))
+        return len(missing)
 
     def update_states(self, root: str, states: Mapping[str, object]) -> None:
         keyword_states = {
@@ -179,7 +192,7 @@ class MainWindow(QtWidgets.QMainWindow):
             runner=background_runner or QtBackgroundRunner(self.pool),
             event_sink=self.backgroundDiscoveryEvent.emit,
         )
-        self.backgroundDiscoveryEvent.connect(self._handle_discovery_event)
+        self.backgroundDiscoveryEvent.connect(self._handle_coordinator_event)
 
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.handle_dropped_urls)
@@ -509,78 +522,26 @@ class MainWindow(QtWidgets.QMainWindow):
             return None
         return PhotoIndex(root)
 
-    def _schedule_index_sync(self, root: str | None) -> None:
+    def _schedule_index_sync(self, root: str | None, paths: list[str]) -> None:
         if not root:
             return
         root = normalize_path(root)
-        index = PhotoIndex(root)
-        if index.is_initialized():
-            self._index_root = root
-            return
         if root in self._index_sync_inflight:
             return
         self._index_sync_inflight.add(root)
         self._index_root = root
-        self.statusBar().showMessage("Indexing photos...")
-
-        worker = Worker(self._run_index_sync, root)
-
-        def _ok(result: IndexSyncResult) -> None:
-            self._index_sync_inflight.discard(root)
-            if self._index_root == root:
-                self.statusBar().showMessage(
-                    f"Index ready: {result.updated_count} updated, {result.deleted_count} removed"
-                )
-                self.refresh_known_tags()
-
-        def _err(msg: str) -> None:
-            self._index_sync_inflight.discard(root)
-            if self._index_root == root:
-                self.statusBar().showMessage("Indexing failed")
-                self._show_error(msg)
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
-
-    def _run_index_sync(self, root: str) -> IndexSyncResult:
-        index = PhotoIndex(root)
-        return index.sync_root(self.exif)
+        self.statusBar().showMessage("Indexing photos…")
+        self._background_coordinator.ensure_index(root, paths)
 
     def _update_index_states(self, states: dict[str, KeywordState]) -> None:
         if not states:
             return
         root = self._index_root_for_paths(list(states.keys()))
-        if not root:
-            return
-        index = self._photo_index(root)
-        if index is None:
-            return
-        index.update_states(states)
+        if root:
+            self._background_coordinator.submit_confirmed_states(root, states)
 
     def _index_missing_paths(self, root: str, paths: list[str]) -> None:
-        index = PhotoIndex(root)
-        existing = index.has_photos(paths)
-        missing = [
-            normalize_path(p) for p in paths if normalize_path(p) not in existing
-        ]
-        if not missing:
-            return
-
-        worker = Worker(self.exif.read_keywords_many, missing)
-
-        def _ok(states: dict[str, KeywordState]) -> None:
-            if states:
-                index.update_states(states)
-                self._keywords_cache.update(states)
-                self.refresh_known_tags()
-
-        def _err(msg: str) -> None:
-            self._show_error(msg)
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        self._background_coordinator.index_missing_paths(root, paths)
 
     def _build_action_handlers(self) -> dict[str, Callable[[], None]]:
         return {
@@ -1503,11 +1464,9 @@ class MainWindow(QtWidgets.QMainWindow):
         root = self._index_root_for_paths(self.all_file_paths())
         if root:
             self._index_root = root
-            index = PhotoIndex(root)
-            if index.is_initialized():
-                self._index_missing_paths(root, paths)
-            else:
-                self._schedule_index_sync(root)
+            self._schedule_index_sync(root, self.all_file_paths())
+            if added_paths:
+                self._index_missing_paths(root, added_paths)
 
     def replace_photo_workspace(
         self, paths: list[str], *, invalidate_discoveries: bool = True
@@ -1578,6 +1537,39 @@ class MainWindow(QtWidgets.QMainWindow):
         for directory in directories:
             self.add_dropped_directory(directory)
 
+    def _handle_coordinator_event(self, event: CoordinatorEvent) -> None:
+        if isinstance(
+            event, (IndexEnsureCompleted, IndexWriteCompleted, IndexWriteFailed)
+        ):
+            self._handle_index_event(event)
+            return
+        self._handle_discovery_event(event)
+
+    def _handle_index_event(
+        self, event: IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+    ) -> None:
+        if isinstance(event, IndexEnsureCompleted):
+            self._index_sync_inflight.discard(event.root)
+            if event.root != self._index_root:
+                return
+            if isinstance(event.result, IndexSyncResult):
+                self.statusBar().showMessage(
+                    f"Index ready: {event.result.updated_count} updated, "
+                    f"{event.result.deleted_count} removed"
+                )
+                self.refresh_known_tags()
+            elif event.result is None:
+                self.statusBar().showMessage("Index ready")
+            return
+        if isinstance(event, IndexWriteFailed):
+            self._index_sync_inflight.discard(event.root)
+        if event.root != self._index_root:
+            return
+        if isinstance(event, IndexWriteFailed):
+            self.statusBar().showMessage("Index update failed")
+            return
+        self.refresh_known_tags()
+
     def _handle_discovery_event(self, event: DiscoveryEvent) -> None:
         if event.kind is DiscoveryKind.REPLACEMENT:
             request = self._active_replacement_discovery
@@ -1596,7 +1588,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 root = self._index_root_for_paths(list(event.paths) or [event.root])
                 if root:
                     self._index_root = root
-                self._schedule_index_sync(root)
+                self._schedule_index_sync(root, list(event.paths))
                 if self.files.count() > 0:
                     self.files.setFocus()
             else:

@@ -8,6 +8,10 @@ from services.background_coordinator import (
     DiscoveryCompleted,
     DiscoveryFailed,
     DiscoveryKind,
+    IndexEnsureCompleted,
+    IndexOperationKind,
+    IndexWriteCompleted,
+    IndexWriteFailed,
 )
 
 
@@ -23,7 +27,40 @@ class DeterministicRunner:
 
 
 class FakeIndex:
-    """Placeholder index adapter; discovery is the only behavior in this slice."""
+    def __init__(self) -> None:
+        self.initialized: set[str] = set()
+        self.calls: list[tuple[str, str, object]] = []
+        self.fail_next: set[tuple[str, str]] = set()
+
+    def is_initialized(self, root: str) -> bool:
+        self.calls.append(("initialized", root, None))
+        return root in self.initialized
+
+    def sync(self, root: str, paths: list[str]) -> object:
+        self.calls.append(("sync", root, tuple(paths)))
+        if ("sync", root) in self.fail_next:
+            self.fail_next.remove(("sync", root))
+            raise RuntimeError("sync failed")
+        self.initialized.add(root)
+        return {"paths": tuple(paths)}
+
+    def index_missing(self, root: str, paths: list[str]) -> int:
+        self.calls.append(("missing", root, tuple(paths)))
+        return len(paths)
+
+    def update_states(self, root: str, states: dict[str, object]) -> None:
+        self.calls.append(("update", root, dict(states)))
+        if ("update", root) in self.fail_next:
+            self.fail_next.remove(("update", root))
+            raise RuntimeError("update failed")
+
+    def search(self, root: str, query: str) -> list[str]:
+        del root, query
+        return []
+
+    def load_known_tags(self, root: str) -> set[str]:
+        del root
+        return set()
 
 
 class FakeDiscovery:
@@ -44,9 +81,10 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
         self.events: list[DiscoveryCompleted | DiscoveryFailed] = []
         self.runner = DeterministicRunner()
         self.discovery = FakeDiscovery({})
+        self.index = FakeIndex()
         self.coordinator = BackgroundCoordinator(
             discovery=self.discovery,
-            index=FakeIndex(),
+            index=self.index,
             runner=self.runner,
             event_sink=self.events.append,
         )
@@ -217,6 +255,112 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     drop_sequence=None,
                 )
             ],
+        )
+
+
+class BackgroundCoordinatorIndexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.events: list[
+            IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+        ] = []
+        self.runner = DeterministicRunner()
+        self.index = FakeIndex()
+        self.discovery = FakeDiscovery({})
+        self.coordinator = BackgroundCoordinator(
+            discovery=self.discovery,
+            index=self.index,
+            runner=self.runner,
+            event_sink=self.events.append,
+        )
+
+    def test_initial_sync_reuses_the_discovered_paths(self) -> None:
+        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
+
+        self.runner.run()
+
+        self.assertEqual(
+            self.index.calls,
+            [
+                ("initialized", "/photos", None),
+                ("sync", "/photos", ("/photos/one.jpg",)),
+            ],
+        )
+        self.assertEqual(self.discovery.requests, [])
+        self.assertEqual(
+            self.events,
+            [
+                IndexEnsureCompleted(
+                    root="/photos",
+                    result={"paths": ("/photos/one.jpg",)},
+                )
+            ],
+        )
+
+    def test_different_roots_can_be_scheduled_independently(self) -> None:
+        self.coordinator.ensure_index("/first", ["/first/one.jpg"])
+        self.coordinator.ensure_index("/second", ["/second/two.jpg"])
+
+        self.assertEqual(len(self.runner.scheduled), 2)
+        self.runner.run(1)
+        self.runner.run(0)
+
+        self.assertEqual(
+            [call[1] for call in self.index.calls if call[0] == "sync"],
+            ["/second", "/first"],
+        )
+
+    def test_updates_for_one_root_coalesce_to_the_newest_state(self) -> None:
+        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
+        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "old"})
+        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "new"})
+
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            self.index.calls[-1],
+            ("update", "/photos", {"/photos/one.jpg": "new"}),
+        )
+
+    def test_confirmed_update_waits_for_full_sync(self) -> None:
+        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
+        self.coordinator.submit_confirmed_states(
+            "/photos", {"/photos/one.jpg": "tagged"}
+        )
+
+        self.assertEqual(len(self.runner.scheduled), 1)
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls],
+            ["initialized", "sync", "update"],
+        )
+
+    def test_failed_write_does_not_stop_later_work(self) -> None:
+        self.index.initialized.add("/photos")
+        self.index.fail_next.add(("update", "/photos"))
+        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "bad"})
+        self.coordinator.index_missing_paths("/photos", ["/photos/two.jpg"])
+
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual([call[0] for call in self.index.calls], ["update", "missing"])
+        self.assertIn(
+            IndexWriteFailed(
+                root="/photos",
+                operation=IndexOperationKind.UPDATE_STATES,
+                error="update failed",
+            ),
+            self.events,
+        )
+        self.assertIn(
+            IndexWriteCompleted(
+                root="/photos",
+                operation=IndexOperationKind.INDEX_MISSING,
+            ),
+            self.events,
         )
 
 

@@ -68,14 +68,18 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def _add_paths(self, *names: str) -> list[str]:
         paths = [str(Path("C:/photos") / name) for name in names]
         self.window.add_files(paths)
+        self.discovery_runner.run_index_work()
         self.app.processEvents()
         return [normalize_path(path) for path in paths]
 
     def _wait_until(self, condition) -> None:
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
+            self.discovery_runner.run_index_work()
             self.app.processEvents()
             if condition():
+                self.discovery_runner.run_index_work()
+                self.app.processEvents()
                 return
             QtTest.QTest.qWait(10)
         self.fail("Timed out waiting for asynchronous UI work")
@@ -101,7 +105,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
         self.assertNotEqual(self.window.selectedLabel.text(), old_path)
 
-        self.discovery_runner.run()
+        self.discovery_runner.run_discovery()
         (loaded_path,) = [normalize_path(f"{folder}/one.jpg")]
         self.assertEqual(self.window.all_file_paths(), [loaded_path])
         self.assertEqual(self.window.selected_file_paths(), [loaded_path])
@@ -115,10 +119,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self._choose_folder(first)
         self._choose_folder(second)
-        self.discovery_runner.run()
+        self.discovery_runner.run_discovery()
         self.assertEqual(self.window.all_file_paths(), [])
 
-        self.discovery_runner.run()
+        self.discovery_runner.run_discovery()
         self.assertEqual(
             self.window.all_file_paths(), [normalize_path(f"{second}/two.jpg")]
         )
@@ -145,7 +149,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 self.window.statusBar().currentMessage(), "Loading photos…"
             )
 
-            self.discovery_runner.run()
+            self.discovery_runner.run_discovery()
             self.assertEqual(
                 self.window.all_file_paths(),
                 [first, second, normalize_path(f"{normalized_folder}/three.jpg")],
@@ -161,10 +165,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.window.add_dropped_directory(first)
         self.window.add_dropped_directory(second)
-        self.discovery_runner.run(1)
+        self.discovery_runner.run_discovery(1)
         self.assertEqual(self.window.all_file_paths(), [existing])
 
-        self.discovery_runner.run()
+        self.discovery_runner.run_discovery()
         self.assertEqual(
             self.window.all_file_paths(),
             [
@@ -180,7 +184,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self._choose_folder(folder)
         with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
-            self.discovery_runner.run()
+            self.discovery_runner.run_discovery()
 
         self.assertEqual(self.window.all_file_paths(), [])
         self.assertTrue(self.window.filesPaneMessage.isVisible())
@@ -681,6 +685,18 @@ class DeterministicCoordinatorRunner:
     def run(self, index: int = 0) -> None:
         self.scheduled.pop(index)()
 
+    def run_index_work(self) -> None:
+        while self.scheduled and self.scheduled[0].__name__ == "<lambda>":
+            self.run()
+
+    def run_discovery(self, index: int = 0) -> None:
+        discovery_indexes = [
+            position
+            for position, work in enumerate(self.scheduled)
+            if work.__name__ == "work"
+        ]
+        self.run(discovery_indexes[index])
+
 
 class FakePhotoDiscovery:
     def __init__(self) -> None:
@@ -766,6 +782,12 @@ class FakePhotoIndex:
 
     def has_photos(self, paths: list[str]) -> set[str]:
         return {normalize_path(path) for path in paths}
+
+    def sync_paths(self, _exif, _paths: list[str]) -> object:
+        return object()
+
+    def index_missing(self, _root: str, _paths: list[str]) -> int:
+        return 0
 
     def search_photos(self, _query: str) -> set[str]:
         return self.search_results

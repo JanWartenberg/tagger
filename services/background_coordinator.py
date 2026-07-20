@@ -1,13 +1,9 @@
-"""Qt-free coordination for background photo discovery.
-
-The coordinator owns request identities and result eligibility.  Qt adapters submit
-user intent and marshal the immutable events it emits back to the UI thread.
-"""
+"""Qt-free coordination for background discovery and index I/O."""
 
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from threading import Lock
@@ -21,11 +17,13 @@ class DiscoveryAdapter(Protocol):
 
 
 class IndexAdapter(Protocol):
-    """Per-root index operations, implemented by the later index-I/O slices."""
+    """Per-root index operations performed only by the Coordinator's workers."""
 
     def is_initialized(self, root: str) -> bool: ...
 
     def sync(self, root: str, paths: Sequence[str]) -> object: ...
+
+    def index_missing(self, root: str, paths: Sequence[str]) -> int: ...
 
     def update_states(self, root: str, states: Mapping[str, object]) -> None: ...
 
@@ -43,6 +41,12 @@ class BackgroundRunner(Protocol):
 class DiscoveryKind(Enum):
     REPLACEMENT = "replacement"
     ADDITIVE = "additive"
+
+
+class IndexOperationKind(Enum):
+    ENSURE = "ensure"
+    INDEX_MISSING = "index_missing"
+    UPDATE_STATES = "update_states"
 
 
 @dataclass(frozen=True)
@@ -80,7 +84,48 @@ class DiscoveryFailed:
     drop_sequence: int | None
 
 
+@dataclass(frozen=True)
+class IndexEnsureCompleted:
+    """An index initialization check, optionally including a completed full sync."""
+
+    root: str
+    result: object | None
+
+
+@dataclass(frozen=True)
+class IndexWriteCompleted:
+    """A committed incremental index write."""
+
+    root: str
+    operation: IndexOperationKind
+
+
+@dataclass(frozen=True)
+class IndexWriteFailed:
+    """A failed index operation; later queued work remains eligible to run."""
+
+    root: str
+    operation: IndexOperationKind
+    error: str
+
+
 DiscoveryEvent: TypeAlias = DiscoveryCompleted | DiscoveryFailed
+IndexEvent: TypeAlias = IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+CoordinatorEvent: TypeAlias = DiscoveryEvent | IndexEvent
+
+
+@dataclass(frozen=True)
+class _IndexOperation:
+    kind: IndexOperationKind
+    paths: tuple[str, ...] = ()
+
+
+@dataclass
+class _RootWriteQueue:
+    pending: list[_IndexOperation] = field(default_factory=list)
+    pending_states: dict[str, object] = field(default_factory=dict)
+    update_scheduled: bool = False
+    running: bool = False
 
 
 def _normalize_path(path: str | Path) -> str:
@@ -91,11 +136,12 @@ def _normalize_path(path: str | Path) -> str:
 
 
 class BackgroundCoordinator:
-    """Schedules folder discovery and publishes only current, ordered results.
+    """Own background discovery and serial index writes behind one deep seam.
 
     Replacement discovery starts a new workspace generation immediately. Additive
     discoveries belong to the current generation and are released in the order
-    their drops began, independent of completion order.
+    their drops began, independent of completion order. Every index root has one
+    serial write queue; pending confirmed states coalesce by normalized photo path.
     """
 
     def __init__(
@@ -104,7 +150,7 @@ class BackgroundCoordinator:
         discovery: DiscoveryAdapter,
         index: IndexAdapter,
         runner: BackgroundRunner,
-        event_sink: Callable[[DiscoveryEvent], None],
+        event_sink: Callable[[CoordinatorEvent], None],
     ) -> None:
         self._discovery = discovery
         self._index = index
@@ -117,6 +163,7 @@ class BackgroundCoordinator:
         self._next_drop_sequence = 0
         self._next_released_drop_sequence = 0
         self._completed_drops: dict[int, DiscoveryEvent] = {}
+        self._index_queues: dict[str, _RootWriteQueue] = {}
 
     def replace_workspace_from_folder(self, root: str | Path) -> DiscoveryRequest:
         """Start a replacement discovery, invalidating all older workspace work."""
@@ -133,7 +180,7 @@ class BackgroundCoordinator:
                 root=_normalize_path(root),
                 drop_sequence=None,
             )
-        self._schedule(request)
+        self._schedule_discovery(request)
         return request
 
     def add_dropped_directory(self, root: str | Path) -> DiscoveryRequest:
@@ -147,15 +194,57 @@ class BackgroundCoordinator:
                 drop_sequence=self._next_drop_sequence,
             )
             self._next_drop_sequence += 1
-        self._schedule(request)
+        self._schedule_discovery(request)
         return request
+
+    def ensure_index(self, root: str | Path, paths: Iterable[str | Path]) -> None:
+        """Check and, when needed, fully synchronize one discovered path set."""
+        self._enqueue_index_operation(
+            _normalize_path(root),
+            _IndexOperation(
+                IndexOperationKind.ENSURE,
+                tuple(_normalize_path(path) for path in paths),
+            ),
+        )
+
+    def index_missing_paths(
+        self, root: str | Path, paths: Iterable[str | Path]
+    ) -> None:
+        """Index paths that were added after an already initialized index."""
+        self._enqueue_index_operation(
+            _normalize_path(root),
+            _IndexOperation(
+                IndexOperationKind.INDEX_MISSING,
+                tuple(_normalize_path(path) for path in paths),
+            ),
+        )
+
+    def submit_confirmed_states(
+        self, root: str | Path, states: Mapping[str, object]
+    ) -> None:
+        """Queue newest confirmed metadata per path after any older root write."""
+        if not states:
+            return
+        normalized_root = _normalize_path(root)
+        normalized_states = {
+            _normalize_path(path): state for path, state in states.items()
+        }
+        with self._lock:
+            queue = self._index_queues.setdefault(normalized_root, _RootWriteQueue())
+            queue.pending_states.update(normalized_states)
+            if not queue.update_scheduled:
+                queue.pending.append(_IndexOperation(IndexOperationKind.UPDATE_STATES))
+                queue.update_scheduled = True
+            work = self._next_index_work_locked(normalized_root, queue)
+        if work is not None:
+            self._runner.submit(work)
 
     def _new_request_id(self) -> int:
         request_id = self._next_request_id
         self._next_request_id += 1
         return request_id
 
-    def _schedule(self, request: DiscoveryRequest) -> None:
+    def _schedule_discovery(self, request: DiscoveryRequest) -> None:
         def work() -> None:
             try:
                 paths = tuple(
@@ -180,11 +269,11 @@ class BackgroundCoordinator:
                     paths=paths,
                     drop_sequence=request.drop_sequence,
                 )
-            self._accept(event)
+            self._accept_discovery(event)
 
         self._runner.submit(work)
 
-    def _accept(self, event: DiscoveryEvent) -> None:
+    def _accept_discovery(self, event: DiscoveryEvent) -> None:
         with self._lock:
             if event.workspace_generation != self._workspace_generation:
                 return
@@ -205,3 +294,58 @@ class BackgroundCoordinator:
 
         for accepted in events:
             self._event_sink(accepted)
+
+    def _enqueue_index_operation(self, root: str, operation: _IndexOperation) -> None:
+        with self._lock:
+            queue = self._index_queues.setdefault(root, _RootWriteQueue())
+            queue.pending.append(operation)
+            work = self._next_index_work_locked(root, queue)
+        if work is not None:
+            self._runner.submit(work)
+
+    def _next_index_work_locked(
+        self, root: str, queue: _RootWriteQueue
+    ) -> Callable[[], None] | None:
+        if queue.running or not queue.pending:
+            return None
+        operation = queue.pending.pop(0)
+        queue.running = True
+        return lambda: self._run_index_operation(root, operation)
+
+    def _run_index_operation(self, root: str, operation: _IndexOperation) -> None:
+        try:
+            if operation.kind is IndexOperationKind.ENSURE:
+                result = (
+                    None
+                    if self._index.is_initialized(root)
+                    else self._index.sync(root, operation.paths)
+                )
+                event: IndexEvent = IndexEnsureCompleted(root, result)
+            elif operation.kind is IndexOperationKind.INDEX_MISSING:
+                self._index.index_missing(root, operation.paths)
+                event = IndexWriteCompleted(root, operation.kind)
+            else:
+                states = self._take_pending_states(root)
+                if states:
+                    self._index.update_states(root, states)
+                event = IndexWriteCompleted(root, operation.kind)
+        except Exception as error:
+            event = IndexWriteFailed(root, operation.kind, str(error))
+        self._complete_index_operation(root, event)
+
+    def _take_pending_states(self, root: str) -> dict[str, object]:
+        with self._lock:
+            queue = self._index_queues[root]
+            states = queue.pending_states
+            queue.pending_states = {}
+            queue.update_scheduled = False
+            return states
+
+    def _complete_index_operation(self, root: str, event: IndexEvent) -> None:
+        with self._lock:
+            queue = self._index_queues[root]
+            queue.running = False
+            work = self._next_index_work_locked(root, queue)
+        self._event_sink(event)
+        if work is not None:
+            self._runner.submit(work)
