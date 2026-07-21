@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 
 from exif_tool import KeywordState
-from services.pending_tag_mutation import MutationStatus, PendingTagMutationCoordinator
+from services.pending_tag_mutation import (
+    MutationStatus,
+    PendingTagMutationCoordinator,
+    TagIntent,
+)
 
 
 class PendingTagMutationCoordinatorTests(unittest.TestCase):
@@ -15,7 +19,9 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
         self.coordinator.remember_confirmed({self.path: self.confirmed})
 
     def test_requested_metadata_is_pending_until_the_write_succeeds(self) -> None:
-        mutation = self.coordinator.begin({self.path: lambda _state: self.requested})
+        mutation = self.coordinator.begin_intents(
+            {self.path: [TagIntent.remove("before"), TagIntent.add("after")]}
+        )
 
         self.assertEqual(self.coordinator.metadata_for(self.path), self.requested)
         self.assertEqual(self.coordinator.status_for(self.path), MutationStatus.PENDING)
@@ -29,20 +35,8 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
     def test_later_pending_mutation_is_recomputed_after_an_earlier_failure(
         self,
     ) -> None:
-        first = self.coordinator.begin(
-            {
-                self.path: lambda state: KeywordState(
-                    state.merged + ["first"], state.merged + ["first"]
-                )
-            }
-        )
-        second = self.coordinator.begin(
-            {
-                self.path: lambda state: KeywordState(
-                    state.merged + ["second"], state.merged + ["second"]
-                )
-            }
-        )
+        first = self.coordinator.begin_intents({self.path: [TagIntent.add("first")]})
+        second = self.coordinator.begin_intents({self.path: [TagIntent.add("second")]})
 
         self.coordinator.fail(first)
 
@@ -69,14 +63,10 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
         failed_path = "C:/photos/two.jpg"
         failed_confirmed = KeywordState(["two-before"], ["two-before"])
         self.coordinator.remember_confirmed({failed_path: failed_confirmed})
-        mutation = self.coordinator.begin(
+        mutation = self.coordinator.begin_intents(
             {
-                self.path: lambda state: KeywordState(
-                    state.merged + ["added"], state.merged + ["added"]
-                ),
-                failed_path: lambda state: KeywordState(
-                    state.merged + ["added"], state.merged + ["added"]
-                ),
+                self.path: [TagIntent.add("added")],
+                failed_path: [TagIntent.add("added")],
             }
         )
 
@@ -100,10 +90,10 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
 
         self.assertIsNotNone(retry)
         assert retry is not None
-        self.assertEqual(set(retry.transforms), {failed_path})
+        self.assertEqual(set(retry.intents_by_path), {failed_path})
         self.assertEqual(
             self.coordinator.metadata_for(failed_path),
-            KeywordState(["two-before", "added"], ["two-before", "added"]),
+            KeywordState(["added", "two-before"], ["added", "two-before"]),
         )
         self.assertEqual(
             self.coordinator.status_for(failed_path), MutationStatus.PENDING
@@ -111,20 +101,34 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
         self.assertIsNone(self.coordinator.retry_failed([self.path]))
 
     def test_retry_ignores_pending_mutations_for_selected_photos(self) -> None:
-        failed = self.coordinator.begin(
-            {
-                self.path: lambda state: KeywordState(
-                    state.merged + ["failed"], state.merged + ["failed"]
-                )
-            }
+        failed = self.coordinator.begin_intents({self.path: [TagIntent.add("failed")]})
+        self.coordinator.fail(failed)
+        pending = self.coordinator.begin_intents({self.path: [TagIntent.add("later")]})
+
+        retry = self.coordinator.retry_failed([self.path])
+
+        self.assertIsNotNone(retry)
+        assert retry is not None
+        self.assertEqual(
+            retry.apply(self.path, self.confirmed),
+            KeywordState(["before", "failed"], ["before", "failed"]),
+        )
+        self.assertEqual(self.coordinator.status_for(self.path), MutationStatus.PENDING)
+        self.assertEqual(
+            self.coordinator.metadata_for(self.path),
+            KeywordState(["before", "failed", "later"], ["before", "failed", "later"]),
+        )
+        self.assertNotEqual(retry.sequence, pending.sequence)
+
+    def test_later_intent_supersedes_only_the_matching_failed_tag_intent(self) -> None:
+        failed = self.coordinator.begin_intents(
+            {self.path: [TagIntent.add("A"), TagIntent.add("B")]}
         )
         self.coordinator.fail(failed)
-        pending = self.coordinator.begin(
-            {
-                self.path: lambda state: KeywordState(
-                    state.merged + ["later"], state.merged + ["later"]
-                )
-            }
+
+        later = self.coordinator.begin_intents({self.path: [TagIntent.add("a")]})
+        self.coordinator.succeed(
+            later, {self.path: KeywordState(["A", "before"], ["A", "before"])}
         )
 
         retry = self.coordinator.retry_failed([self.path])
@@ -132,20 +136,37 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
         self.assertIsNotNone(retry)
         assert retry is not None
         self.assertEqual(
-            retry.transforms[self.path](self.confirmed),
-            KeywordState(["before", "failed"], ["before", "failed"]),
+            retry.apply(self.path, self.coordinator.confirmed_for(self.path)),
+            KeywordState(["A", "B", "before"], ["A", "B", "before"]),
         )
-        self.assertEqual(self.coordinator.status_for(self.path), MutationStatus.PENDING)
-        self.assertEqual(
-            self.coordinator.metadata_for(self.path),
-            KeywordState(["before", "later", "failed"], ["before", "later", "failed"]),
+
+    def test_later_remove_intent_case_insensitively_supersedes_failed_add(self) -> None:
+        failed = self.coordinator.begin_intents({self.path: [TagIntent.add("A")]})
+        self.coordinator.fail(failed)
+
+        later = self.coordinator.begin_intents({self.path: [TagIntent.remove("a")]})
+        self.coordinator.succeed(later, {self.path: self.confirmed})
+
+        self.assertIsNone(self.coordinator.status_for(self.path))
+        self.assertIsNone(self.coordinator.retry_failed([self.path]))
+
+    def test_failed_state_is_session_only_and_survives_an_absent_workspace(
+        self,
+    ) -> None:
+        mutation = self.coordinator.begin_intents(
+            {self.path: [TagIntent.add("unresolved")]}
         )
-        self.assertNotEqual(retry.sequence, pending.sequence)
+        self.coordinator.fail(mutation)
+
+        self.assertEqual(self.coordinator.status_for(self.path), MutationStatus.FAILED)
+        self.assertIsNone(PendingTagMutationCoordinator().status_for(self.path))
 
     def test_failed_write_restores_confirmed_metadata_and_marks_the_photo_failed(
         self,
     ) -> None:
-        mutation = self.coordinator.begin({self.path: lambda _state: self.requested})
+        mutation = self.coordinator.begin_intents(
+            {self.path: [TagIntent.remove("before"), TagIntent.add("after")]}
+        )
 
         restored = self.coordinator.fail(mutation)
 

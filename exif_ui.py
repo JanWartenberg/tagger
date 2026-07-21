@@ -41,7 +41,7 @@ from services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutation,
     PendingTagMutationCoordinator,
-    StateTransform,
+    TagIntent,
 )
 from services.tag_mutation import TagMutationResult, TagMutationService
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
@@ -1352,8 +1352,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         target = files[0]
         pending_mutation = self._begin_pending_tag_mutation(
-            [target],
-            lambda st: st.merged + self._yanked_tags,
+            [target], [TagIntent.add(tag) for tag in self._yanked_tags]
         )
         self.statusBar().showMessage(f"Queued paste ({len(self._yanked_tags)} tag(s))")
         self._enqueue_tag_mutation(
@@ -1753,10 +1752,10 @@ class MainWindow(QtWidgets.QMainWindow):
         elif status is MutationStatus.FAILED:
             item.setIcon(
                 self.style().standardIcon(
-                    QtWidgets.QStyle.StandardPixmap.SP_MessageBoxCritical
+                    QtWidgets.QStyle.StandardPixmap.SP_MessageBoxInformation
                 )
             )
-            item.setToolTip("Failed to save tag changes; retry with :retry")
+            item.setToolTip("Tag changes need attention; retry with :retry")
         else:
             item.setIcon(QtGui.QIcon())
             item.setToolTip("")
@@ -1775,7 +1774,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if status is MutationStatus.PENDING:
             self.mutationStatusLabel.setText("Saving tag changes…")
         elif status is MutationStatus.FAILED:
-            self.mutationStatusLabel.setText("Failed to save tag changes — use :retry")
+            self.mutationStatusLabel.setText("Tag changes need attention — use :retry")
         else:
             self.mutationStatusLabel.setText("")
 
@@ -2041,14 +2040,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dateLabel.setText("Capture date: (missing)")
 
     def _begin_pending_tag_mutation(
-        self,
-        files: list[str],
-        transform: Callable[[KeywordState], list[str]],
+        self, files: list[str], intents: list[TagIntent]
     ) -> PendingTagMutation | None:
-        transforms: dict[str, StateTransform] = {}
+        intents_by_path: dict[str, list[TagIntent]] = {}
         selected = self.selected_file_paths()
         current = normalize_path(selected[0]) if selected else None
-        state_transform = self._keyword_state_transform(transform)
 
         for path in files:
             if self._pending_tag_mutations.confirmed_for(path) is None:
@@ -2058,40 +2054,21 @@ class MainWindow(QtWidgets.QMainWindow):
                     state = KeywordState(keywords, keywords)
                 if state is not None:
                     self._pending_tag_mutations.remember_confirmed({path: state})
-            transforms[path] = state_transform
+            intents_by_path[path] = intents
 
-        if not transforms:
+        if not intents_by_path:
             return None
-        mutation = self._pending_tag_mutations.begin(transforms)
+        mutation = self._pending_tag_mutations.begin_intents(intents_by_path)
         displayed = {
-            path: self._pending_tag_mutations.metadata_for(path) for path in transforms
+            path: self._pending_tag_mutations.metadata_for(path)
+            for path in intents_by_path
         }
         self._keywords_cache.update(
             {path: state for path, state in displayed.items() if state is not None}
         )
-        self._refresh_file_mutation_indicators(list(transforms))
+        self._refresh_file_mutation_indicators(list(intents_by_path))
         self._refresh_current_keywords_view_from_cache()
         return mutation
-
-    def _keyword_state_transform(
-        self, transform: Callable[[KeywordState], list[str]]
-    ) -> StateTransform:
-        def _apply(state: KeywordState) -> KeywordState:
-            keywords = transform(state)
-            keywords = dedupe_casefold(
-                [keyword.strip() for keyword in keywords if keyword.strip()]
-            )
-            keywords.sort(key=lambda value: value.casefold())
-            return KeywordState(
-                keywords,
-                keywords,
-                state.date_original,
-                state.date_create,
-                state.date_xmp_create,
-                state.date_digitized,
-            )
-
-        return _apply
 
     def _apply_tag_mutation_result(
         self,
@@ -2300,9 +2277,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not files:
             self.statusBar().showMessage("No files selected")
             return
-        pending_mutation = self._begin_pending_tag_mutation(
-            files, lambda st: st.merged + [tag]
-        )
+        pending_mutation = self._begin_pending_tag_mutation(files, [TagIntent.add(tag)])
         add_recent_tag(tag)
         self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
         self._enqueue_tag_mutation(
@@ -2330,8 +2305,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not remove:
             return
         pending_mutation = self._begin_pending_tag_mutation(
-            files,
-            lambda st: [tag for tag in st.merged if tag.casefold() not in remove],
+            files, [TagIntent.remove(tag) for tag in remove]
         )
         self.statusBar().showMessage(
             f"Queued remove {len(remove)} tag(s) from {len(files)} file(s)"
@@ -2359,7 +2333,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if retry is None:
             self.statusBar().showMessage(f"No failed tag changes for {scope}")
             return
-        retry_paths = list(retry.transforms)
+        retry_paths = list(retry.intents_by_path)
         displayed = {
             path: self._pending_tag_mutations.metadata_for(path) for path in retry_paths
         }
@@ -2377,7 +2351,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 paths,
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self.exif.read_keywords,
-                transform=lambda path, state: retry.transforms[path](state).merged,
+                transform=lambda path, state: retry.apply(path, state).merged,
             ),
             retry,
             f"Retried tag changes for {len(retry_paths)} photo(s)",

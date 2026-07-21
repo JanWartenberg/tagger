@@ -264,9 +264,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         with patch("exif_ui.QtWidgets.QMessageBox.critical"):
             FakeExifTool.release_writes()
-            self._wait_until(lambda: "Failed" in self.window.mutationStatusLabel.text())
+            self._wait_until(
+                lambda: "attention" in self.window.mutationStatusLabel.text()
+            )
 
         self.assertFalse(item.icon().isNull())
+        self.assertEqual(
+            item.toolTip(), "Tag changes need attention; retry with :retry"
+        )
         self.assertEqual(
             [
                 self.window.keywordsList.item(i).text()
@@ -364,7 +369,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
         )
         self.app.processEvents()
-        self.assertIn("Failed", self.window.mutationStatusLabel.text())
+        self.assertIn("attention", self.window.mutationStatusLabel.text())
 
         self.window._dispatch_command("retry", [])
         self._wait_until(lambda: len(FakeExifTool.write_calls) == 3)
@@ -450,6 +455,30 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             [path for path, _tags in FakeExifTool.write_calls],
             [departed, replacement, replacement],
         )
+
+    def test_returned_photo_shows_session_only_unresolved_attention(self) -> None:
+        (departed,) = self._add_paths("departed.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.write_failures = [True]
+        self.window.addEdit.setText("unresolved")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 1)
+        self._wait_until(lambda: not self.window.files.item(0).icon().isNull())
+
+        replacement = normalize_path(str(Path("C:/photos") / "replacement.jpg"))
+        self.window.replace_photo_workspace([replacement])
+        self._wait_until(lambda: self.window.selected_file_paths() == [replacement])
+        self.assertIsNone(self.window._pending_tag_mutations.status_for(replacement))
+
+        self.window.replace_photo_workspace([departed])
+        self._wait_until(lambda: self.window.selected_file_paths() == [departed])
+        self._wait_until(lambda: not self.window.files.item(0).icon().isNull())
+
+        self.assertEqual(
+            self.window.files.item(0).toolTip(),
+            "Tag changes need attention; retry with :retry",
+        )
+        self.assertIn("attention", self.window.mutationStatusLabel.text())
 
     def test_workspace_replacement_discards_queued_writes_and_ignores_inflight_ui_completion(
         self,
@@ -541,7 +570,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         with patch("exif_ui.QtWidgets.QMessageBox.critical"):
             FakeExifTool.release_writes()
             self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
-            self._wait_until(lambda: "Failed" in self.window.mutationStatusLabel.text())
+            self._wait_until(
+                lambda: "attention" in self.window.mutationStatusLabel.text()
+            )
 
         self.assertEqual(
             FakeExifTool.write_calls[1],

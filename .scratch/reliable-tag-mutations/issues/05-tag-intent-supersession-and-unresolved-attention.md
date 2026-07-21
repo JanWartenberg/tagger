@@ -1,6 +1,6 @@
 # 05 — Tag-Intent Supersession and Unresolved Attention
 
-Status: ready-for-agent
+Status: completed
 Category: bug
 Priority: medium
 Blocked by: 01, 02, 03, 04
@@ -9,13 +9,13 @@ Blocked by: 01, 02, 03, 04
 
 Make the post-failure state of tag mutations precise without expanding TAGGER into a persistent sync or conflict-resolution system. Replace opaque pending-state transforms with explicit, per-tag add/remove intents so a later user intent can supersede only the failed intent it covers.
 
-- [ ] Model a tag mutation as explicit add/remove tag intents per photo, using case-insensitive tag identity.
-- [ ] When a later mutation for a photo addresses a tag identity covered by a failed mutation, remove only that failed intent from the retryable state; the later intent wins for that tag.
-- [ ] Preserve unrelated failed intents for the same photo. They remain visibly unresolved and are included by `:retry` and `:retryall` only while the photo belongs to the current Photo Workspace.
-- [ ] Preserve the existing fresh-read-and-replay behavior: a retry applies TAGGER's retained intent to the current file state, affects its addressed tags, and keeps unrelated external metadata changes.
-- [ ] Retain failed state for the running application session when its photo leaves the Photo Workspace. If the photo returns, render a small, non-alarming attention indicator distinct from the pending reload indicator.
-- [ ] The attention indicator gives normal retry guidance only. Do not retain or display technical error text for a returned photo.
-- [ ] Do not retry automatically and do not persist failed intents or indicators across a TAGGER restart.
+- [x] Model a tag mutation as explicit add/remove tag intents per photo, using case-insensitive tag identity.
+- [x] When a later mutation for a photo addresses a tag identity covered by a failed mutation, remove only that failed intent from the retryable state; the later intent wins for that tag.
+- [x] Preserve unrelated failed intents for the same photo. They remain visibly unresolved and are included by `:retry` and `:retryall` only while the photo belongs to the current Photo Workspace.
+- [x] Preserve the existing fresh-read-and-replay behavior: a retry applies TAGGER's retained intent to the current file state, affects its addressed tags, and keeps unrelated external metadata changes.
+- [x] Retain failed state for the running application session when its photo leaves the Photo Workspace. If the photo returns, render a small, non-alarming attention indicator distinct from the pending reload indicator.
+- [x] The attention indicator gives normal retry guidance only. Do not retain or display technical error text for a returned photo.
+- [x] Do not retry automatically and do not persist failed intents or indicators across a TAGGER restart.
 
 ## Implementation boundary
 
@@ -38,4 +38,12 @@ Make the post-failure state of tag mutations precise without expanding TAGGER in
 - `ruff format --check --no-cache exif_ui.py services/pending_tag_mutation.py services/tag_mutation.py tests/test_pending_tag_mutations.py tests/test_main_window_characterization.py`
 - `python3 -m compileall -q exif_ui.py services tests`
 - `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v`
+- `git diff --check`
+
+Completed validation:
+
+- `ruff check --no-cache .`
+- `ruff format --check --no-cache exif_ui.py services/pending_tag_mutation.py tests/test_pending_tag_mutations.py tests/test_main_window_characterization.py`
+- `python3 -m compileall -q exif_ui.py services tests`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (74 tests)
 - `git diff --check`
