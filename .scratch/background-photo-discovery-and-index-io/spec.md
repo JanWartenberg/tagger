@@ -1,6 +1,6 @@
 # Background Photo Discovery and Index I/O
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement
@@ -249,3 +249,9 @@ The slices are ordered to retain behavior and keep interfaces reviewable. Do not
 ## Handoff Notes
 
 All product and architectural decisions necessary for ticketing are resolved. Remaining choices are implementation details constrained by this specification: Python names for dataclasses and methods, the exact adapter protocols, token representation, SQLite retry/timeout mechanics, and test-helper shape. They must preserve the contracts above and do not require renewed product triage.
+
+## Completion
+
+Implemented across commits `1b0abdb` through `0f4641c`: the Qt-free coordinator, background folder/drop discovery, serialized per-root index writes, background index reads, and adapter cleanup. The coordinator and offscreen adapter coverage are in `tests/test_background_coordinator.py` and `tests/test_main_window_characterization.py`.
+
+Manual smoke testing found no further bugs.
