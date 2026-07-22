@@ -9,7 +9,7 @@ Capture the current Photo Workspace behavior before changing ownership, and esta
 ## Scope
 
 - Establish the pure-`unittest` test location and conventions for the behavior that will move into `PhotoWorkspace`; ticket 02 adds those tests when the seam exists.
-- Derive expected results from the current executable behavior, not from `INDEXING_PLAN.md`.
+- Derive expected results from the current executable behavior, not from future indexing/search plans.
 - Add a minimal Windows/offscreen PyQt integration harness using fakes for ExifTool and indexing dependencies.
 - Document the commands for pure Linux tests and Windows Qt tests.
 

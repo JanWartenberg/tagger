@@ -1,6 +1,6 @@
 # Main Window Coordinator Decomposition
 
-Status: needs-triage
+Status: ready-for-agent
 Priority: high
 
 ## Problem Statement
@@ -9,37 +9,36 @@ The MainWindow module combines widget construction, input routing, Photo Workspa
 
 ## Solution
 
-Reduce MainWindow to a Qt-facing adapter by moving coherent non-widget coordination responsibilities behind small, deep modules with explicit interfaces. Preserve all user-visible behavior and existing public entrypoints.
+Extract tag-mutation queueing and lifecycle coordination behind one Qt-free deep module with a small explicit interface. Preserve all user-visible behavior and existing public entrypoints; MainWindow remains the Qt adapter for cache, index, and widget updates.
 
 ## User Stories
 
-1. As a maintainer, I want Photo Workspace rendering and intent forwarding to be understandable without reading index or mutation code.
-2. As a maintainer, I want index coordination to change without editing keyboard routing or widget construction.
-3. As a maintainer, I want tag mutation coordination to be testable without constructing a full window.
-4. As a maintainer, I want input routing to evolve without coupling it to metadata operations.
-5. As a TAGGER user, I want this structural work to preserve commands, shortcuts, focus behavior, and responsiveness.
+1. As a maintainer, I want tag-mutation queueing and stale-work rules to be understandable without reading widget code.
+2. As a maintainer, I want tag mutation coordination to be testable without constructing a full window.
+3. As a TAGGER user, I want this structural work to preserve commands, shortcuts, focus behavior, and responsiveness.
 
 ## Implementation Decisions
 
 - Preserve the existing Photo Workspace seam; do not create a second owner for its state.
-- Identify cohesive coordinator modules by responsibility rather than extracting one method per class.
-- Candidate responsibilities include index coordination, tag-mutation coordination, and input routing; choose seams based on caller leverage and locality.
-- Make dependencies accepted at seams rather than requiring tests to patch constructors in unrelated modules.
-- Keep Qt-only concerns in the Qt adapter and external process/database work behind their existing or improved seams.
+- Extract one Qt-free Tag Mutation Coordinator. It owns serialized queueing, pending/failed mutation lifecycle, workspace-generation stale-work rejection, and discarding queued mutations for departed photos.
+- The coordinator composes the existing intent and confirmed-state rules. It publishes immutable lifecycle facts; it does not own widget rendering, the MainWindow metadata cache, index updates, footer wording, focus, or scroll behavior.
+- MainWindow forwards user intent and confirmed metadata facts to the coordinator, then renders its emitted lifecycle facts and submits confirmed states to the index.
+- Accept the mutation executor and background runner at the coordinator seam so direct tests use deterministic fakes rather than constructing widgets or patching unrelated constructors.
+- Keep Qt-only concerns in the Qt adapter and external process/database work behind existing adapters.
 
 ## Testing Decisions
 
 - Preserve Photo Workspace pure tests and offscreen adapter characterization tests.
-- Add direct tests at each chosen coordinator interface using fakes for external systems.
+- Add direct Tag Mutation Coordinator tests using a deterministic runner and fake mutation executor.
+- Keep offscreen tests at the MainWindow seam for observable pending/failed indicators, retries, index submission, and stale completion behavior.
 - Test public behavior and result contracts, not private Qt fields or method forwarding.
 
 ## Out of Scope
 
 - A framework rewrite, package hierarchy migration, or changes to user-facing behavior.
+- Input/key routing extraction, selected-photo metadata loading, preview lifecycle, or other MainWindow responsibilities. Reassess those only after this coordinator extraction is implemented and reviewed.
 - Combining this work with unrelated feature development.
 
 ## Further Notes
 
-The initial extraction has been chosen during the Background Photo Discovery and Index I/O grilling: introduce a separate Qt-free Coordinator module for background folder discovery and index I/O. Its narrow migration boundary is request identity, stale-result handling, completed-result ordering, background scheduling, and one serial index-write queue per root. MainWindow remains the Qt adapter and Photo Workspace remains the owner of logical workspace state. This does not extract input routing or tag-mutation coordination.
-
-Define the Coordinator module's interface before ticketing. This spec should be implemented incrementally, not as a single rewrite.
+The initial extraction for background folder discovery and index I/O is complete in `services/background_coordinator.py`. This follow-up is deliberately limited to a Tag Mutation Coordinator. Input routing, selected-photo metadata loading, and preview lifecycle are deferred candidates, not implementation commitments; decide whether further refactoring is worthwhile only after this extraction is implemented and assessed.

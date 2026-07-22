@@ -2,18 +2,14 @@
 
 ## Product work
 
-### IPTC-empty filter as a frozen snapshot
+### Empty-filter SQLite check with background file-scan crosscheck (medium priority)
 
-- Activating the filter captures the photos that are IPTC-empty at that moment.
-- Tagging photos afterward must not remove them from the filtered list.
-- Reapplying the filter is the only action that refreshes the snapshot.
-- Implement after the behavior-preserving Photo Workspace refactor.
-
-### Complete indexed reverse search
-
-- The current SQLite/search implementation is only a partial prototype.
-- Finish the intended search-result and restore behavior described in `INDEXING_PLAN.md`.
-- Keep the normal folder-tagging workflow as the default.
+- Show the SQLite-derived IPTC-empty result immediately, then crosscheck it with a full background file-metadata scan.
+- Keep the initially displayed filter view stable; the crosscheck must never change it automatically.
+- When the crosscheck finds a discrepancy, repair the index, report the difference in the status bar, and offer `:resync`.
+- `:resync` applies the already-completed crosscheck result atomically and immediately; it does not start another scan.
+- Successful TAGGER tag mutations made after activation are intentional changes, not crosscheck discrepancies, and must not trigger a correction warning.
+- If the crosscheck fails, retain the SQLite-derived view and report that verification failed without changing the files pane.
 
 ### Discovery progress indicator (low priority)
 
@@ -45,16 +41,6 @@
 
 - Basic multi-selection and tag mutation already exist.
 - Evaluate whether selection, feedback, and partial-failure behavior are sufficient for practical batch tagging.
-
-## Personal tagging workflow (not product work)
-
-- Finish tagging all bird photos.
-- Decide useful categories and goals:
-  - personal photos
-  - aesthetically strong photos
-  - record or evidence photos
-  - educational details where a useful feature is visible despite poor image quality
-  - quiz photos
 
 ## Removed from the active backlog
 

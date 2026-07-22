@@ -9,7 +9,7 @@ The current collection of photos being worked on, including its active view mode
 _Avoid_: File list, photo list, files pane model
 
 **IPTC-empty filter view**:
-The photo set produced by a user-triggered IPTC-empty filter run. It remains stable after metadata mutations; the user explicitly reactivates the filter to compute a new view from current file metadata.
+The photo set produced by a user-triggered IPTC-empty filter run. Tagging photos afterward must not remove them from this filtered list. The set remains stable after metadata mutations; the user explicitly reactivates the filter to compute a new view from current file metadata.
 
 **Confirmed metadata state**:
 The latest metadata state that TAGGER has successfully read from or written to a photo file. It is the basis for restoring a failed mutation and recomputing later pending mutations.

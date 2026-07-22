@@ -25,7 +25,7 @@ The normal folder-tagging workflow remains the default. This work is a behavior-
 ## Non-Goals
 
 - Change the SQLite schema, search syntax, metadata format, or `PhotoWorkspace` behavior.
-- Complete deferred reverse-search work from `INDEXING_PLAN.md`.
+- Complete deferred reverse-search work, now tracked in `.scratch/indexed-search-and-index-freshness/`.
 - Cancel an already running filesystem traversal, SQLite operation, or ExifTool process.
 - Implement a live discovery count. This is a separate low-priority backlog item.
 - Implement error history or `:errors`. This is a separate low-priority backlog item.
