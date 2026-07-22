@@ -38,6 +38,15 @@ class IptcEmptyFilterBatch:
     paths: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class _FilterRestoreState:
+    """Logical Photo Workspace view to restore after an IPTC filter ends."""
+
+    view_mode: PhotoWorkspaceViewMode
+    visible_paths: frozenset[str]
+    selected_paths: frozenset[str]
+
+
 class PhotoWorkspace:
     """Owns Photo Workspace membership, selection, and filter state."""
 
@@ -54,8 +63,7 @@ class PhotoWorkspace:
         self._processed = 0
         self._matches: set[str] = set()
         self._switched = False
-        self._baseline_visible: set[str] = set()
-        self._baseline_selected: set[str] = set()
+        self._filter_restore_state: _FilterRestoreState | None = None
 
     def snapshot(self) -> PhotoWorkspaceSnapshot:
         """Return the immutable state used to render the workspace."""
@@ -97,16 +105,18 @@ class PhotoWorkspace:
         self._processed = 0
         self._matches = set()
         self._switched = False
-        self._baseline_visible = set()
-        self._baseline_selected = set()
+        self._filter_restore_state = None
         return self.add_paths(paths)
 
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
         """Apply a user selection and repair it against the visible paths."""
         self._selected = set(paths) & self._visible
-        if self._filter_running:
-            self._baseline_visible = set(self._visible)
-            self._baseline_selected = set(self._selected)
+        if self._filter_running and self._filter_restore_state is not None:
+            self._filter_restore_state = _FilterRestoreState(
+                self._filter_restore_state.view_mode,
+                self._filter_restore_state.visible_paths,
+                frozenset(self._selected),
+            )
         return self.snapshot()
 
     def apply_database_search_matches(
@@ -129,17 +139,18 @@ class PhotoWorkspace:
     def start_iptc_empty_filter(
         self, first_size: int, batch_size: int
     ) -> PhotoWorkspaceSnapshot:
-        """Start an IPTC-empty operation and prepare its metadata batches."""
+        """Start an IPTC-empty operation without changing the source view yet."""
         self._operation += 1
-        self._view_mode = PhotoWorkspaceViewMode.IPTC_EMPTY
+        self._filter_restore_state = _FilterRestoreState(
+            self._view_mode,
+            frozenset(self._visible),
+            frozenset(self._selected),
+        )
         self._filter_running = True
         self._inflight = None
         self._processed = 0
         self._matches = set()
         self._switched = False
-        self._baseline_visible = set(self._visible)
-        self._baseline_selected = set(self._selected)
-        self._visible = set(self._paths)
 
         first_size = max(1, first_size)
         batch_size = max(1, batch_size)
@@ -151,21 +162,14 @@ class PhotoWorkspace:
             for index in range(0, len(rest), batch_size)
         )
         if not self._batches:
-            self._filter_running = False
+            self._finish_iptc_empty_filter()
         return self.snapshot()
 
     def clear_iptc_empty_filter(self) -> PhotoWorkspaceSnapshot:
-        """Disable the filter and invalidate every outstanding batch result."""
+        """Restore the source view and invalidate every outstanding batch result."""
         self._operation += 1
-        self._view_mode = PhotoWorkspaceViewMode.NORMAL
-        self._filter_running = False
-        self._batches = []
-        self._inflight = None
-        self._processed = 0
-        self._matches = set()
-        self._switched = False
-        self._visible = set(self._paths)
-        self._repair_selection()
+        self._restore_filter_source()
+        self._reset_iptc_empty_filter()
         return self.snapshot()
 
     def next_iptc_empty_filter_batch(self) -> IptcEmptyFilterBatch | None:
@@ -195,34 +199,15 @@ class PhotoWorkspace:
         self._inflight = None
         self._processed += len(batch.paths)
         self._matches.update(set(empty_paths) & set(batch.paths))
-        if self._matches:
-            self._switched = True
-            self._visible = set(self._matches)
-            self._repair_selection()
-        elif not self._batches:
-            self._visible = set()
-            self._repair_selection()
-
-        self._baseline_visible = set(self._visible)
-        self._baseline_selected = set(self._selected)
         if not self._batches:
-            self._filter_running = False
+            self._finish_iptc_empty_filter()
         return self.snapshot()
 
     def fail_iptc_empty_filter_batch(self, operation_id: int) -> PhotoWorkspaceSnapshot:
-        """Stop a failed operation and restore its last successful view."""
-        batch = self._inflight
-        if (
-            self._filter_running
-            and batch is not None
-            and operation_id == self._operation == batch.operation_id
-        ):
-            self._visible = set(self._baseline_visible)
-            self._selected = set(self._baseline_selected)
-            self._filter_running = False
-            self._batches = []
-            self._inflight = None
-            self._repair_selection()
+        """Stop a failed operation and restore its captured source view."""
+        if self.accepts_iptc_empty_filter_result(operation_id):
+            self._restore_filter_source()
+            self._reset_iptc_empty_filter()
         return self.snapshot()
 
     def apply_iptc_emptiness(
@@ -231,6 +216,35 @@ class PhotoWorkspace:
         """Keep the current IPTC-empty view stable after metadata mutations."""
         del emptiness_by_path
         return self.snapshot()
+
+    def _finish_iptc_empty_filter(self) -> None:
+        self._view_mode = PhotoWorkspaceViewMode.IPTC_EMPTY
+        self._visible = set(self._matches)
+        self._selected = set()
+        self._repair_selection()
+        self._filter_running = False
+        self._switched = True
+
+    def _restore_filter_source(self) -> None:
+        state = self._filter_restore_state
+        if state is None:
+            self._view_mode = PhotoWorkspaceViewMode.NORMAL
+            self._visible = set(self._paths)
+            self._repair_selection()
+            return
+        self._view_mode = state.view_mode
+        self._visible = set(state.visible_paths)
+        self._selected = set(state.selected_paths)
+        self._repair_selection()
+
+    def _reset_iptc_empty_filter(self) -> None:
+        self._filter_running = False
+        self._batches = []
+        self._inflight = None
+        self._processed = 0
+        self._matches = set()
+        self._switched = False
+        self._filter_restore_state = None
 
     def _repair_selection(self) -> None:
         self._selected &= self._visible

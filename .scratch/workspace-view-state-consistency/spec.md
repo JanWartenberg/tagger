@@ -1,6 +1,6 @@
 # Photo Workspace View-State Consistency
 
-Status: needs-triage
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -20,16 +20,22 @@ Define one coherent state transition for starting, succeeding, clearing, and fai
 
 ## Implementation Decisions
 
-- Keep Photo Workspace as the single owner of logical view mode, visibility, selection repair, and restoration state.
-- Explicitly define filter failure behavior when the previous view is normal and when it is database search.
+- Keep Photo Workspace as the single owner of logical view mode, visible paths, selection repair, filter-operation identity, and restoration state. Qt owns only physical scroll positioning.
+- Starting an IPTC-empty filter captures the complete current logical view as its restoration state: normal or database-search mode, visible paths, selected paths, and active path. While the scan is pending, leave that prior view visible and leave the checkbox unchecked.
+- Do not render progressive filter batches. Apply only a completed successful result atomically.
+- On success, switch to IPTC-empty mode, check the checkbox, and select the first matching photo. A successful empty result keeps the checkbox checked and has no selection.
+- On failure, discard every partial result, uncheck the checkbox, and restore the captured logical view. Restore its selected/active photo and have the Qt adapter scroll that photo to the top of the files pane. Report the failure normally in non-modal feedback.
+- Rechecking the checkbox after failure always starts a fresh scan. Do not retry automatically and do not add a separate retry action.
+- Clearing a successfully applied IPTC-empty filter restores its captured logical view, including database-search results when that was the source, selected/active photo, and Qt scroll-to-selected-top behavior.
 - Render Qt controls from the resulting snapshot; controls must not infer a second logical mode.
-- Preserve stale-result rejection and current selection/scroll responsibilities.
+- Preserve stale-result rejection: completions from an obsolete filter operation cannot alter a newer view.
 
 ## Testing Decisions
 
-- Extend pure Photo Workspace transition tests to cover search → filter → failure, search → filter → success, and clear operations.
-- Assert snapshot mode, visible paths, selection, and active path together.
-- Add one offscreen adapter test for the selected failure behavior.
+- Extend pure Photo Workspace transition tests to cover normal → filter → success/failure/clear and search → filter → success/failure/clear.
+- Assert that pending and partial batches leave the source view unchanged; final success applies atomically; and failure restores the captured mode, visible paths, selection, and active path.
+- Cover successful empty results, explicit fresh restart after failure, and stale-result rejection.
+- Add offscreen adapter coverage that verifies checkbox state, no progressive pane replacement, and scroll-to-restored-selection behavior on failure and clear.
 
 ## Out of Scope
 
@@ -37,4 +43,4 @@ Define one coherent state transition for starting, succeeding, clearing, and fai
 
 ## Further Notes
 
-Grilling is required before tickets because the desired user-visible restoration behavior after a filter failure has not been chosen.
+Implemented by ticket 01: the Photo Workspace retains its logical source view during scans, applies completed filter results atomically, and restores source state after failure or clearing.

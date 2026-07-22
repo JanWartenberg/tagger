@@ -57,12 +57,18 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ("two.jpg",))
         self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
 
-    def test_starting_iptc_filter_leaves_database_search_view(self) -> None:
+    def test_starting_iptc_filter_keeps_database_search_visible_while_scanning(
+        self,
+    ) -> None:
         self.workspace.apply_database_search_matches(["two.jpg"])
 
         snapshot = self.workspace.start_iptc_empty_filter(1, 1)
 
-        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.IPTC_EMPTY)
+        self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
+        self.assertEqual(snapshot.visible_paths, ("two.jpg",))
+        self.assertEqual(snapshot.selected_paths, ("two.jpg",))
+        self.assertEqual(snapshot.active_path, "two.jpg")
+        self.assertIsNotNone(snapshot.filter_operation_id)
 
 
 if __name__ == "__main__":

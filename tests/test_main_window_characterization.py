@@ -681,6 +681,79 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertEqual(self.window.selectedLabel.text(), second)
 
+    def test_iptc_filter_keeps_the_source_view_and_checkbox_unchecked_while_scanning(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+
+        self.window.onlyUntagged.setChecked(True)
+
+        self.assertFalse(self.window.onlyUntagged.isChecked())
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(
+            [
+                self.window.files.item(index).text()
+                for index in range(self.window.files.count())
+                if not self.window.files.item(index).isHidden()
+            ],
+            [first, second],
+        )
+
+    def test_clearing_a_completed_iptc_filter_restores_and_scrolls_to_source_selection(
+        self,
+    ) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))
+        target = paths[40]
+        self.window.files.setCurrentItem(
+            self.window.files.item(40),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(self.window.onlyUntagged.isChecked)
+        self.assertEqual(self.window.selected_file_paths(), [])
+
+        self.window.onlyUntagged.setChecked(False)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [target])
+        self.assertLessEqual(
+            abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
+        )
+
+    def test_failed_iptc_filter_restores_and_scrolls_to_source_selection(
+        self,
+    ) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))
+        target = paths[40]
+        self.window.files.setCurrentItem(
+            self.window.files.item(40),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+        FakeExifTool.scan_error = RuntimeError("simulated filter failure")
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.window.onlyUntagged.setChecked(True)
+            self._wait_until(
+                lambda: self.window.statusBar()
+                .currentMessage()
+                .startswith("Filtering IPTC-empty failed:")
+            )
+
+        self.assertFalse(self.window.onlyUntagged.isChecked())
+        self.assertEqual(self.window.selected_file_paths(), [target])
+        self.assertLessEqual(
+            abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
+        )
+        critical.assert_not_called()
+
     def test_db_search_hides_non_matches_and_selects_first_visible_photo(self) -> None:
         first, second, _duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
@@ -855,6 +928,7 @@ class FakePhotoDiscovery:
 
 class FakeExifTool:
     fail_writes = False
+    scan_error: Exception | None = None
     write_failures: list[bool] = []
     write_calls: list[tuple[str, list[str]]] = []
     states_by_path: dict[str, KeywordState] = {}
@@ -864,6 +938,7 @@ class FakeExifTool:
     @classmethod
     def reset(cls) -> None:
         cls.fail_writes = False
+        cls.scan_error = None
         cls.write_failures = []
         cls.write_calls = []
         cls.states_by_path = {}
@@ -886,6 +961,12 @@ class FakeExifTool:
 
     def read_keywords_many(self, paths: list[str]) -> dict[str, "KeywordState"]:
         return {normalize_path(path): self.read_keywords(path) for path in paths}
+
+    def scan_iptc_empty(self, paths: list[str]) -> set[str]:
+        del paths
+        if type(self).scan_error is not None:
+            raise type(self).scan_error
+        return set()
 
     def write_keywords(
         self, paths: list[str], keywords: list[str], keep_backup: bool

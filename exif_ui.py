@@ -1720,8 +1720,12 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _render_photo_workspace(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        self.onlyUntagged.blockSignals(True)
         self.files.blockSignals(True)
         try:
+            self.onlyUntagged.setChecked(
+                snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            )
             self.files.clear()
             visible_paths = set(snapshot.visible_paths)
             selected_paths = set(snapshot.selected_paths)
@@ -1737,6 +1741,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     self.files.setCurrentItem(item)
         finally:
             self.files.blockSignals(False)
+            self.onlyUntagged.blockSignals(False)
 
     def _set_file_mutation_indicator(
         self, item: QtWidgets.QListWidgetItem, path: str
@@ -1941,8 +1946,16 @@ class MainWindow(QtWidgets.QMainWindow):
         """Ask the workspace for IPTC-empty work and schedule its next batch."""
         before = self.selected_file_paths()
         if not self.onlyUntagged.isChecked():
+            prior_snapshot = self.photo_workspace.snapshot()
             snapshot = self.photo_workspace.clear_iptc_empty_filter()
-            self._render_photo_workspace_snapshot(snapshot, before)
+            self._render_photo_workspace_snapshot(
+                snapshot,
+                before,
+                scroll_active_to_top=(
+                    prior_snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+                    and prior_snapshot.filter_operation_id is None
+                ),
+            )
             self.filterInfoLabel.setText("")
             return
 
@@ -1995,9 +2008,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             if not was_current:
                 return
-            self._render_photo_workspace_snapshot(snapshot, before)
-            self.statusBar().showMessage("Error")
-            self._show_error(msg)
+            self._render_photo_workspace_snapshot(
+                snapshot, before, scroll_active_to_top=True
+            )
+            self.statusBar().showMessage(f"Filtering IPTC-empty failed: {msg}")
             self.filterInfoLabel.setText("")
 
         worker.signals.finished.connect(_ok)
@@ -2005,10 +2019,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pool.start(worker)
 
     def _render_photo_workspace_snapshot(
-        self, snapshot: PhotoWorkspaceSnapshot, previous_selection: list[str]
+        self,
+        snapshot: PhotoWorkspaceSnapshot,
+        previous_selection: list[str],
+        *,
+        scroll_active_to_top: bool = False,
     ) -> bool:
         """Render a workspace transition and refresh details after selection changes."""
         self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
+        if scroll_active_to_top and snapshot.active_path is not None:
+            item = self._find_item_by_path(snapshot.active_path)
+            if item is not None:
+                self.files.scrollToItem(
+                    item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+                )
         selection_changed = list(snapshot.selected_paths) != previous_selection
         if selection_changed:
             self.on_selection_changed()
@@ -2227,13 +2251,6 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.apply_database_search_matches(
             normalize_path(path) for path in matches
         )
-        self.onlyUntagged.blockSignals(True)
-        try:
-            self.onlyUntagged.setChecked(
-                snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
-            )
-        finally:
-            self.onlyUntagged.blockSignals(False)
         self._render_photo_workspace_snapshot(snapshot, before)
         self._update_filter_label(snapshot)
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
