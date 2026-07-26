@@ -468,7 +468,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         replacement = normalize_path(str(Path("C:/photos") / "replacement.jpg"))
         self.window.replace_photo_workspace([replacement])
         self._wait_until(lambda: self.window.selected_file_paths() == [replacement])
-        self.assertIsNone(self.window._pending_tag_mutations.status_for(replacement))
+        self.assertTrue(self.window.files.item(0).icon().isNull())
 
         self.window.replace_photo_workspace([departed])
         self._wait_until(lambda: self.window.selected_file_paths() == [departed])
@@ -499,8 +499,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._wait_until(lambda: self.window.keywordsList.count() == 1)
 
         FakeExifTool.release_writes()
-        self._wait_until(lambda: departed in FakePhotoIndex.states_by_path)
-        self._wait_until(lambda: not self.window._mutation_inflight)
+        self._wait_until(
+            lambda: FakePhotoIndex.states_by_path.get(
+                departed, KeywordState([], [])
+            ).merged
+            == ["confirmed", "inflight"]
+        )
 
         self.assertEqual(len(FakeExifTool.write_calls), 1)
         self.assertEqual(

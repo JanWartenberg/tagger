@@ -1,6 +1,6 @@
 # 01 — Extract the Tag Mutation Coordinator
 
-Status: ready-for-agent
+Status: completed
 Category: refactor
 Priority: high
 Blocked by: None
@@ -11,12 +11,12 @@ Move tag-mutation queueing and lifecycle rules from MainWindow into one Qt-free 
 
 ## Acceptance Criteria
 
-- [ ] The coordinator owns serialized mutation execution, pending/failed lifecycle transitions, workspace-generation stale-work rejection, and removal of queued mutations for photos that depart the Photo Workspace.
-- [ ] The coordinator composes the existing confirmed-state and tag-intent rules and publishes immutable lifecycle facts sufficient for MainWindow to render pending/failed state and submit confirmed metadata to the index.
-- [ ] MainWindow no longer owns a tag-mutation queue, in-flight flag, or mutation-completion stale-work decision.
-- [ ] MainWindow retains widget rendering, metadata-cache updates, index submission, footer wording, focus, and scroll behavior.
-- [ ] `:retry` and `:retryall`, partial outcomes, external-metadata replay, and returned-photo unresolved attention retain their current behavior.
-- [ ] Replacing the Photo Workspace discards queued work for departed photos; in-flight completions retain file/index correctness but cannot render into the replacement workspace.
+- [x] The coordinator owns serialized mutation execution, pending/failed lifecycle transitions, workspace-generation stale-work rejection, and removal of queued mutations for photos that depart the Photo Workspace.
+- [x] The coordinator composes the existing confirmed-state and tag-intent rules and publishes immutable lifecycle facts sufficient for MainWindow to render pending/failed state and submit confirmed metadata to the index.
+- [x] MainWindow no longer owns a tag-mutation queue, in-flight flag, or mutation-completion stale-work decision.
+- [x] MainWindow retains widget rendering, metadata-cache updates, index submission, footer wording, focus, and scroll behavior.
+- [x] `:retry` and `:retryall`, partial outcomes, external-metadata replay, and returned-photo unresolved attention retain their current behavior.
+- [x] Replacing the Photo Workspace discards queued work for departed photos; in-flight completions retain file/index correctness but cannot render into the replacement workspace.
 
 ## Scope
 
@@ -41,3 +41,7 @@ Move tag-mutation queueing and lifecycle rules from MainWindow into one Qt-free 
 - `ruff format --check --no-cache exif_ui.py services/tag_mutation.py services/pending_tag_mutation.py services/tag_mutation_coordinator.py tests/test_pending_tag_mutations.py tests/test_main_window_characterization.py`
 - `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v`
 - `git diff --check`
+
+## Comments
+
+- Implemented with direct deterministic coordinator tests and the complete offscreen suite passing (86 tests).

@@ -1,5 +1,4 @@
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Callable
@@ -37,13 +36,13 @@ from services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
     FileSystemPhotoDiscovery,
 )
-from services.pending_tag_mutation import (
-    MutationStatus,
-    PendingTagMutation,
-    PendingTagMutationCoordinator,
-    TagIntent,
-)
+from services.pending_tag_mutation import MutationStatus, PendingTagMutation, TagIntent
 from services.tag_mutation import TagMutationResult, TagMutationService
+from services.tag_mutation_coordinator import (
+    TagMutationCoordinator,
+    TagMutationLifecycle,
+    TagMutationLifecycleKind,
+)
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import dedupe_casefold, normalize_path
 
@@ -114,6 +113,35 @@ class QtBackgroundRunner:
         self._pool.start(Worker(work))
 
 
+class QtTagMutationRunner:
+    """Adapt TAGGER's worker signals to the Qt-free mutation coordinator."""
+
+    def __init__(self, pool: QtCore.QThreadPool) -> None:
+        self._pool = pool
+        self._workers: set[Worker] = set()
+
+    def submit(
+        self,
+        work: Callable[[], TagMutationResult],
+        on_success: Callable[[TagMutationResult], None],
+        on_failure: Callable[[str], None],
+    ) -> None:
+        worker = Worker(work)
+        self._workers.add(worker)
+
+        def complete(result: TagMutationResult) -> None:
+            self._workers.discard(worker)
+            on_success(result)
+
+        def fail(error: str) -> None:
+            self._workers.discard(worker)
+            on_failure(error)
+
+        worker.signals.finished.connect(complete)
+        worker.signals.error.connect(fail)
+        self._pool.start(worker)
+
+
 class PhotoIndexAdapter:
     """Run PhotoIndex work behind the Coordinator's index-adapter protocol."""
 
@@ -151,15 +179,6 @@ class PhotoIndexAdapter:
         return PhotoIndex(root).load_tags_for_root()
 
 
-@dataclass(frozen=True)
-class QueuedTagMutation:
-    paths: tuple[str, ...]
-    work: Callable[[list[str]], TagMutationResult]
-    status_message: str | None
-    pending_mutation: PendingTagMutation | None
-    workspace_generation: int
-
-
 class MainWindow(QtWidgets.QMainWindow):
     backgroundDiscoveryEvent = QtCore.pyqtSignal(object)
 
@@ -177,10 +196,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
-        self._mutation_queue: list[QueuedTagMutation] = []
-        self._mutation_inflight = False
-        self._workspace_generation = 0
-        self._pending_tag_mutations = PendingTagMutationCoordinator()
+        self._tag_mutation_coordinator = TagMutationCoordinator(
+            runner=QtTagMutationRunner(self.pool),
+            event_sink=self._handle_tag_mutation_lifecycle,
+        )
         self._keywords_cache: dict[str, KeywordState] = {}
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
@@ -1482,8 +1501,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if invalidate_discoveries:
             self._active_replacement_discovery = None
             self._pending_additive_discoveries.clear()
-        self._workspace_generation += 1
-        self._discard_queued_tag_mutations(set(normalized_paths))
+        self._tag_mutation_coordinator.replace_workspace(normalized_paths)
         # Cancel in-flight async work that would render stale UI.
         self._selection_token += 1
         self._preview_token += 1
@@ -1611,7 +1629,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if request.kind is IndexReadKind.SEARCH:
             if (
                 request != self._active_search_request
-                or request.workspace_generation != self._workspace_generation
+                or request.workspace_generation
+                != self._tag_mutation_coordinator.workspace_generation
                 or request.root != self._index_root
             ):
                 return
@@ -1623,7 +1642,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if (
             request != self._active_known_tags_request
-            or request.workspace_generation != self._workspace_generation
+            or request.workspace_generation
+            != self._tag_mutation_coordinator.workspace_generation
             or request.root != self._index_root
         ):
             return
@@ -1746,7 +1766,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_file_mutation_indicator(
         self, item: QtWidgets.QListWidgetItem, path: str
     ) -> None:
-        status = self._pending_tag_mutations.status_for(path)
+        status = self._tag_mutation_coordinator.status_for(path)
         if status is MutationStatus.PENDING:
             item.setIcon(
                 self.style().standardIcon(
@@ -1774,7 +1794,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _refresh_mutation_status_view(self) -> None:
         selected = self.selected_file_paths()
         status = (
-            self._pending_tag_mutations.status_for(selected[0]) if selected else None
+            self._tag_mutation_coordinator.status_for(selected[0]) if selected else None
         )
         if status is MutationStatus.PENDING:
             self.mutationStatusLabel.setText("Saving tag changes…")
@@ -1822,8 +1842,8 @@ class MainWindow(QtWidgets.QMainWindow):
         def _ok(st: KeywordState) -> None:
             if token != self._selection_token:
                 return
-            self._pending_tag_mutations.remember_confirmed({current: st})
-            displayed = self._pending_tag_mutations.metadata_for(current) or st
+            self._tag_mutation_coordinator.remember_confirmed({current: st})
+            displayed = self._tag_mutation_coordinator.metadata_for(current) or st
             self._keywords_cache[current] = displayed
             self._update_index_states({current: st})
             self._render_keywords(displayed)
@@ -2066,71 +2086,64 @@ class MainWindow(QtWidgets.QMainWindow):
     def _begin_pending_tag_mutation(
         self, files: list[str], intents: list[TagIntent]
     ) -> PendingTagMutation | None:
-        intents_by_path: dict[str, list[TagIntent]] = {}
+        intents_by_path = {path: intents for path in files}
         selected = self.selected_file_paths()
         current = normalize_path(selected[0]) if selected else None
-
+        confirmed_states: dict[str, KeywordState] = {}
         for path in files:
-            if self._pending_tag_mutations.confirmed_for(path) is None:
-                state = self._keywords_cache.get(path)
-                if state is None and current and normalize_path(path) == current:
-                    keywords = self._current_keywords_from_ui()
-                    state = KeywordState(keywords, keywords)
-                if state is not None:
-                    self._pending_tag_mutations.remember_confirmed({path: state})
-            intents_by_path[path] = intents
-
-        if not intents_by_path:
-            return None
-        mutation = self._pending_tag_mutations.begin_intents(intents_by_path)
-        displayed = {
-            path: self._pending_tag_mutations.metadata_for(path)
-            for path in intents_by_path
-        }
-        self._keywords_cache.update(
-            {path: state for path, state in displayed.items() if state is not None}
+            if self._tag_mutation_coordinator.confirmed_for(path) is not None:
+                continue
+            state = self._keywords_cache.get(path)
+            if state is None and current and normalize_path(path) == current:
+                keywords = self._current_keywords_from_ui()
+                state = KeywordState(keywords, keywords)
+            if state is not None:
+                confirmed_states[path] = state
+        return self._tag_mutation_coordinator.begin_intents(
+            intents_by_path, confirmed_states
         )
-        self._refresh_file_mutation_indicators(list(intents_by_path))
-        self._refresh_current_keywords_view_from_cache()
-        return mutation
 
-    def _apply_tag_mutation_result(
-        self,
-        result: TagMutationResult,
-        pending_mutation: PendingTagMutation | None,
-        render_workspace: bool,
-    ) -> None:
-        restored: dict[str, KeywordState] = {}
-        if pending_mutation is None:
-            self._pending_tag_mutations.remember_confirmed(result.updated_states)
-        else:
-            self._pending_tag_mutations.succeed(pending_mutation, result.updated_states)
-            restored = self._pending_tag_mutations.fail(
-                pending_mutation, list(result.failed_paths)
+    def _handle_tag_mutation_lifecycle(self, event: TagMutationLifecycle) -> None:
+        if event.kind is TagMutationLifecycleKind.PENDING:
+            self._keywords_cache.update(dict(event.displayed_states))
+            self._refresh_file_mutation_indicators(
+                [path for path, _state in event.displayed_states]
             )
-        self._update_index_states(result.updated_states)
-        if not render_workspace:
+            self._refresh_current_keywords_view_from_cache()
             return
-        self._keywords_cache.update(result.updated_states)
-        self._keywords_cache.update(restored)
-        affected_paths = list(result.updated_states) + list(restored)
-        self._refresh_file_mutation_indicators(affected_paths)
-        self._refresh_current_keywords_view_from_cache()
-        self._apply_filter_visibility_changes(result.emptiness_by_path)
 
-    def _apply_tag_mutation_failure(
-        self,
-        pending_mutation: PendingTagMutation | None,
-        render_workspace: bool,
-    ) -> None:
-        if pending_mutation is None:
+        if event.kind is TagMutationLifecycleKind.COMPLETED:
+            confirmed_states = dict(event.confirmed_states)
+            restored_states = dict(event.restored_states)
+            self._update_index_states(confirmed_states)
+            if not event.render_workspace:
+                return
+            self._keywords_cache.update(confirmed_states)
+            self._keywords_cache.update(restored_states)
+            self._refresh_file_mutation_indicators(
+                list(confirmed_states)
+                + list(restored_states)
+                + list(event.failed_paths)
+            )
+            self._refresh_current_keywords_view_from_cache()
+            self._apply_filter_visibility_changes(dict(event.emptiness_by_path))
+            if event.failed_paths:
+                self.statusBar().showMessage(
+                    f"{len(confirmed_states)} succeeded, "
+                    f"{len(event.failed_paths)} failed — use :retry"
+                )
+            elif event.status_message:
+                self.statusBar().showMessage(event.status_message)
             return
-        restored = self._pending_tag_mutations.fail(pending_mutation)
-        if not render_workspace:
+
+        restored_states = dict(event.restored_states)
+        if not event.render_workspace:
             return
-        self._keywords_cache.update(restored)
-        self._refresh_file_mutation_indicators(list(restored))
+        self._keywords_cache.update(restored_states)
+        self._refresh_file_mutation_indicators(list(restored_states))
         self._refresh_current_keywords_view_from_cache()
+        self.statusBar().showMessage("Error")
+        self._show_error(event.error or "Unknown tag mutation failure")
 
     def _current_keywords_from_ui(self) -> list[str]:
         items = [self.keywordsList.item(i) for i in range(self.keywordsList.count())]
@@ -2145,72 +2158,7 @@ class MainWindow(QtWidgets.QMainWindow):
         pending_mutation: PendingTagMutation | None,
         status: str | None = None,
     ) -> None:
-        self._mutation_queue.append(
-            QueuedTagMutation(
-                tuple(paths), fn, status, pending_mutation, self._workspace_generation
-            )
-        )
-        self._process_tag_mutation_queue()
-
-    def _discard_queued_tag_mutations(self, replacement_paths: set[str]) -> None:
-        surviving: list[QueuedTagMutation] = []
-        for queued in self._mutation_queue:
-            retained_paths = tuple(
-                path for path in queued.paths if path in replacement_paths
-            )
-            departed_paths = [
-                path for path in queued.paths if path not in replacement_paths
-            ]
-            if departed_paths and queued.pending_mutation is not None:
-                self._pending_tag_mutations.discard(
-                    queued.pending_mutation, departed_paths
-                )
-            if retained_paths:
-                surviving.append(
-                    QueuedTagMutation(
-                        retained_paths,
-                        queued.work,
-                        queued.status_message,
-                        queued.pending_mutation,
-                        self._workspace_generation,
-                    )
-                )
-        self._mutation_queue = surviving
-
-    def _process_tag_mutation_queue(self) -> None:
-        if self._mutation_inflight or not self._mutation_queue:
-            return
-        self._mutation_inflight = True
-        queued = self._mutation_queue.pop(0)
-        worker = Worker(queued.work, list(queued.paths))
-
-        def _ok(result: TagMutationResult) -> None:
-            self._mutation_inflight = False
-            render_workspace = queued.workspace_generation == self._workspace_generation
-            self._apply_tag_mutation_result(
-                result, queued.pending_mutation, render_workspace
-            )
-            if render_workspace and result.failed_paths:
-                self.statusBar().showMessage(
-                    f"{len(result.updated_states)} succeeded, "
-                    f"{len(result.failed_paths)} failed — use :retry"
-                )
-            elif render_workspace and queued.status_message:
-                self.statusBar().showMessage(queued.status_message)
-            self._process_tag_mutation_queue()
-
-        def _err(msg: str) -> None:
-            self._mutation_inflight = False
-            render_workspace = queued.workspace_generation == self._workspace_generation
-            self._apply_tag_mutation_failure(queued.pending_mutation, render_workspace)
-            if render_workspace:
-                self.statusBar().showMessage("Error")
-                self._show_error(msg)
-            self._process_tag_mutation_queue()
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        self._tag_mutation_coordinator.enqueue(paths, fn, pending_mutation, status)
 
     def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
         target = normalize_path(path)
@@ -2242,7 +2190,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._index_root = root
         self._active_search_request = self._background_coordinator.search_index(
-            root, query, workspace_generation=self._workspace_generation
+            root,
+            query,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
         self.statusBar().showMessage("Searching index…")
 
@@ -2346,19 +2296,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._retry_failed_tag_mutations(self.all_file_paths(), "the Photo Workspace")
 
     def _retry_failed_tag_mutations(self, paths: list[str], scope: str) -> None:
-        retry = self._pending_tag_mutations.retry_failed(paths)
+        retry = self._tag_mutation_coordinator.retry_failed(paths)
         if retry is None:
             self.statusBar().showMessage(f"No failed tag changes for {scope}")
             return
         retry_paths = list(retry.intents_by_path)
-        displayed = {
-            path: self._pending_tag_mutations.metadata_for(path) for path in retry_paths
-        }
-        self._keywords_cache.update(
-            {path: state for path, state in displayed.items() if state is not None}
-        )
-        self._refresh_file_mutation_indicators(retry_paths)
-        self._refresh_current_keywords_view_from_cache()
         self.statusBar().showMessage(
             f"Retrying tag changes for {len(retry_paths)} photo(s)"
         )
@@ -2382,7 +2324,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._index_root = root
         self._active_known_tags_request = self._background_coordinator.load_known_tags(
-            root, workspace_generation=self._workspace_generation
+            root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
 
     def refresh_known_tags(self) -> None:
