@@ -8,6 +8,7 @@ from PyQt6 import QtCore
 class CommandBinding:
     name: str
     aliases: tuple[str, ...] = ()
+    accepts_arguments: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,10 +133,16 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
         ),
         ActionSpec(
+            id="search",
+            description="Search indexed photos",
+            handler_name="_command_search",
+            command=CommandBinding("search", accepts_arguments=True),
+        ),
+        ActionSpec(
             id="clearsearch",
             description="Clear photo-tag search",
             handler_name="clear_db_search",
-            command=CommandBinding("clearsearch", aliases=("clear",)),
+            command=CommandBinding("clearsearch", aliases=("clear", "back")),
             shortcuts=(ShortcutBinding("Ctrl+Shift+X"),),
         ),
         ActionSpec(

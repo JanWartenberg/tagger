@@ -207,6 +207,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._known_tags_root: str | None = None
         self._active_known_tags_request: IndexReadRequest | None = None
         self._active_search_request: IndexReadRequest | None = None
+        self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self.photo_workspace = PhotoWorkspace()
         self._active_replacement_discovery: DiscoveryRequest | None = None
@@ -515,6 +516,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._commands_by_name: dict[str, ActionSpec] = {}
         self._listed_actions: list[ActionSpec] = []
         self._action_handlers: dict[str, Callable[[], None]] = {}
+        self._command_argument_handlers: dict[str, Callable[[list[str]], None]] = {}
         self._widget_refs: dict[str, QtCore.QObject] = {}
         self._init_actions()
 
@@ -526,6 +528,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ]
         self._widget_refs = self._build_widget_refs()
         self._action_handlers = self._build_action_handlers()
+        self._command_argument_handlers = self._build_command_argument_handlers()
         self._commands_by_name = {}
         self._install_shortcuts_from_actions()
         self._index_commands_from_actions()
@@ -607,6 +610,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "_tab_complete_add_edit": self._tab_complete_add_edit,
         }
 
+    def _build_command_argument_handlers(
+        self,
+    ) -> dict[str, Callable[[list[str]], None]]:
+        return {"_command_search": self._command_search}
+
     def _install_shortcuts_from_actions(self) -> None:
         self._shortcuts = []
         for spec in self._actions_by_id.values():
@@ -630,10 +638,21 @@ class MainWindow(QtWidgets.QMainWindow):
             for alias in command.aliases:
                 self._commands_by_name[alias] = spec
 
-    def _dispatch_action(self, action_id: str) -> None:
+    def _dispatch_action(
+        self, action_id: str, *, command_args: list[str] | None = None
+    ) -> None:
         spec = self._actions_by_id.get(action_id)
         if spec is None:
             raise RuntimeError(f"Unknown action: {action_id}")
+        if spec.command is not None and spec.command.accepts_arguments:
+            handler = self._command_argument_handlers.get(spec.handler_name)
+            if handler is None:
+                raise RuntimeError(
+                    f"Missing argument handler for action: {spec.id} "
+                    f"({spec.handler_name})"
+                )
+            handler(command_args or [])
+            return
         handler = self._action_handlers.get(spec.handler_name)
         if handler is None:
             raise RuntimeError(
@@ -647,7 +666,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Unknown command: {name}")
             return
         try:
-            self._dispatch_action(spec.id)
+            self._dispatch_action(spec.id, command_args=args)
         except Exception as e:
             self._show_error(str(e))
 
@@ -1063,6 +1082,8 @@ class MainWindow(QtWidgets.QMainWindow):
             fw.clearFocus()
             self.setFocus()
             return
+        if self.photo_workspace.has_database_search:
+            self.clear_db_search()
 
     def _open_command_line(self) -> None:
         self.cmdLine.setVisible(True)
@@ -1078,17 +1099,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.setFocus()
 
     def _execute_command_line(self) -> None:
-        raw = (self.cmdLine.text() or "").strip()
+        raw = self.cmdLine.text() or ""
         self._close_command_line()
-        if not raw:
-            return
         if raw.startswith(":"):
-            raw = raw[1:].strip()
+            raw = raw[1:]
+        raw = raw.lstrip()
         if not raw:
             return
-        parts = raw.split()
-        name = parts[0].casefold()
-        args = parts[1:]
+        name_end = next(
+            (index for index, character in enumerate(raw) if character.isspace()),
+            len(raw),
+        )
+        name = raw[:name_end].casefold()
+        args = [raw[name_end:]] if name_end < len(raw) else []
         self._dispatch_command(name, args)
 
     def _tab_complete_command_line(self) -> None:
@@ -1508,6 +1531,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Reset caches tied to previous file lists.
         self._keywords_cache = {}
         self._index_root = None
+        self._search_restore_scroll = None
 
         snapshot = self.photo_workspace.reload_paths(normalized_paths)
         self._render_photo_workspace(snapshot)
@@ -1634,6 +1658,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 or request.root != self._index_root
             ):
                 return
+            self._active_search_request = None
             if isinstance(event, IndexReadFailed):
                 self.statusBar().showMessage("Search failed")
                 return
@@ -1937,6 +1962,28 @@ class MainWindow(QtWidgets.QMainWindow):
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
 
+    def _capture_files_scroll_anchor(self) -> tuple[str | None, int]:
+        top_item = self.files.itemAt(0, 0)
+        if top_item is None:
+            return None, 0
+        return (
+            normalize_path(top_item.text()),
+            self.files.visualItemRect(top_item).top(),
+        )
+
+    def _restore_files_scroll_anchor(self, anchor: tuple[str | None, int]) -> None:
+        path, offset = anchor
+        if path is None:
+            return
+        item = self._find_item_by_path(path)
+        if item is None or item.isHidden():
+            return
+        self.files.scrollToItem(
+            item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+        )
+        scroll_bar = self.files.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.value() + offset)
+
     def _preserve_files_scroll(self, fn) -> None:
         view = self.files
         sb = view.verticalScrollBar()
@@ -2173,11 +2220,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_search_request = None
         self._background_coordinator.invalidate_search()
         before = self.selected_file_paths()
+        had_search = self.photo_workspace.has_database_search
         snapshot = self.photo_workspace.clear_database_search()
+        if had_search:
+            self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
         selection_changed = self._render_photo_workspace_snapshot(snapshot, before)
+        if had_search and self._search_restore_scroll is not None:
+            self._restore_files_scroll_anchor(self._search_restore_scroll)
+        self._search_restore_scroll = None
         self.statusBar().showMessage("DB search cleared")
         if not selection_changed:
             self.on_selection_changed()
+
+    def _command_search(self, args: list[str]) -> None:
+        query = " ".join(args).strip()
+        if not query:
+            self.statusBar().showMessage("Search query required")
+            return
+        self.dbSearchEdit.setText(query)
+        self.apply_db_search()
 
     def apply_db_search(self) -> None:
         query = (self.dbSearchEdit.text() or "").strip()
@@ -2198,9 +2259,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
         before = self.selected_file_paths()
+        first_search = not self.photo_workspace.has_database_search
+        if first_search:
+            self._search_restore_scroll = self._capture_files_scroll_anchor()
         snapshot = self.photo_workspace.apply_database_search_matches(
             normalize_path(path) for path in matches
         )
+        self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
         self._render_photo_workspace_snapshot(snapshot, before)
         self._update_filter_label(snapshot)
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")

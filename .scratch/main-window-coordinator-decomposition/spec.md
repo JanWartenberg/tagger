@@ -1,6 +1,6 @@
 # Main Window Coordinator Decomposition
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement

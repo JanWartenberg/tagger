@@ -600,12 +600,24 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("Ctrl+Shift+F", self.window.dbSearchEdit.toolTip())
         self.assertIn("Ctrl+Shift+X", self.window.dbSearchClearBtn.toolTip())
 
-    def test_clear_search_action_has_command_alias_and_shortcut(self) -> None:
-        action = self.window._actions_by_id["clearsearch"]
+    def test_search_command_accepts_tab_and_preserves_internal_whitespace(self) -> None:
+        self._add_paths("one.jpg")
+        self.window.cmdLine.setText(":search\ttag:two\t  words")
 
-        self.assertEqual(action.command.name, "clearsearch")
-        self.assertEqual(action.command.aliases, ("clear",))
-        self.assertEqual(action.shortcuts[0].sequence, "Ctrl+Shift+X")
+        self.window._execute_command_line()
+        self.discovery_runner.run_index_work()
+
+        self.assertEqual(FakePhotoIndex.search_queries, ["tag:two\t  words"])
+
+    def test_search_actions_are_catalogue_backed(self) -> None:
+        search = self.window._actions_by_id["search"]
+        clear = self.window._actions_by_id["clearsearch"]
+
+        self.assertEqual(search.command.name, "search")
+        self.assertTrue(search.command.accepts_arguments)
+        self.assertEqual(clear.command.name, "clearsearch")
+        self.assertEqual(clear.command.aliases, ("clear", "back"))
+        self.assertEqual(clear.shortcuts[0].sequence, "Ctrl+Shift+X")
 
     def test_adding_paths_preserves_order_and_suppresses_duplicates(self) -> None:
         first, second, duplicate = self._add_paths(
@@ -758,28 +770,62 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         critical.assert_not_called()
 
-    def test_db_search_hides_non_matches_and_selects_first_visible_photo(self) -> None:
+    def test_db_search_shows_external_indexed_matches_and_back_restores_folder(
+        self,
+    ) -> None:
         first, second, _duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
         )
+        external = normalize_path("C:/photos/indexed-only.jpg")
 
-        FakePhotoIndex.search_results = {second}
-        self.window.dbSearchEdit.setText("tag:second")
-        self.window.apply_db_search()
-        self.assertFalse(self.window.files.item(0).isHidden())
-        self.assertFalse(self.window.files.item(1).isHidden())
+        FakePhotoIndex.search_results = {external}
+        self.window._dispatch_command("search", ["tag:indexed-only"])
+        self.assertEqual(self.window.dbSearchEdit.text(), "tag:indexed-only")
         self.discovery_runner.run_index_work()
         self.app.processEvents()
 
-        self.assertTrue(self.window.files.item(0).isHidden())
-        self.assertFalse(self.window.files.item(1).isHidden())
-        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(self.window.all_file_paths(), [external])
+        self.assertEqual(self.window.files.count(), 1)
+        self.assertEqual(self.window.selected_file_paths(), [external])
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
 
-        self.window._dispatch_command("clear", [])
+        self.window.addEdit.setText("indexed")
+        self.window.add_keyword_from_input()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 1)
+        self.assertEqual(FakeExifTool.write_calls[0][0], external)
+
+        self.window._dispatch_command("back", [])
         self.app.processEvents()
-        self.assertFalse(self.window.files.item(0).isHidden())
-        self.assertFalse(self.window.files.item(1).isHidden())
-        self.assertIn(self.window.selected_file_paths()[0], {first, second})
+
+        self.assertEqual(self.window.all_file_paths(), [first, second])
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
+
+    def test_back_restores_the_folder_scroll_anchor(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))
+        target = paths[40]
+        self.window.files.setCurrentItem(
+            self.window.files.item(40),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.scrollToItem(
+            self.window.files.item(40),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+
+        FakePhotoIndex.search_results = {normalize_path("C:/photos/indexed-only.jpg")}
+        self.window.dbSearchEdit.setText("tag:indexed-only")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.window._dispatch_command("back", [])
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [target])
+        self.assertLessEqual(
+            abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
+        )
 
     def test_newer_search_supersedes_an_older_background_result(self) -> None:
         first, second, _duplicate = self._add_paths(
@@ -795,8 +841,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run_index_work()
         self.app.processEvents()
 
-        self.assertTrue(self.window.files.item(0).isHidden())
-        self.assertFalse(self.window.files.item(1).isHidden())
+        self.assertEqual(self.window.all_file_paths(), [second])
+        self.assertEqual(self.window.files.count(), 1)
         self.assertEqual(self.window.selected_file_paths(), [second])
 
     def test_known_tag_filter_uses_the_loaded_snapshot_without_a_read(self) -> None:
@@ -873,8 +919,26 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.app.processEvents()
 
+        self.assertEqual(self.window.files.count(), 2)
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
+
+    def test_escape_restores_a_completed_search_before_leaving_the_file_pane(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.window.files.setFocus()
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Escape)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.all_file_paths(), [first, second])
         self.assertEqual(self.window.dbSearchEdit.text(), "")
 
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
@@ -990,6 +1054,7 @@ class FakeExifTool:
 
 class FakePhotoIndex:
     search_results: set[str] = set()
+    search_queries: list[str] = []
     states_by_path: dict[str, KeywordState] = {}
     known_tags: set[str] = set()
     known_tag_reads = 0
@@ -997,6 +1062,7 @@ class FakePhotoIndex:
     @classmethod
     def reset(cls) -> None:
         cls.search_results = set()
+        cls.search_queries = []
         cls.states_by_path = {}
         cls.known_tags = set()
         cls.known_tag_reads = 0
@@ -1023,7 +1089,8 @@ class FakePhotoIndex:
     def index_missing(self, _root: str, _paths: list[str]) -> int:
         return 0
 
-    def search_photos(self, _query: str) -> set[str]:
+    def search_photos(self, query: str) -> set[str]:
+        type(self).search_queries.append(query)
         return self.search_results
 
 

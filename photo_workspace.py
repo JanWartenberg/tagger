@@ -47,6 +47,14 @@ class _FilterRestoreState:
     selected_paths: frozenset[str]
 
 
+@dataclass(frozen=True)
+class _SearchRestoreState:
+    """Folder state to restore after leaving temporary database-search results."""
+
+    paths: tuple[str, ...]
+    selected_paths: frozenset[str]
+
+
 class PhotoWorkspace:
     """Owns Photo Workspace membership, selection, and filter state."""
 
@@ -64,6 +72,12 @@ class PhotoWorkspace:
         self._matches: set[str] = set()
         self._switched = False
         self._filter_restore_state: _FilterRestoreState | None = None
+        self._search_restore_state: _SearchRestoreState | None = None
+
+    @property
+    def has_database_search(self) -> bool:
+        """Return whether a temporary search result has a folder view to restore."""
+        return self._search_restore_state is not None
 
     def snapshot(self) -> PhotoWorkspaceSnapshot:
         """Return the immutable state used to render the workspace."""
@@ -106,6 +120,7 @@ class PhotoWorkspace:
         self._matches = set()
         self._switched = False
         self._filter_restore_state = None
+        self._search_restore_state = None
         return self.add_paths(paths)
 
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
@@ -122,17 +137,35 @@ class PhotoWorkspace:
     def apply_database_search_matches(
         self, matching_paths: Iterable[str]
     ) -> PhotoWorkspaceSnapshot:
-        """Show loaded database-search matches and invalidate IPTC filter work."""
+        """Atomically show all indexed matches as a temporary workspace view."""
         self.clear_iptc_empty_filter()
+        if self._search_restore_state is None:
+            self._search_restore_state = _SearchRestoreState(
+                tuple(self._paths), frozenset(self._selected)
+            )
+
+        self._paths = []
+        known: set[str] = set()
+        for path in matching_paths:
+            if path not in known:
+                known.add(path)
+                self._paths.append(path)
         self._view_mode = PhotoWorkspaceViewMode.DATABASE_SEARCH
-        self._visible = set(matching_paths) & set(self._paths)
+        self._visible = set(self._paths)
         self._repair_selection()
         return self.snapshot()
 
     def clear_database_search(self) -> PhotoWorkspaceSnapshot:
-        """Clear the database-search view and restore all loaded paths."""
-        self._view_mode = PhotoWorkspaceViewMode.NORMAL
+        """Restore the captured folder view and invalidate search-adjacent filter work."""
+        self.clear_iptc_empty_filter()
+        state = self._search_restore_state
+        if state is None:
+            return self.snapshot()
+        self._paths = list(state.paths)
         self._visible = set(self._paths)
+        self._selected = set(state.selected_paths)
+        self._view_mode = PhotoWorkspaceViewMode.NORMAL
+        self._search_restore_state = None
         self._repair_selection()
         return self.snapshot()
 
