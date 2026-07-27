@@ -13,6 +13,7 @@ from utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
 # SQLite commonly permits 999 bind variables. Keep path-set queries comfortably below
 # that limit so supported builds with the default limit can index large workspaces.
 _PATH_QUERY_BATCH_SIZE = 500
+_INDEX_REFRESH_MAX_AGE_SECONDS = 24 * 60 * 60
 
 
 def _normalize_root(root: str | Path) -> Path:
@@ -123,6 +124,32 @@ class PhotoIndex:
                 "SELECT value FROM meta WHERE key = ?", ("initialized",)
             ).fetchone()
             return bool(row and str(row[0]) == "1")
+
+    def last_index_refresh(self) -> int | None:
+        """Return the Unix timestamp of the latest successful root synchronization."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT value FROM meta WHERE key = ?", ("last_index_scan",)
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            return int(str(row[0]))
+        except ValueError:
+            return None
+
+    def is_refresh_stale(
+        self,
+        *,
+        now: float | None = None,
+        max_age_seconds: int = _INDEX_REFRESH_MAX_AGE_SECONDS,
+    ) -> bool:
+        """Return whether this root needs a full metadata synchronization."""
+        last_refresh = self.last_index_refresh()
+        if last_refresh is None:
+            return True
+        current_time = time.time() if now is None else now
+        return current_time - last_refresh >= max_age_seconds
 
     def has_photos(self, paths: list[str]) -> set[str]:
         normalized = [normalize_path(p) for p in paths]

@@ -1,6 +1,6 @@
 # 02 — Index Freshness and Manual Reindexing
 
-Status: ready-for-agent
+Status: completed
 Category: feature
 Priority: medium
 Blocked by: None
@@ -11,12 +11,12 @@ Make the active-root SQLite index refresh predictably in the background and give
 
 ## Acceptance Criteria
 
-- [ ] TAGGER records the last successful index refresh and starts a background incremental refresh when an active root's index is more than 24 hours old.
-- [ ] A stale active-root index refresh runs without blocking the UI and does not delay a usable folder view.
-- [ ] `:reindex` starts a background full reindex of the active root and gives concise non-modal progress and completion/failure feedback.
-- [ ] A refresh removes rows for photos deleted from the filesystem and updates changed metadata while preserving current query behavior.
-- [ ] Full reindex work uses the existing coordinator's per-root serial write queue and cannot overlap writes for that root.
-- [ ] A stale, superseded, or departed-root completion cannot alter the current workspace or overwrite more relevant footer feedback.
+- [x] TAGGER records the last successful index refresh and starts a background incremental refresh when an active root's index is more than 24 hours old.
+- [x] A stale active-root index refresh runs without blocking the UI and does not delay a usable folder view.
+- [x] `:reindex` starts a background full reindex of the active root and gives concise non-modal progress and completion/failure feedback.
+- [x] A refresh removes rows for photos deleted from the filesystem and updates changed metadata while preserving current query behavior.
+- [x] Full reindex work uses the existing coordinator's per-root serial write queue and cannot overlap writes for that root.
+- [x] A stale, superseded, or departed-root completion cannot alter the current workspace or overwrite more relevant footer feedback.
 
 ## Scope
 
@@ -35,3 +35,9 @@ Make the active-root SQLite index refresh predictably in the background and give
 - `ruff format --check --no-cache actions.py exif_ui.py indexing.py services/background_coordinator.py tests/test_indexing.py tests/test_background_coordinator.py tests/test_main_window_characterization.py`
 - `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v`
 - `git diff --check`
+
+## Comments
+
+Completed with a 24-hour `last_index_scan` freshness check, serial automatic/manual root refresh operations, and the catalogue-backed `:reindex` command. Refresh events carry request identity and workspace generation so stale or departed-root completions cannot replace current feedback.
+
+Validation: `ruff check` passed for all modified Python files; `ruff format --check` passed for every modified file except `actions.py`, whose pre-existing HEAD content already fails that formatter check and was intentionally not broadly reformatted. `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` passed (96 tests), and `git diff --check` passed.

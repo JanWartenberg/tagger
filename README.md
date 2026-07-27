@@ -22,6 +22,7 @@ Commands & shortcuts
 - Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files
 - Known tag filter: `/` or `Ctrl+F` focuses and selects text, `n/N` move in matches
 - Photo-tag search: `Ctrl+Shift+F` focuses and selects the DB tag/date search text; `:search <query>` runs an indexed `tag:`, `date:`, or bare-tag search; `Ctrl+Shift+X`, `:clearsearch`/`:clear`, `:back`, or `Esc` in the file pane restores the folder view
+- Index: `:reindex` fully refreshes the active root in the background
 - Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
 - Tags: `Shift+V` visual select, `Ctrl+C` yank selected tags, `Ctrl+V` paste (current file), `dd`/`Del`/`Backspace` delete selected tags
 - File list: `Ctrl+C` or `Space y` yanks all tags from the current file; `Ctrl+V` or `Space p` pastes them onto the current file

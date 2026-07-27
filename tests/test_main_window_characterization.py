@@ -619,6 +619,35 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(clear.command.aliases, ("clear", "back"))
         self.assertEqual(clear.shortcuts[0].sequence, "Ctrl+Shift+X")
 
+    def test_reindex_command_refreshes_the_active_root_with_non_modal_feedback(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        FakePhotoIndex.refresh_stale = True
+
+        self.window._dispatch_command("reindex", [])
+
+        self.assertEqual(self.window.statusBar().currentMessage(), "Reindexing photos…")
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.refresh_calls, ["refresh"])
+        self.assertEqual(self.window.statusBar().currentMessage(), "Reindex complete")
+
+    def test_departed_reindex_completion_does_not_replace_current_feedback(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        self.window._dispatch_command("reindex", [])
+        replacement = normalize_path("C:/other/replacement.jpg")
+        self.window.replace_photo_workspace([replacement])
+        self.window.statusBar().showMessage("New workspace")
+
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.statusBar().currentMessage(), "New workspace")
+
     def test_adding_paths_preserves_order_and_suppresses_duplicates(self) -> None:
         first, second, duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
@@ -1055,6 +1084,8 @@ class FakeExifTool:
 class FakePhotoIndex:
     search_results: set[str] = set()
     search_queries: list[str] = []
+    refresh_stale = False
+    refresh_calls: list[str] = []
     states_by_path: dict[str, KeywordState] = {}
     known_tags: set[str] = set()
     known_tag_reads = 0
@@ -1063,6 +1094,8 @@ class FakePhotoIndex:
     def reset(cls) -> None:
         cls.search_results = set()
         cls.search_queries = []
+        cls.refresh_stale = False
+        cls.refresh_calls = []
         cls.states_by_path = {}
         cls.known_tags = set()
         cls.known_tag_reads = 0
@@ -1072,6 +1105,14 @@ class FakePhotoIndex:
 
     def is_initialized(self) -> bool:
         return True
+
+    def is_refresh_stale(self) -> bool:
+        return type(self).refresh_stale
+
+    def sync_root(self, _exif) -> object:
+        type(self).refresh_calls.append("refresh")
+        type(self).refresh_stale = False
+        return object()
 
     def load_tags_for_root(self) -> set[str]:
         type(self).known_tag_reads += 1

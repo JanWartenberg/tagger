@@ -78,6 +78,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("F5"),),
         ),
         ActionSpec(
+            id="reindex",
+            description="Fully refresh the active photo index",
+            handler_name="reindex_active_root",
+            command=CommandBinding("reindex"),
+        ),
+        ActionSpec(
             id="retry",
             description="Retry failed tag changes for selected photos",
             handler_name="retry_failed_tag_mutations",

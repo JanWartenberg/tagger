@@ -25,6 +25,10 @@ from services.background_coordinator import (
     IndexAdapter,
     IndexEnsureCompleted,
     IndexReadFailed,
+    IndexRefreshCompleted,
+    IndexRefreshFailed,
+    IndexRefreshKind,
+    IndexRefreshRequest,
     IndexReadKind,
     IndexReadRequest,
     IndexSearchCompleted,
@@ -151,8 +155,14 @@ class PhotoIndexAdapter:
     def is_initialized(self, root: str) -> bool:
         return PhotoIndex(root).is_initialized()
 
+    def is_refresh_stale(self, root: str) -> bool:
+        return PhotoIndex(root).is_refresh_stale()
+
     def sync(self, root: str, paths: Sequence[str]) -> object:
         return PhotoIndex(root).sync_paths(self._exif, list(paths))
+
+    def refresh(self, root: str) -> object:
+        return PhotoIndex(root).sync_root(self._exif)
 
     def index_missing(self, root: str, paths: Sequence[str]) -> int:
         index = PhotoIndex(root)
@@ -207,6 +217,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._known_tags_root: str | None = None
         self._active_known_tags_request: IndexReadRequest | None = None
         self._active_search_request: IndexReadRequest | None = None
+        self._active_index_refresh_request: IndexRefreshRequest | None = None
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self.photo_workspace = PhotoWorkspace()
@@ -575,6 +586,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_cmd_quit": lambda: self._cmd_quit(),
             "add_folder_dialog": self.add_folder_dialog,
             "force_refresh_known_tags": self.force_refresh_known_tags,
+            "reindex_active_root": self.reindex_active_root,
             "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
             "retry_all_failed_tag_mutations": self.retry_all_failed_tag_mutations,
             "resolve_mismatch": self.resolve_mismatch,
@@ -1519,6 +1531,7 @@ class MainWindow(QtWidgets.QMainWindow):
         normalized_paths = [normalize_path(path) for path in paths]
         self._active_search_request = None
         self._active_known_tags_request = None
+        self._active_index_refresh_request = None
         self._background_coordinator.invalidate_search()
         self._background_coordinator.invalidate_known_tags()
         if invalidate_discoveries:
@@ -1593,6 +1606,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 IndexEnsureCompleted,
                 IndexWriteCompleted,
                 IndexWriteFailed,
+                IndexRefreshCompleted,
+                IndexRefreshFailed,
                 IndexSearchCompleted,
                 KnownTagsCompleted,
                 IndexReadFailed,
@@ -1608,6 +1623,8 @@ class MainWindow(QtWidgets.QMainWindow):
             IndexEnsureCompleted
             | IndexWriteCompleted
             | IndexWriteFailed
+            | IndexRefreshCompleted
+            | IndexRefreshFailed
             | IndexSearchCompleted
             | KnownTagsCompleted
             | IndexReadFailed
@@ -1617,6 +1634,9 @@ class MainWindow(QtWidgets.QMainWindow):
             event, (IndexSearchCompleted, KnownTagsCompleted, IndexReadFailed)
         ):
             self._handle_index_read_event(event)
+            return
+        if isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed)):
+            self._handle_index_refresh_event(event)
             return
         if isinstance(event, IndexEnsureCompleted):
             self._index_sync_inflight.discard(event.root)
@@ -1629,8 +1649,13 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"{event.result.deleted_count} removed"
                     )
                 self.force_refresh_known_tags()
-            elif event.result is None and not self._has_active_search_for(event.root):
-                self.statusBar().showMessage("Index ready")
+            elif event.result is None:
+                self._active_index_refresh_request = self._background_coordinator.refresh_if_stale(
+                    event.root,
+                    workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+                )
+                if not self._has_active_search_for(event.root):
+                    self.statusBar().showMessage("Index ready")
             return
         if isinstance(event, IndexWriteFailed):
             self._index_sync_inflight.discard(event.root)
@@ -1645,6 +1670,49 @@ class MainWindow(QtWidgets.QMainWindow):
     def _has_active_search_for(self, root: str) -> bool:
         request = self._active_search_request
         return request is not None and request.root == root
+
+    def _handle_index_refresh_event(
+        self, event: IndexRefreshCompleted | IndexRefreshFailed
+    ) -> None:
+        request = event.request
+        if (
+            request != self._active_index_refresh_request
+            or request.workspace_generation
+            != self._tag_mutation_coordinator.workspace_generation
+            or request.root != self._index_root
+        ):
+            return
+        self._active_index_refresh_request = None
+        if isinstance(event, IndexRefreshFailed):
+            if not self._has_active_search_for(request.root):
+                label = (
+                    "Reindex failed"
+                    if request.kind is IndexRefreshKind.MANUAL
+                    else "Index refresh failed"
+                )
+                self.statusBar().showMessage(label)
+            return
+        if event.result is None:
+            return
+        self.force_refresh_known_tags()
+        if self._has_active_search_for(request.root):
+            return
+        if isinstance(event.result, IndexSyncResult):
+            prefix = (
+                "Reindex complete"
+                if request.kind is IndexRefreshKind.MANUAL
+                else "Index refreshed"
+            )
+            self.statusBar().showMessage(
+                f"{prefix}: {event.result.updated_count} updated, "
+                f"{event.result.deleted_count} removed"
+            )
+            return
+        self.statusBar().showMessage(
+            "Reindex complete"
+            if request.kind is IndexRefreshKind.MANUAL
+            else "Index refreshed"
+        )
 
     def _handle_index_read_event(
         self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
@@ -2380,6 +2448,17 @@ class MainWindow(QtWidgets.QMainWindow):
             retry,
             f"Retried tag changes for {len(retry_paths)} photo(s)",
         )
+
+    def reindex_active_root(self) -> None:
+        root = self._index_root
+        if not root:
+            self.statusBar().showMessage("No active index root")
+            return
+        self._active_index_refresh_request = self._background_coordinator.reindex(
+            root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+        self.statusBar().showMessage("Reindexing photos…")
 
     def force_refresh_known_tags(self) -> None:
         self._render_known_tags()

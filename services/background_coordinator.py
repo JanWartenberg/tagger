@@ -21,7 +21,11 @@ class IndexAdapter(Protocol):
 
     def is_initialized(self, root: str) -> bool: ...
 
+    def is_refresh_stale(self, root: str) -> bool: ...
+
     def sync(self, root: str, paths: Sequence[str]) -> object: ...
+
+    def refresh(self, root: str) -> object: ...
 
     def index_missing(self, root: str, paths: Sequence[str]) -> int: ...
 
@@ -45,8 +49,15 @@ class DiscoveryKind(Enum):
 
 class IndexOperationKind(Enum):
     ENSURE = "ensure"
+    REFRESH_IF_STALE = "refresh_if_stale"
+    FULL_REINDEX = "full_reindex"
     INDEX_MISSING = "index_missing"
     UPDATE_STATES = "update_states"
+
+
+class IndexRefreshKind(Enum):
+    AUTOMATIC = "automatic"
+    MANUAL = "manual"
 
 
 class IndexReadKind(Enum):
@@ -115,6 +126,32 @@ class IndexWriteFailed:
 
 
 @dataclass(frozen=True)
+class IndexRefreshRequest:
+    """Identity for one user-visible or automatic index refresh."""
+
+    kind: IndexRefreshKind
+    request_id: int
+    workspace_generation: int
+    root: str
+
+
+@dataclass(frozen=True)
+class IndexRefreshCompleted:
+    """An eligible index refresh; ``result`` is ``None`` when already fresh."""
+
+    request: IndexRefreshRequest
+    result: object | None
+
+
+@dataclass(frozen=True)
+class IndexRefreshFailed:
+    """A failed freshness check or full refresh."""
+
+    request: IndexRefreshRequest
+    error: str
+
+
+@dataclass(frozen=True)
 class IndexReadRequest:
     """Identity for an independently scheduled index read."""
 
@@ -148,6 +185,8 @@ IndexEvent: TypeAlias = (
     IndexEnsureCompleted
     | IndexWriteCompleted
     | IndexWriteFailed
+    | IndexRefreshCompleted
+    | IndexRefreshFailed
     | IndexSearchCompleted
     | KnownTagsCompleted
     | IndexReadFailed
@@ -159,6 +198,7 @@ CoordinatorEvent: TypeAlias = DiscoveryEvent | IndexEvent
 class _IndexOperation:
     kind: IndexOperationKind
     paths: tuple[str, ...] = ()
+    refresh_request: IndexRefreshRequest | None = None
 
 
 @dataclass
@@ -205,6 +245,7 @@ class BackgroundCoordinator:
         self._next_released_drop_sequence = 0
         self._completed_drops: dict[int, DiscoveryEvent] = {}
         self._index_queues: dict[str, _RootWriteQueue] = {}
+        self._next_index_refresh_request_id = 0
         self._next_index_read_request_id = 0
         self._current_search_request_id: int | None = None
         self._current_known_tags_request_id: int | None = None
@@ -262,6 +303,34 @@ class BackgroundCoordinator:
                 tuple(_normalize_path(path) for path in paths),
             ),
         )
+
+    def refresh_if_stale(
+        self, root: str | Path, *, workspace_generation: int
+    ) -> IndexRefreshRequest:
+        """Queue one full refresh only when the root's metadata is stale."""
+        request = self._new_index_refresh_request(
+            IndexRefreshKind.AUTOMATIC, root, workspace_generation
+        )
+        self._enqueue_index_operation(
+            request.root,
+            _IndexOperation(
+                IndexOperationKind.REFRESH_IF_STALE, refresh_request=request
+            ),
+        )
+        return request
+
+    def reindex(
+        self, root: str | Path, *, workspace_generation: int
+    ) -> IndexRefreshRequest:
+        """Queue a user-requested full root refresh behind existing writes."""
+        request = self._new_index_refresh_request(
+            IndexRefreshKind.MANUAL, root, workspace_generation
+        )
+        self._enqueue_index_operation(
+            request.root,
+            _IndexOperation(IndexOperationKind.FULL_REINDEX, refresh_request=request),
+        )
+        return request
 
     def submit_confirmed_states(
         self, root: str | Path, states: Mapping[str, object]
@@ -324,6 +393,22 @@ class BackgroundCoordinator:
         """Prevent an already-running known-tag completion from being UI-eligible."""
         with self._lock:
             self._current_known_tags_request_id = None
+
+    def _new_index_refresh_request(
+        self,
+        kind: IndexRefreshKind,
+        root: str | Path,
+        workspace_generation: int,
+    ) -> IndexRefreshRequest:
+        with self._lock:
+            request_id = self._next_index_refresh_request_id
+            self._next_index_refresh_request_id += 1
+        return IndexRefreshRequest(
+            kind=kind,
+            request_id=request_id,
+            workspace_generation=workspace_generation,
+            root=_normalize_path(root),
+        )
 
     def _new_index_read_request(
         self,
@@ -452,6 +537,19 @@ class BackgroundCoordinator:
                     else self._index.sync(root, operation.paths)
                 )
                 event: IndexEvent = IndexEnsureCompleted(root, result)
+            elif operation.kind in {
+                IndexOperationKind.REFRESH_IF_STALE,
+                IndexOperationKind.FULL_REINDEX,
+            }:
+                request = operation.refresh_request
+                if request is None:
+                    raise RuntimeError("Index refresh operation has no request")
+                should_refresh = (
+                    operation.kind is IndexOperationKind.FULL_REINDEX
+                    or self._index.is_refresh_stale(root)
+                )
+                result = self._index.refresh(root) if should_refresh else None
+                event = IndexRefreshCompleted(request, result)
             elif operation.kind is IndexOperationKind.INDEX_MISSING:
                 self._index.index_missing(root, operation.paths)
                 event = IndexWriteCompleted(root, operation.kind)
@@ -461,7 +559,10 @@ class BackgroundCoordinator:
                     self._index.update_states(root, states)
                 event = IndexWriteCompleted(root, operation.kind)
         except Exception as error:
-            event = IndexWriteFailed(root, operation.kind, str(error))
+            if operation.refresh_request is not None:
+                event = IndexRefreshFailed(operation.refresh_request, str(error))
+            else:
+                event = IndexWriteFailed(root, operation.kind, str(error))
         self._complete_index_operation(root, event)
 
     def _take_pending_states(self, root: str) -> dict[str, object]:

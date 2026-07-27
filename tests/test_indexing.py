@@ -46,6 +46,33 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
             self.assertEqual(second_sync.updated_count, 0)
             self.assertEqual(exif.read_batches, [])
 
+    def test_refresh_timestamp_marks_staleness_and_full_sync_removes_deleted_photos(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            kept = root / "kept.jpg"
+            deleted = root / "deleted.jpg"
+            kept.touch()
+            deleted.touch()
+            index = PhotoIndex(root)
+            exif = FakeExifTool()
+
+            index.sync_root(exif)
+            last_refresh = index.last_index_refresh()
+
+            self.assertIsNotNone(last_refresh)
+            self.assertFalse(
+                index.is_refresh_stale(now=last_refresh + 24 * 60 * 60 - 1)
+            )
+            self.assertTrue(index.is_refresh_stale(now=last_refresh + 24 * 60 * 60))
+
+            deleted.unlink()
+            refreshed = index.sync_root(exif)
+
+            self.assertEqual(refreshed.deleted_count, 1)
+            self.assertEqual(index.has_photos([str(kept), str(deleted)]), {str(kept)})
+
 
 if __name__ == "__main__":
     unittest.main()

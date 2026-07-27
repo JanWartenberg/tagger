@@ -10,6 +10,8 @@ from services.background_coordinator import (
     DiscoveryKind,
     IndexEnsureCompleted,
     IndexOperationKind,
+    IndexRefreshCompleted,
+    IndexRefreshFailed,
     IndexSearchCompleted,
     KnownTagsCompleted,
     IndexWriteCompleted,
@@ -31,6 +33,7 @@ class DeterministicRunner:
 class FakeIndex:
     def __init__(self) -> None:
         self.initialized: set[str] = set()
+        self.stale: set[str] = set()
         self.calls: list[tuple[str, str, object]] = []
         self.fail_next: set[tuple[str, str]] = set()
         self.search_results: dict[tuple[str, str], list[str]] = {}
@@ -40,6 +43,10 @@ class FakeIndex:
         self.calls.append(("initialized", root, None))
         return root in self.initialized
 
+    def is_refresh_stale(self, root: str) -> bool:
+        self.calls.append(("stale", root, None))
+        return root in self.stale
+
     def sync(self, root: str, paths: list[str]) -> object:
         self.calls.append(("sync", root, tuple(paths)))
         if ("sync", root) in self.fail_next:
@@ -47,6 +54,14 @@ class FakeIndex:
             raise RuntimeError("sync failed")
         self.initialized.add(root)
         return {"paths": tuple(paths)}
+
+    def refresh(self, root: str) -> object:
+        self.calls.append(("refresh", root, None))
+        if ("refresh", root) in self.fail_next:
+            self.fail_next.remove(("refresh", root))
+            raise RuntimeError("refresh failed")
+        self.stale.discard(root)
+        return {"refreshed": root}
 
     def index_missing(self, root: str, paths: list[str]) -> int:
         self.calls.append(("missing", root, tuple(paths)))
@@ -265,7 +280,11 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
 class BackgroundCoordinatorIndexTests(unittest.TestCase):
     def setUp(self) -> None:
         self.events: list[
-            IndexEnsureCompleted | IndexWriteCompleted | IndexWriteFailed
+            IndexEnsureCompleted
+            | IndexWriteCompleted
+            | IndexWriteFailed
+            | IndexRefreshCompleted
+            | IndexRefreshFailed
         ] = []
         self.runner = DeterministicRunner()
         self.index = FakeIndex()
@@ -394,6 +413,57 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         self.assertEqual(
             [call[0] for call in self.index.calls],
             ["initialized", "sync", "update"],
+        )
+
+    def test_stale_index_refreshes_in_the_serial_root_queue(self) -> None:
+        self.index.initialized.add("/photos")
+        self.index.stale.add("/photos")
+
+        request = self.coordinator.refresh_if_stale("/photos", workspace_generation=7)
+        self.coordinator.submit_confirmed_states(
+            "/photos", {"/photos/one.jpg": "tagged"}
+        )
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls], ["stale", "refresh", "update"]
+        )
+        self.assertIn(
+            IndexRefreshCompleted(request=request, result={"refreshed": "/photos"}),
+            self.events,
+        )
+
+    def test_fresh_automatic_refresh_reports_no_work(self) -> None:
+        request = self.coordinator.refresh_if_stale("/photos", workspace_generation=3)
+
+        self.runner.run()
+
+        self.assertEqual(self.index.calls, [("stale", "/photos", None)])
+        self.assertEqual(
+            self.events,
+            [IndexRefreshCompleted(request=request, result=None)],
+        )
+
+    def test_manual_reindex_failure_does_not_stop_later_writes(self) -> None:
+        self.index.fail_next.add(("refresh", "/photos"))
+        request = self.coordinator.reindex("/photos", workspace_generation=5)
+        self.coordinator.submit_confirmed_states(
+            "/photos", {"/photos/one.jpg": "tagged"}
+        )
+
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual([call[0] for call in self.index.calls], ["refresh", "update"])
+        self.assertIn(
+            IndexRefreshFailed(request=request, error="refresh failed"), self.events
+        )
+        self.assertIn(
+            IndexWriteCompleted(
+                root="/photos", operation=IndexOperationKind.UPDATE_STATES
+            ),
+            self.events,
         )
 
     def test_failed_write_does_not_stop_later_work(self) -> None:

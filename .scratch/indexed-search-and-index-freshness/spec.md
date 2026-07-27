@@ -1,6 +1,6 @@
 # Indexed Search and Index Freshness
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
