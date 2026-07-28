@@ -16,6 +16,7 @@ Make a database query show every matching photo from the active root's SQLite in
 - [x] Search-result mode preserves the prior folder view's paths, selected paths, active path, and Qt scroll position for restoration.
 - [x] `:search <query>` runs the existing `tag:`, `date:`, or bare-tag query; `Esc`, `:back`, `:clearsearch`, and the Clear control restore the prior folder view.
 - [x] Result paths support normal selection, preview, metadata reads, and tag mutations.
+- [x] Pressing Enter in the search field moves focus to the first result in the files pane when an accepted search returns photos.
 - [x] Replacing the workspace, clearing search, or starting a newer query rejects obsolete search completions.
 - [x] Folder mode remains the default; search never deletes or mutates the prior folder membership merely by being entered.
 
@@ -56,6 +57,7 @@ Make a database query show every matching photo from the active root's SQLite in
 - Make `back` an alias of the existing clear-search action. `:back`, `:clearsearch`, the Clear control, and `Esc` when the command line and text inputs are not handling Escape all perform the same restoration transition. Existing Escape behavior still takes precedence for closing the command line and leaving text entry.
 - `MainWindow` remains the Qt-only adapter for scroll state. Immediately before the first accepted search transition, it captures a files-pane anchor (top source path and pixel offset). On restoration it renders the restored workspace snapshot and reapplies that anchor. Replaced searches do not overwrite the captured folder scroll state.
 - Workspace replacement, explicit clearing/back, and newer searches invalidate obsolete reads through the existing coordinator. A folder replacement also discards the logical restoration state and its Qt scroll anchor.
+- After rendering an accepted non-empty result, focus moves to the files pane. This lets an Enter-submitted search continue directly with keyboard navigation of its first result.
 
 ### Delivery slices
 
@@ -79,3 +81,5 @@ No product decision blocks implementation. The following implementation decision
 Completed with external indexed result paths, one-level folder restoration, source scroll restoration, and catalogue-backed `:search`/`:back` commands.
 
 Validation: `ruff check` passed for all modified Python files; `ruff format --check` passed for every modified file except `actions.py`, whose pre-existing HEAD content already fails that formatter check and was intentionally not broadly reformatted. `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` passed (90 tests), and `git diff --check` passed.
+
+Follow-up completed: an accepted non-empty search now focuses the files pane, selecting its first result for immediate keyboard navigation. Offscreen coverage exercises an Enter keypress in the search field. The complete suite passed with 102 tests.

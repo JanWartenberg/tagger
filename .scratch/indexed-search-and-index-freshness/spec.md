@@ -31,6 +31,7 @@ Neither ticket is formally blocked by the other: the existing index lifecycle is
 - SQLite and filesystem work remain off the Qt UI thread through existing coordinator seams.
 - Photo Workspace owns logical views, selection, and restoration; Qt owns scroll position and rendering.
 - Stale completions must not alter the current workspace or replace current footer feedback.
+- An accepted non-empty search result focuses the files pane so keyboard navigation continues from its first photo.
 - Confirmed tag mutations remain the only source of immediate index updates.
 
 ## Out of Scope
