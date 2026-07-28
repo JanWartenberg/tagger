@@ -43,5 +43,7 @@ Validation passed:
 
 - `ruff check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
 - `ruff format --check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
-- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (106 tests)
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (107 tests)
 - `git diff --check`
+
+Follow-up corrected: `:reindex` now rereads every photo in its root even when its file timestamp is unchanged. This populates normalized capture dates for legacy index rows whose raw date was empty; a regression test covers the original zero-result scenario.

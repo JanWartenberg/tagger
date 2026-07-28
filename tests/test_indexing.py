@@ -36,16 +36,17 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
 
             exif = FakeExifTool()
             first_sync = index.sync_root(exif)
-            self.assertEqual(first_sync.updated_count, len(paths) - len(known_paths))
+            self.assertEqual(first_sync.updated_count, len(paths))
             self.assertEqual(
-                {path for batch in exif.read_batches for path in batch},
-                set(paths) - set(known_paths),
+                {path for batch in exif.read_batches for path in batch}, set(paths)
             )
 
             exif.read_batches.clear()
             second_sync = index.sync_root(exif)
-            self.assertEqual(second_sync.updated_count, 0)
-            self.assertEqual(exif.read_batches, [])
+            self.assertEqual(second_sync.updated_count, len(paths))
+            self.assertEqual(
+                {path for batch in exif.read_batches for path in batch}, set(paths)
+            )
 
     def test_refresh_timestamp_marks_staleness_and_full_sync_removes_deleted_photos(
         self,
@@ -73,6 +74,14 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
 
             self.assertEqual(refreshed.deleted_count, 1)
             self.assertEqual(index.has_photos([str(kept), str(deleted)]), {str(kept)})
+
+
+class CaptureDateExifTool:
+    def read_keywords_many(self, paths: list[str]) -> dict[str, KeywordState]:
+        return {
+            path: KeywordState([], [], date_original="2025:04:21 17:41:35")
+            for path in paths
+        }
 
 
 class PhotoIndexDateSearchTests(unittest.TestCase):
@@ -160,6 +169,38 @@ class PhotoIndexDateSearchTests(unittest.TestCase):
             self.assertEqual(
                 index.search_photos("date:unknown"), ["/photos/unusable.jpg"]
             )
+
+    def test_full_sync_reindexes_unchanged_legacy_photo_dates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            photo = root / "photo.jpg"
+            photo.touch()
+            path = normalize_path(photo)
+            stat = photo.stat()
+            db_path = root / ".tagger" / "index.sqlite"
+            db_path.parent.mkdir()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE photos(
+                      path TEXT PRIMARY KEY,
+                      mtime INTEGER NOT NULL,
+                      size INTEGER NOT NULL,
+                      date_taken TEXT
+                    )
+                    """
+                )
+                conn.execute(
+                    "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, ?, ?, '')",
+                    (path, int(stat.st_mtime), int(stat.st_size)),
+                )
+
+            index = PhotoIndex(root)
+
+            refreshed = index.sync_root(CaptureDateExifTool())
+
+            self.assertEqual(refreshed.updated_count, 1)
+            self.assertEqual(index.search_photos("date:2025"), [path])
 
     def test_invalid_date_queries_are_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

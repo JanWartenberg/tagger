@@ -453,9 +453,11 @@ class PhotoIndex:
             for path in self.root.rglob("*")
             if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
         ]
-        return self.sync_paths(exif, paths)
+        return self.sync_paths(exif, paths, force=True)
 
-    def sync_paths(self, exif: ExifTool, paths: list[str]) -> IndexSyncResult:
+    def sync_paths(
+        self, exif: ExifTool, paths: list[str], *, force: bool = False
+    ) -> IndexSyncResult:
         """Synchronize the supplied discovery result without traversing the root."""
         root = self.root
         current_paths = [
@@ -478,7 +480,7 @@ class PhotoIndex:
                 except FileNotFoundError:
                     continue
                 row = existing.get(photo_path)
-                if row is None:
+                if force or row is None:
                     changed.append(photo_path)
                     continue
                 if int(row["mtime"]) != int(stat.st_mtime) or int(row["size"]) != int(
