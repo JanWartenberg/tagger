@@ -142,6 +142,19 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
+    def test_entering_a_search_moves_focus_to_the_first_result(self) -> None:
+        _first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.dbSearchEdit.setFocus()
+
+        QtTest.QTest.keyClick(self.window.dbSearchEdit, QtCore.Qt.Key.Key_Return)
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertIs(self.window.focusWidget(), self.window.files)
+
     def test_view_indicator_restores_folder_scope_after_a_failed_search(self) -> None:
         self._add_paths("first.jpg", "second.jpg")
         self.window.dbSearchEdit.setText("tag:missing")

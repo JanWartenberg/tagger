@@ -2351,6 +2351,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
         self._render_photo_workspace_snapshot(snapshot, before)
+        if snapshot.active_path is not None:
+            self.files.setFocus()
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
 
     def _apply_filter_visibility_changes(
