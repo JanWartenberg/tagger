@@ -42,6 +42,14 @@
 - Basic multi-selection and tag mutation already exist.
 - Evaluate whether selection, feedback, and partial-failure behavior are sufficient for practical batch tagging.
 
+### Resumable background full-index refresh (low priority)
+
+- Keep normal index updates incremental for changed photos.
+- Run a full metadata refresh in small ExifTool batches and commit each batch with a durable SQLite checkpoint.
+- Resume an interrupted refresh after application restart rather than beginning the full scan again.
+- Show non-modal progress and resumed state while preserving usable searches against the last committed index snapshot.
+- Keep confirmed tag mutations responsive; they must not wait behind the entire refresh.
+
 ## Removed from the active backlog
 
 - A single source of truth for commands and shortcuts now exists in the action catalogue.
