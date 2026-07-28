@@ -2,15 +2,6 @@
 
 ## Product work
 
-### Empty-filter SQLite check with background file-scan crosscheck (medium priority)
-
-- Show the SQLite-derived IPTC-empty result immediately, then crosscheck it with a full background file-metadata scan.
-- Keep the initially displayed filter view stable; the crosscheck must never change it automatically.
-- When the crosscheck finds a discrepancy, repair the index, report the difference in the status bar, and offer `:resync`.
-- `:resync` applies the already-completed crosscheck result atomically and immediately; it does not start another scan.
-- Successful TAGGER tag mutations made after activation are intentional changes, not crosscheck discrepancies, and must not trigger a correction warning.
-- If the crosscheck fails, retain the SQLite-derived view and report that verification failed without changing the files pane.
-
 ### Discovery progress indicator (low priority)
 
 - Show a throttled running count of photos found while a folder or dropped-directory discovery is in progress.
@@ -41,14 +32,6 @@
 
 - Basic multi-selection and tag mutation already exist.
 - Evaluate whether selection, feedback, and partial-failure behavior are sufficient for practical batch tagging.
-
-### Resumable background full-index refresh (low priority)
-
-- Keep normal index updates incremental for changed photos.
-- Run a full metadata refresh in small ExifTool batches and commit each batch with a durable SQLite checkpoint.
-- Resume an interrupted refresh after application restart rather than beginning the full scan again.
-- Show non-modal progress and resumed state while preserving usable searches against the last committed index snapshot.
-- Keep confirmed tag mutations responsive; they must not wait behind the entire refresh.
 
 ## Removed from the active backlog
 
