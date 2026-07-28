@@ -1,6 +1,6 @@
 # Date Search and Range Filters
 
-Status: needs-triage
+Status: ready-for-agent
 Priority: medium
 
 ## Problem Statement
@@ -17,14 +17,14 @@ Give the keyboard-driven Photo Workspace a documented, predictable way to find p
 - `photos.date_taken` is populated from `KeywordState.date_display`, which currently retains the selected ExifTool capture/create date string.
 - `PhotoWorkspaceViewMode.DATABASE_SEARCH` already renders and restores temporary indexed result views.
 
-## Open Triage Decisions
+## Resolved Decisions
 
-1. Define the accepted grammar. Candidate forms are `date:YYYY`, `date:YYYY-MM`, `date:YYYY-MM-DD`, and `date:YYYY-MM-DD..YYYY-MM-DD`.
-2. Decide whether partial dates mean calendar periods and whether a range's endpoints are inclusive.
-3. Decide the canonical indexed date representation. A normalized sortable capture-date value may be required for reliable day/month/range queries; retain the displayed date independently if necessary.
-4. Define behavior for missing, malformed, timezone-bearing, and create-date-fallback metadata.
-5. Decide whether date filtering remains command/search-field syntax only or adds a dedicated date control. The default recommendation is syntax only.
-6. Decide validation and user feedback for invalid date expressions.
+- A **capture date** comes from `EXIF:DateTimeOriginal`, with `EXIF:CreateDate` as its fallback. Its stored time or timezone does not change its calendar day.
+- The accepted expressions are `date:YYYY`, `date:YYYY-MM`, `date:YYYY-MM-DD`, `date:YYYY-MM-DD..YYYY-MM-DD`, and `date:unknown`. Years have four digits; months and days must be valid zero-padded calendar values. Ranges require two full dates; open-ended and partial-date ranges are invalid.
+- Year and month expressions mean their complete calendar period. Full-date range endpoints are inclusive.
+- `date:unknown` returns photos with no source date and photos whose source date cannot be normalized. It supports metadata counterchecks and correction work.
+- Store a separate normalized nullable capture-date value as `YYYY-MM-DD`; retain the existing raw `photos.date_taken` value for legacy compatibility. Add the new column through a SQLite migration and backfill it by normalizing existing raw values; values that cannot be normalized become date-unknown until a later index refresh supplies valid metadata.
+- Date filtering remains search-field and `:search` syntax only. Invalid date expressions do not schedule a search or change the active Photo Workspace; they produce clear status feedback.
 
 ## Constraints
 
