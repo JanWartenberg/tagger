@@ -1,6 +1,6 @@
 # Active Photo Workspace View Indicator
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement

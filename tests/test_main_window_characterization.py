@@ -95,6 +95,76 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         ):
             self.window.add_folder_dialog()
 
+    def test_view_indicator_describes_the_normal_photo_workspace(self) -> None:
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 0 photos")
+
+        self._add_paths("first.jpg", "second.jpg")
+
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+
+    def test_view_indicator_describes_pending_and_completed_iptc_empty_filter(
+        self,
+    ) -> None:
+        self._add_paths("first.jpg", "second.jpg")
+
+        self.window.onlyUntagged.setChecked(True)
+
+        self.assertEqual(
+            self.window.filterInfoLabel.text(), "Filtering IPTC-empty · 0/2"
+        )
+        self._wait_until(self.window.onlyUntagged.isChecked)
+        self.assertEqual(self.window.filterInfoLabel.text(), "IPTC-empty · 0/2")
+
+        self.window.onlyUntagged.setChecked(False)
+
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+
+    def test_view_indicator_describes_pending_and_completed_search_and_back(
+        self,
+    ) -> None:
+        _first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+
+        self.window.apply_db_search()
+
+        self.assertEqual(
+            self.window.filterInfoLabel.text(), "Searching index · tag:second"
+        )
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Search: tag:second · 1 results · :back",
+        )
+
+        self.window._dispatch_command("back", [])
+
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+
+    def test_view_indicator_restores_folder_scope_after_a_failed_search(self) -> None:
+        self._add_paths("first.jpg", "second.jpg")
+        self.window.dbSearchEdit.setText("tag:missing")
+
+        with patch.object(
+            FakePhotoIndex, "search_photos", side_effect=RuntimeError("index failed")
+        ):
+            self.window.apply_db_search()
+            self.discovery_runner.run_index_work()
+            self.app.processEvents()
+
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+
+    def test_view_indicator_restores_folder_scope_when_replacing_the_workspace(
+        self,
+    ) -> None:
+        self._add_paths("first.jpg", "second.jpg")
+        replacement = normalize_path("C:/photos/replacement.jpg")
+
+        self.window.replace_photo_workspace([replacement])
+
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 1 photos")
+
     def test_folder_discovery_clears_the_workspace_and_renders_paths_on_completion(
         self,
     ) -> None:
@@ -793,6 +863,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
 
         self.assertFalse(self.window.onlyUntagged.isChecked())
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 100 photos")
         self.assertEqual(self.window.selected_file_paths(), [target])
         self.assertLessEqual(
             abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
@@ -873,6 +944,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.all_file_paths(), [second])
         self.assertEqual(self.window.files.count(), 1)
         self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Search: tag:second · 1 results · :back",
+        )
 
     def test_known_tag_filter_uses_the_loaded_snapshot_without_a_read(self) -> None:
         self._add_paths("one.jpg")
@@ -952,6 +1027,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
         self.assertEqual(self.window.dbSearchEdit.text(), "")
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
     def test_escape_restores_a_completed_search_before_leaving_the_file_pane(
         self,
@@ -969,6 +1045,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.all_file_paths(), [first, second])
         self.assertEqual(self.window.dbSearchEdit.text(), "")
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
         self.window.knownList.addItems(["bird", "birch"])

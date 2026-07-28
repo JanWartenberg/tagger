@@ -217,6 +217,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._known_tags_root: str | None = None
         self._active_known_tags_request: IndexReadRequest | None = None
         self._active_search_request: IndexReadRequest | None = None
+        self._displayed_search_query: str | None = None
         self._active_index_refresh_request: IndexRefreshRequest | None = None
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
@@ -489,6 +490,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
         self._apply_focus_styles()
+        self._update_view_indicator(self.photo_workspace.snapshot())
 
         # Make the whole window feel droppable (not only the file list).
         for w in [
@@ -1530,6 +1532,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> None:
         normalized_paths = [normalize_path(path) for path in paths]
         self._active_search_request = None
+        self._displayed_search_query = None
         self._active_known_tags_request = None
         self._active_index_refresh_request = None
         self._background_coordinator.invalidate_search()
@@ -1548,7 +1551,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
         snapshot = self.photo_workspace.reload_paths(normalized_paths)
         self._render_photo_workspace(snapshot)
-        self.filterInfoLabel.setText("")
         self.on_selection_changed()
 
     def _reset_files_pane_for_reload(self) -> None:
@@ -1728,8 +1730,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._active_search_request = None
             if isinstance(event, IndexReadFailed):
+                self._update_view_indicator(self.photo_workspace.snapshot())
                 self.statusBar().showMessage("Search failed")
                 return
+            self._displayed_search_query = request.query
             self._apply_db_search_result(event.paths)
             return
 
@@ -1833,6 +1837,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _render_photo_workspace(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        self._update_view_indicator(snapshot)
         self.onlyUntagged.blockSignals(True)
         self.files.blockSignals(True)
         try:
@@ -2091,7 +2096,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     and prior_snapshot.filter_operation_id is None
                 ),
             )
-            self.filterInfoLabel.setText("")
             return
 
         row_h = self.files.sizeHintForRow(0) or self.files.fontMetrics().height() + 4
@@ -2101,9 +2105,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._render_photo_workspace_snapshot(snapshot, before)
         if not snapshot.paths:
-            self.filterInfoLabel.setText("")
             return
-        self._update_filter_label(snapshot)
         self.statusBar().showMessage("Filtering IPTC-empty...")
         self._process_next_filter_chunk()
 
@@ -2126,7 +2128,6 @@ class MainWindow(QtWidgets.QMainWindow):
             if not was_current:
                 return
             self._render_photo_workspace_snapshot(snapshot, before)
-            self._update_filter_label(snapshot)
             self.statusBar().showMessage(
                 f"Filtering IPTC-empty... "
                 f"{snapshot.filter_processed}/{snapshot.filter_total}"
@@ -2147,7 +2148,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 snapshot, before, scroll_active_to_top=True
             )
             self.statusBar().showMessage(f"Filtering IPTC-empty failed: {msg}")
-            self.filterInfoLabel.setText("")
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
@@ -2173,15 +2173,29 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_selection_changed()
         return selection_changed
 
-    def _update_filter_label(self, snapshot: PhotoWorkspaceSnapshot) -> None:
-        if snapshot.view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
-            self.filterInfoLabel.setText("")
-        elif snapshot.filter_view_switched or snapshot.filter_operation_id is None:
+    def _update_view_indicator(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        """Render the persistent Photo Workspace scope above the files pane."""
+        if self._active_search_request is not None:
             self.filterInfoLabel.setText(
-                f"{len(snapshot.visible_paths)}/{snapshot.filter_total}"
+                f"Searching index · {self._active_search_request.query}"
             )
-        else:
-            self.filterInfoLabel.setText(f"…/{snapshot.filter_total}")
+        elif snapshot.filter_operation_id is not None:
+            self.filterInfoLabel.setText(
+                "Filtering IPTC-empty · "
+                f"{snapshot.filter_processed}/{snapshot.filter_total}"
+            )
+        elif snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
+            self.filterInfoLabel.setText(
+                f"IPTC-empty · {len(snapshot.visible_paths)}/{snapshot.filter_total}"
+            )
+        elif snapshot.view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH:
+            self.filterInfoLabel.setText(
+                "Search: "
+                f"{self._displayed_search_query or ''} · "
+                f"{len(snapshot.visible_paths)} results · :back"
+            )
+        elif snapshot.view_mode is PhotoWorkspaceViewMode.NORMAL:
+            self.filterInfoLabel.setText(f"Folder view · {len(snapshot.paths)} photos")
 
     def _refresh_current_keywords_view_from_cache(self) -> None:
         sel = self.selected_file_paths()
@@ -2286,6 +2300,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
         self._active_search_request = None
+        self._displayed_search_query = None
         self._background_coordinator.invalidate_search()
         before = self.selected_file_paths()
         had_search = self.photo_workspace.has_database_search
@@ -2323,6 +2338,7 @@ class MainWindow(QtWidgets.QMainWindow):
             query,
             workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
+        self._update_view_indicator(self.photo_workspace.snapshot())
         self.statusBar().showMessage("Searching index…")
 
     def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
@@ -2335,7 +2351,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
         self._render_photo_workspace_snapshot(snapshot, before)
-        self._update_filter_label(snapshot)
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
 
     def _apply_filter_visibility_changes(
@@ -2350,7 +2365,6 @@ class MainWindow(QtWidgets.QMainWindow):
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)
         self._render_photo_workspace_snapshot(snapshot, before)
-        self._update_filter_label(snapshot)
 
     def add_keyword_from_input(self) -> None:
         tag = self.addEdit.text().strip()
