@@ -1,6 +1,6 @@
 # Date Search and Range Filters
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -32,6 +32,10 @@ Give the keyboard-driven Photo Workspace a documented, predictable way to find p
 - The active-root scope, stale completion rules, and folder-view restoration of indexed search remain unchanged.
 - Do not overload the IPTC-empty filter state; date results are database-search views.
 - Any index migration or backfill must preserve existing tag search and index freshness behavior.
+
+## Completion
+
+Implemented with a normalized nullable `photos.capture_date` column, an in-place legacy backfill from `photos.date_taken`, strict date-query validation before scheduling a background search, and `date:unknown` support. SQLite reads remain behind `BackgroundCoordinator.search_index()`; invalid expressions leave the current Photo Workspace unchanged.
 
 ## Out of Scope
 

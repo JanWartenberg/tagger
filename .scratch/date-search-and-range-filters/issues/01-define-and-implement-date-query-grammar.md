@@ -1,6 +1,6 @@
 # 01 — Define and Implement Date Query Grammar
 
-Status: ready-for-agent
+Status: completed
 Category: feature
 Priority: medium
 Blocked by: None
@@ -30,6 +30,18 @@ Triage completed: the grammar, date-source priority, unknown-date semantics, nor
 
 ## Validation
 
-- Extend the validation file list after triage identifies the schema and adapter changes.
+- `ruff check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
+- `ruff format --check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
 - `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v`
+- `git diff --check`
+
+## Comments
+
+Completed with a normalized nullable `photos.capture_date` SQLite column, legacy raw-date backfill, strict calendar grammar, `date:unknown`, and non-destructive invalid-input feedback. Date-query parsing and SQLite reads preserve the existing background search and Photo Workspace result flow.
+
+Validation passed:
+
+- `ruff check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
+- `ruff format --check --no-cache indexing.py exif_ui.py tests/test_indexing.py tests/test_main_window_characterization.py`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (106 tests)
 - `git diff --check`

@@ -1,9 +1,10 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from exif_tool import KeywordState
-from indexing import _PATH_QUERY_BATCH_SIZE, PhotoIndex
+from indexing import DateQueryError, _PATH_QUERY_BATCH_SIZE, PhotoIndex
 from utils import normalize_path
 
 
@@ -72,6 +73,109 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
 
             self.assertEqual(refreshed.deleted_count, 1)
             self.assertEqual(index.has_photos([str(kept), str(deleted)]), {str(kept)})
+
+
+class PhotoIndexDateSearchTests(unittest.TestCase):
+    def test_date_queries_use_normalized_calendar_dates_and_unknown_values(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                name: normalize_path(root / name)
+                for name in ("january.jpg", "february.jpg", "march.jpg", "unknown.jpg")
+            }
+            for path in paths.values():
+                Path(path).touch()
+
+            index = PhotoIndex(root)
+            index.update_states(
+                {
+                    paths["january.jpg"]: KeywordState(
+                        [], [], date_original="2024:01:31 23:30:00+01:00"
+                    ),
+                    paths["february.jpg"]: KeywordState(
+                        [], [], date_create="2024:02:01 00:30:00"
+                    ),
+                    paths["march.jpg"]: KeywordState(
+                        [],
+                        [],
+                        date_original="not a date",
+                        date_create="2024:03:01 12:00:00",
+                    ),
+                    paths["unknown.jpg"]: KeywordState(
+                        [], [], date_xmp_create="2024:04:01T12:00:00"
+                    ),
+                }
+            )
+
+            self.assertEqual(
+                index.search_photos("date:2024"),
+                [paths["february.jpg"], paths["january.jpg"]],
+            )
+            self.assertEqual(
+                index.search_photos("date:2024-01"), [paths["january.jpg"]]
+            )
+            self.assertEqual(
+                index.search_photos("date:2024-01-31"), [paths["january.jpg"]]
+            )
+            self.assertEqual(
+                index.search_photos("date:2024-01-31..2024-02-01"),
+                [paths["february.jpg"], paths["january.jpg"]],
+            )
+            self.assertEqual(
+                index.search_photos("date:unknown"),
+                [paths["march.jpg"], paths["unknown.jpg"]],
+            )
+
+    def test_date_index_migration_backfills_existing_raw_values(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            db_path = root / ".tagger" / "index.sqlite"
+            db_path.parent.mkdir()
+            with sqlite3.connect(db_path) as conn:
+                conn.execute(
+                    """
+                    CREATE TABLE photos(
+                      path TEXT PRIMARY KEY,
+                      mtime INTEGER NOT NULL,
+                      size INTEGER NOT NULL,
+                      date_taken TEXT
+                    )
+                    """
+                )
+                conn.executemany(
+                    "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, 0, 0, ?)",
+                    [
+                        ("/photos/valid.jpg", "2024:02:29 12:00:00"),
+                        ("/photos/unusable.jpg", "2024:02:30 12:00:00"),
+                    ],
+                )
+
+            index = PhotoIndex(root)
+
+            self.assertEqual(
+                index.search_photos("date:2024-02-29"), ["/photos/valid.jpg"]
+            )
+            self.assertEqual(
+                index.search_photos("date:unknown"), ["/photos/unusable.jpg"]
+            )
+
+    def test_invalid_date_queries_are_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            index = PhotoIndex(directory)
+
+            for query in (
+                "date:",
+                "date:2024-13",
+                "date:2024-02-30",
+                "date:2024..2025",
+                "date:2024-01-01..2024-01",
+                "date:tomorrow",
+            ):
+                with self.subTest(query=query):
+                    with self.assertRaises(DateQueryError):
+                        index.search_photos(query)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,13 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
-from indexing import IndexSyncResult, PhotoIndex, resolve_index_root
+from indexing import (
+    DateQueryError,
+    IndexSyncResult,
+    PhotoIndex,
+    resolve_index_root,
+    validate_search_query,
+)
 from photo_workspace import (
     PhotoWorkspace,
     PhotoWorkspaceSnapshot,
@@ -340,7 +346,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dbSearchEdit = QtWidgets.QLineEdit()
         self.dbSearchEdit.setPlaceholderText("Search DB tags/date...")
         self.dbSearchEdit.setToolTip(
-            "Reverse search in the SQLite index: tag:foo or date:2024 · "
+            "Reverse search: tag:foo, date:YYYY, date:YYYY-MM, "
+            "date:YYYY-MM-DD, date:YYYY-MM-DD..YYYY-MM-DD, or date:unknown · "
             "Focus: Ctrl+Shift+F"
         )
         self.dbSearchEdit.returnPressed.connect(self.apply_db_search)
@@ -2327,6 +2334,11 @@ class MainWindow(QtWidgets.QMainWindow):
         query = (self.dbSearchEdit.text() or "").strip()
         if not query:
             self.clear_db_search()
+            return
+        try:
+            validate_search_query(query)
+        except DateQueryError as error:
+            self.statusBar().showMessage(f"Invalid date query: {error}")
             return
         root = self._index_root_for_paths(self.all_file_paths())
         if not root:

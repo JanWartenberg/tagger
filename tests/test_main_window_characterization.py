@@ -142,6 +142,22 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
+    def test_invalid_date_search_preserves_the_current_workspace(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.window.dbSearchEdit.setText("date:2024-02-30")
+        self.window.apply_db_search()
+
+        self.assertEqual(self.window.all_file_paths(), [second])
+        self.assertEqual(FakePhotoIndex.search_queries, ["tag:second"])
+        self.assertIn("Invalid date query", self.window.statusBar().currentMessage())
+        self.assertNotIn(first, self.window.all_file_paths())
+
     def test_entering_a_search_moves_focus_to_the_first_result(self) -> None:
         _first, second = self._add_paths("first.jpg", "second.jpg")
         FakePhotoIndex.search_results = {second}

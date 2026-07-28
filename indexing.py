@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
+from datetime import date, timedelta
 from pathlib import Path
 
 from exif_tool import ExifTool, KeywordState
@@ -53,6 +55,86 @@ def _date_taken_from_state(state: KeywordState) -> str:
     return state.date_display or ""
 
 
+class DateQueryError(ValueError):
+    """Raised when a ``date:`` search expression is not part of the grammar."""
+
+
+@dataclass(frozen=True)
+class DateSearch:
+    start: str | None = None
+    end_exclusive: str | None = None
+    is_unknown: bool = False
+
+
+_DATE_QUERY_HELP = "use YYYY, YYYY-MM, YYYY-MM-DD, YYYY-MM-DD..YYYY-MM-DD, or unknown"
+_CAPTURE_DATE_PREFIX = re.compile(r"^(\d{4})[:-](\d{2})[:-](\d{2})(?:$|[ T])")
+
+
+def _parse_calendar_day(value: str) -> date:
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        raise DateQueryError(_DATE_QUERY_HELP)
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise DateQueryError(_DATE_QUERY_HELP) from error
+
+
+def _normalize_capture_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = _CAPTURE_DATE_PREFIX.match(value.strip())
+    if match is None:
+        return None
+    try:
+        return date(*map(int, match.groups())).isoformat()
+    except ValueError:
+        return None
+
+
+def _capture_date_from_state(state: KeywordState) -> str | None:
+    return _normalize_capture_date(state.date_original or state.date_create)
+
+
+def _parse_date_search_term(term: str) -> DateSearch:
+    term = term.strip()
+    if term.casefold() == "unknown":
+        return DateSearch(is_unknown=True)
+    if ".." in term:
+        endpoints = term.split("..")
+        if len(endpoints) != 2:
+            raise DateQueryError(_DATE_QUERY_HELP)
+        start = _parse_calendar_day(endpoints[0])
+        end = _parse_calendar_day(endpoints[1])
+        if end < start:
+            raise DateQueryError("range end must not be before range start")
+        return DateSearch(start.isoformat(), (end + timedelta(days=1)).isoformat())
+    if re.fullmatch(r"\d{4}", term):
+        year = int(term)
+        return DateSearch(f"{year:04}-01-01", f"{year + 1:04}-01-01")
+    if re.fullmatch(r"\d{4}-\d{2}", term):
+        year, month = map(int, term.split("-"))
+        try:
+            start = date(year, month, 1)
+        except ValueError as error:
+            raise DateQueryError(_DATE_QUERY_HELP) from error
+        end = date(year + 1, 1, 1) if month == 12 else date(year, month + 1, 1)
+        return DateSearch(start.isoformat(), end.isoformat())
+    day = _parse_calendar_day(term)
+    return DateSearch(day.isoformat(), (day + timedelta(days=1)).isoformat())
+
+
+def _date_search_from_query(query: str) -> DateSearch | None:
+    query = query.strip()
+    if not query.casefold().startswith("date:"):
+        return None
+    return _parse_date_search_term(query[5:])
+
+
+def validate_search_query(query: str) -> None:
+    """Raise ``DateQueryError`` when a date expression is not valid."""
+    _date_search_from_query(query)
+
+
 @dataclass(frozen=True)
 class IndexSyncResult:
     root: str
@@ -85,7 +167,8 @@ class PhotoIndex:
               path TEXT PRIMARY KEY,
               mtime INTEGER NOT NULL,
               size INTEGER NOT NULL,
-              date_taken TEXT
+              date_taken TEXT,
+              capture_date TEXT
             );
 
             CREATE TABLE IF NOT EXISTS tags(
@@ -107,9 +190,27 @@ class PhotoIndex:
             );
             """
         )
+        photo_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(photos)").fetchall()
+        }
+        migrated_capture_date = "capture_date" not in photo_columns
+        if migrated_capture_date:
+            conn.execute("ALTER TABLE photos ADD COLUMN capture_date TEXT")
+            for row in conn.execute(
+                "SELECT path, date_taken FROM photos WHERE capture_date IS NULL"
+            ):
+                conn.execute(
+                    "UPDATE photos SET capture_date = ? WHERE path = ?",
+                    (_normalize_capture_date(row["date_taken"]), row["path"]),
+                )
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_photos_date_taken ON photos(date_taken)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_photos_capture_date ON photos(capture_date)"
         )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_photo_tags_tag_id ON photo_tags(tag_id)"
@@ -246,13 +347,22 @@ class PhotoIndex:
                 return self.load_photos_for_tag(term) if term else []
 
             if qlower.startswith("date:"):
-                term = query[5:].strip()
-                if not term:
-                    return []
-                rows = conn.execute(
-                    "SELECT path FROM photos WHERE date_taken LIKE ? ESCAPE '\\' ORDER BY path",
-                    (f"%{self._escape_like(term)}%",),
-                ).fetchall()
+                date_search = _date_search_from_query(query)
+                if date_search is None:
+                    raise AssertionError("date query was not recognized")
+                if date_search.is_unknown:
+                    rows = conn.execute(
+                        "SELECT path FROM photos WHERE capture_date IS NULL ORDER BY path"
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT path FROM photos
+                        WHERE capture_date >= ? AND capture_date < ?
+                        ORDER BY path
+                        """,
+                        (date_search.start, date_search.end_exclusive),
+                    ).fetchall()
                 return [str(row[0]) for row in rows]
 
             exact = self.load_photos_for_tag(query)
@@ -295,18 +405,20 @@ class PhotoIndex:
         stat = Path(photo_path).stat()
         conn.execute(
             """
-            INSERT INTO photos(path, mtime, size, date_taken)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO photos(path, mtime, size, date_taken, capture_date)
+            VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
               mtime=excluded.mtime,
               size=excluded.size,
-              date_taken=excluded.date_taken
+              date_taken=excluded.date_taken,
+              capture_date=excluded.capture_date
             """,
             (
                 photo_path,
                 int(stat.st_mtime),
                 int(stat.st_size),
                 _date_taken_from_state(state),
+                _capture_date_from_state(state),
             ),
         )
         conn.execute("DELETE FROM photo_tags WHERE photo_path = ?", (photo_path,))
