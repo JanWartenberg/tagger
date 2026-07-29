@@ -30,4 +30,4 @@ Use one mutable `PhotoWorkspace` object. Its interface accepts intent-level oper
 - Implemented by `photo_workspace.py`; `MainWindow` now adapts membership and selection through this module.
 - Pure test command run: `python3 -m unittest tests/test_photo_workspace.py -v` (5 passing tests).
 - Full suite command run: `python3 -m unittest discover -s tests -v` (5 passing pure tests; 3 Qt tests skipped because PyQt6 is unavailable in the agent environment).
-- Windows offscreen acceptance remains required before this slice is accepted.
+- Windows offscreen acceptance completed with 109 passing tests; the evidence is recorded in `.scratch/windows-offscreen-acceptance/issues/01-run-current-windows-offscreen-suite.md`.

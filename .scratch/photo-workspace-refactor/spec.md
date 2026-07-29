@@ -2,6 +2,8 @@
 
 Status: completed
 
+> **Historical record:** This completed refactor describes the baseline at the time of migration. Its progressive IPTC-empty-filter and loaded-path-only search descriptions were superseded by the completed atomic-view-transition and indexed-reverse-search work in `.scratch/workspace-view-state-consistency/` and `.scratch/indexed-search-and-index-freshness/`. Windows offscreen acceptance was completed by `.scratch/windows-offscreen-acceptance/` with 109 passing tests.
+
 ## Problem Statement
 
 TAGGER's photo-files pane is controlled by state and behavior spread throughout the main window. Loaded paths, visibility, selection, IPTC-empty filtering, database-search matches, asynchronous progress, stale-result rejection, and view restoration are coupled directly to Qt widgets. This makes changes risky, forces maintainers to reason across unrelated UI code, and leaves important behavior difficult to test without running the application.
@@ -103,4 +105,4 @@ All observable behavior and stable outside interfaces remain unchanged. The refa
 
 - Frozen-snapshot IPTC-empty filtering is recorded as deferred follow-up work. Activating that future behavior would capture the photos that are empty at activation time and keep the resulting list fixed until the filter is reapplied.
 - The architecture review also identified tag mutation, indexing, and action dispatch as later deepening opportunities. They are intentionally independent from this refactor.
-- The repository's checked-in virtual environment is Windows-specific. Linux agent validation passed with the available system PyQt6, while the required Windows offscreen acceptance remains a Windows-environment step.
+- The repository's checked-in virtual environment is Windows-specific. Linux agent validation passed with the available system PyQt6; Windows offscreen acceptance later passed with 109 tests, recorded in `.scratch/windows-offscreen-acceptance/`.

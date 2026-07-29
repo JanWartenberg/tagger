@@ -30,4 +30,4 @@ Capture the current Photo Workspace behavior before changing ownership, and esta
 - The current UI has no Qt-free Photo Workspace seam. Ticket 02 introduces it; its pure `unittest` coverage will exercise the behavior cases listed above.
 - The Qt adapter characterization suite and its fake ExifTool/index adapters are in `tests/test_main_window_characterization.py`.
 - Linux command run: `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` — passed (29 tests) with the available PyQt6 installation.
-- Windows acceptance command: `set QT_QPA_PLATFORM=offscreen && python -m unittest discover -s tests -v` (still to be run in the Windows project environment).
+- Windows offscreen acceptance completed with 109 passing tests; the evidence is recorded in `.scratch/windows-offscreen-acceptance/issues/01-run-current-windows-offscreen-suite.md`.

@@ -1,0 +1,20 @@
+# 01 — Evaluate the Known-Tags Pane Workflow
+
+Status: needs-triage
+Category: product-decision
+Priority: low
+Blocked by: None
+
+## Goal
+
+Decide whether the persistent known-tags pane should remain, be reduced, be replaced, or be removed in favor of autocomplete.
+
+## Required Triage Before Implementation
+
+- Establish evaluation evidence and decision criteria.
+- Identify keyboard workflows that must remain supported.
+- Split any chosen product change into implementation ticket(s).
+
+## Comments
+
+Created from `BACKLOG.md`. This ticket is evaluative; it does not authorize a behavior change by itself.

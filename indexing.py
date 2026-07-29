@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -160,6 +162,19 @@ class PhotoIndex:
         self._ensure_schema(conn)
         return conn
 
+    @contextmanager
+    def _connection(self) -> Iterator[sqlite3.Connection]:
+        """Commit or roll back one connection, then always release its file handle."""
+        conn = self._connect()
+        try:
+            yield conn
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _ensure_schema(self, conn: sqlite3.Connection) -> None:
         conn.executescript(
             """
@@ -220,7 +235,7 @@ class PhotoIndex:
         )
 
     def is_initialized(self) -> bool:
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT value FROM meta WHERE key = ?", ("initialized",)
             ).fetchone()
@@ -228,7 +243,7 @@ class PhotoIndex:
 
     def last_index_refresh(self) -> int | None:
         """Return the Unix timestamp of the latest successful root synchronization."""
-        with self._connect() as conn:
+        with self._connection() as conn:
             row = conn.execute(
                 "SELECT value FROM meta WHERE key = ?", ("last_index_scan",)
             ).fetchone()
@@ -256,7 +271,7 @@ class PhotoIndex:
         normalized = [normalize_path(p) for p in paths]
         if not normalized:
             return set()
-        with self._connect() as conn:
+        with self._connection() as conn:
             found_paths: set[str] = set()
             for offset in range(0, len(normalized), _PATH_QUERY_BATCH_SIZE):
                 batch = normalized[offset : offset + _PATH_QUERY_BATCH_SIZE]
@@ -293,7 +308,7 @@ class PhotoIndex:
         return int(row[0])
 
     def load_known_tags(self) -> set[str]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 "SELECT tag FROM tags ORDER BY tag COLLATE NOCASE"
             ).fetchall()
@@ -301,7 +316,7 @@ class PhotoIndex:
 
     def load_tags_for_photo(self, photo_path: str) -> list[str]:
         photo_path = normalize_path(photo_path)
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT t.tag
@@ -318,7 +333,7 @@ class PhotoIndex:
         tag = tag.strip()
         if not tag:
             return []
-        with self._connect() as conn:
+        with self._connection() as conn:
             rows = conn.execute(
                 """
                 SELECT p.path
@@ -341,7 +356,7 @@ class PhotoIndex:
             return []
 
         qlower = query.lower()
-        with self._connect() as conn:
+        with self._connection() as conn:
             if qlower.startswith("tag:"):
                 term = query[4:].strip()
                 return self.load_photos_for_tag(term) if term else []
@@ -383,7 +398,7 @@ class PhotoIndex:
             return [str(row[0]) for row in rows]
 
     def load_tags_for_root(self) -> set[str]:
-        with self._connect() as conn:
+        with self._connection() as conn:
             prefix = str(self.root) + os.sep
             rows = conn.execute(
                 """
@@ -433,13 +448,13 @@ class PhotoIndex:
     def update_states(self, updated_states: dict[str, KeywordState]) -> None:
         if not updated_states:
             return
-        with self._connect() as conn:
+        with self._connection() as conn:
             with conn:
                 for photo_path, state in updated_states.items():
                     self.upsert_state(conn, photo_path, state)
 
     def mark_initialized(self) -> None:
-        with self._connect() as conn:
+        with self._connection() as conn:
             with conn:
                 conn.execute(
                     "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
@@ -470,7 +485,7 @@ class PhotoIndex:
         scanned_count = len(current_paths)
         updated_count = 0
 
-        with self._connect() as conn:
+        with self._connection() as conn:
             existing = self._photo_rows(conn, current_paths)
             changed: list[str] = []
 

@@ -16,6 +16,8 @@ from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
+from utils import normalize_path
+
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
@@ -33,7 +35,6 @@ if PYQT_AVAILABLE:
         IndexWriteFailed,
         IndexOperationKind,
     )
-    from utils import normalize_path
 
 
 @unittest.skipUnless(
@@ -47,10 +48,20 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.exif_patch = patch("exif_ui.ExifTool", FakeExifTool)
         self.index_patch = patch("exif_ui.PhotoIndex", FakePhotoIndex)
+        self.storage_patches = [
+            patch("exif_ui.load_config", return_value={}),
+            patch("exif_ui.save_config"),
+            patch("exif_ui.load_recent_tags", return_value=[]),
+            patch("exif_ui.add_recent_tag"),
+        ]
         self.exif_patch.start()
         self.index_patch.start()
+        for storage_patch in self.storage_patches:
+            storage_patch.start()
         self.addCleanup(self.index_patch.stop)
         self.addCleanup(self.exif_patch.stop)
+        for storage_patch in self.storage_patches:
+            self.addCleanup(storage_patch.stop)
         FakeExifTool.reset()
         FakePhotoIndex.reset()
         self.discovery = FakePhotoDiscovery()
@@ -1118,9 +1129,19 @@ class DeterministicCoordinatorRunner:
         self.run(discovery_indexes[index])
 
 
+class _DiscoveryResults(dict[str, list[str] | Exception]):
+    def __setitem__(self, root: str, result: list[str] | Exception) -> None:
+        normalized_result = (
+            [normalize_path(path) for path in result]
+            if isinstance(result, list)
+            else result
+        )
+        super().__setitem__(normalize_path(root), normalized_result)
+
+
 class FakePhotoDiscovery:
     def __init__(self) -> None:
-        self.results: dict[str, list[str] | Exception] = {}
+        self.results = _DiscoveryResults()
 
     def discover(self, root: str) -> list[str]:
         result = self.results[root]

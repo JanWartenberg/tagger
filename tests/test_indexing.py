@@ -1,7 +1,9 @@
 import sqlite3
 import tempfile
+from contextlib import closing
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 from exif_tool import KeywordState
 from indexing import DateQueryError, _PATH_QUERY_BATCH_SIZE, PhotoIndex
@@ -15,6 +17,33 @@ class FakeExifTool:
     def read_keywords_many(self, paths: list[str]) -> dict[str, KeywordState]:
         self.read_batches.append(paths)
         return {path: KeywordState(["indexed"], ["indexed"]) for path in paths}
+
+
+class PhotoIndexConnectionLifecycleTests(unittest.TestCase):
+    def test_connection_context_commits_and_closes_on_success(self) -> None:
+        index = PhotoIndex("/photos")
+        connection = Mock()
+
+        with patch.object(index, "_connect", return_value=connection):
+            with index._connection() as active_connection:
+                self.assertIs(active_connection, connection)
+
+        connection.commit.assert_called_once_with()
+        connection.rollback.assert_not_called()
+        connection.close.assert_called_once_with()
+
+    def test_connection_context_rolls_back_and_closes_on_failure(self) -> None:
+        index = PhotoIndex("/photos")
+        connection = Mock()
+
+        with patch.object(index, "_connect", return_value=connection):
+            with self.assertRaisesRegex(RuntimeError, "write failed"):
+                with index._connection():
+                    raise RuntimeError("write failed")
+
+        connection.commit.assert_not_called()
+        connection.rollback.assert_called_once_with()
+        connection.close.assert_called_once_with()
 
 
 class PhotoIndexPathBatchingTests(unittest.TestCase):
@@ -142,24 +171,25 @@ class PhotoIndexDateSearchTests(unittest.TestCase):
             root = Path(directory)
             db_path = root / ".tagger" / "index.sqlite"
             db_path.parent.mkdir()
-            with sqlite3.connect(db_path) as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE photos(
-                      path TEXT PRIMARY KEY,
-                      mtime INTEGER NOT NULL,
-                      size INTEGER NOT NULL,
-                      date_taken TEXT
+            with closing(sqlite3.connect(db_path)) as conn:
+                with conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE photos(
+                          path TEXT PRIMARY KEY,
+                          mtime INTEGER NOT NULL,
+                          size INTEGER NOT NULL,
+                          date_taken TEXT
+                        )
+                        """
                     )
-                    """
-                )
-                conn.executemany(
-                    "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, 0, 0, ?)",
-                    [
-                        ("/photos/valid.jpg", "2024:02:29 12:00:00"),
-                        ("/photos/unusable.jpg", "2024:02:30 12:00:00"),
-                    ],
-                )
+                    conn.executemany(
+                        "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, 0, 0, ?)",
+                        [
+                            ("/photos/valid.jpg", "2024:02:29 12:00:00"),
+                            ("/photos/unusable.jpg", "2024:02:30 12:00:00"),
+                        ],
+                    )
 
             index = PhotoIndex(root)
 
@@ -179,21 +209,22 @@ class PhotoIndexDateSearchTests(unittest.TestCase):
             stat = photo.stat()
             db_path = root / ".tagger" / "index.sqlite"
             db_path.parent.mkdir()
-            with sqlite3.connect(db_path) as conn:
-                conn.execute(
-                    """
-                    CREATE TABLE photos(
-                      path TEXT PRIMARY KEY,
-                      mtime INTEGER NOT NULL,
-                      size INTEGER NOT NULL,
-                      date_taken TEXT
+            with closing(sqlite3.connect(db_path)) as conn:
+                with conn:
+                    conn.execute(
+                        """
+                        CREATE TABLE photos(
+                          path TEXT PRIMARY KEY,
+                          mtime INTEGER NOT NULL,
+                          size INTEGER NOT NULL,
+                          date_taken TEXT
+                        )
+                        """
                     )
-                    """
-                )
-                conn.execute(
-                    "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, ?, ?, '')",
-                    (path, int(stat.st_mtime), int(stat.st_size)),
-                )
+                    conn.execute(
+                        "INSERT INTO photos(path, mtime, size, date_taken) VALUES (?, ?, ?, '')",
+                        (path, int(stat.st_mtime), int(stat.st_size)),
+                    )
 
             index = PhotoIndex(root)
 

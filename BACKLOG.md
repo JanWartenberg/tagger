@@ -1,37 +1,13 @@
 # Backlog
 
-## Product work
+Active work is tracked in one-feature `.scratch/` directories. The former backlog entries now have their own triage tickets:
 
-### Discovery progress indicator (low priority)
-
-- Show a throttled running count of photos found while a folder or dropped-directory discovery is in progress.
-- Keep the current initial background-discovery work's indeterminate loading presentation; do not make this follow-up a prerequisite.
-
-### Evaluate the known-tags pane (low priority)
-
-- Assess whether the persistent known-tags pane serves the keyboard-driven workflow or should be removed, replaced, or reduced in favor of autocomplete.
-- Do not change its current behavior as part of background discovery and index I/O work.
-
-### Error history command (low priority)
-
-- Record tool errors with timestamps for the application session.
-- Add an `:errors` command that shows all recorded errors, especially when multiple background operations have failed.
-- Keep this separate from the initial background discovery and index I/O work, which reports errors only in the non-blocking footer.
-
-### Review keyword length limits
-
-- Determine the actual technical limits of the metadata formats and ExifTool.
-- Decide whether TAGGER should validate or enforce a limit.
-
-### AI-assisted tag suggestions
-
-- Analyze a photo and propose tags for human approval.
-- Define privacy, provider, cost, and review behavior before implementation.
-
-### Improve multi-photo tagging workflow
-
-- Basic multi-selection and tag mutation already exist.
-- Evaluate whether selection, feedback, and partial-failure behavior are sufficient for practical batch tagging.
+- [Discovery progress indicator](.scratch/discovery-progress-indicator/issues/01-add-throttled-discovery-progress-indicator.md) — low priority
+- [Known-tags pane evaluation](.scratch/known-tags-pane-evaluation/issues/01-evaluate-known-tags-pane-workflow.md) — low priority
+- [Session error history and `:errors`](.scratch/error-history-command/issues/01-add-session-error-history-command.md) — low priority
+- [Keyword-length policy](.scratch/keyword-length-limits/issues/01-research-and-decide-keyword-length-policy.md) — priority not yet set
+- [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) — priority not yet set
+- [Multi-photo tagging workflow evaluation](.scratch/multi-photo-tagging-workflow/issues/01-evaluate-practical-multi-photo-tagging.md) — priority not yet set
 
 ## Removed from the active backlog
 

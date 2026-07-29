@@ -17,6 +17,22 @@ from services.background_coordinator import (
     IndexWriteCompleted,
     IndexWriteFailed,
 )
+from utils import normalize_path
+
+
+def fixture_path(path: str) -> str:
+    """Return a platform-native absolute path for an adapter fixture."""
+    return normalize_path(path)
+
+
+class _DiscoveryResults(dict[str, list[str] | Exception]):
+    def __setitem__(self, root: str, result: list[str] | Exception) -> None:
+        normalized_result = (
+            [fixture_path(path) for path in result]
+            if isinstance(result, list)
+            else result
+        )
+        super().__setitem__(fixture_path(root), normalized_result)
 
 
 class DeterministicRunner:
@@ -84,7 +100,9 @@ class FakeIndex:
 
 class FakeDiscovery:
     def __init__(self, results: dict[str, list[str] | Exception]) -> None:
-        self.results = results
+        self.results = _DiscoveryResults()
+        for root, result in results.items():
+            self.results[root] = result
         self.requests: list[str] = []
 
     def discover(self, root: str) -> list[str]:
@@ -111,7 +129,7 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
     def test_current_folder_replacement_emits_its_normalized_ordered_paths(
         self,
     ) -> None:
-        root = "/photos"
+        root = fixture_path("/photos")
         self.discovery.results[root] = ["/photos/./b.jpg", "/photos/a.jpg"]
 
         request = self.coordinator.replace_workspace_from_folder(root)
@@ -125,15 +143,18 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=request.workspace_generation,
                     request_id=request.request_id,
                     root=root,
-                    paths=("/photos/b.jpg", "/photos/a.jpg"),
+                    paths=(
+                        fixture_path("/photos/b.jpg"),
+                        fixture_path("/photos/a.jpg"),
+                    ),
                     drop_sequence=None,
                 )
             ],
         )
 
     def test_superseded_folder_replacement_discards_its_completion(self) -> None:
-        first_root = "/first"
-        second_root = "/second"
+        first_root = fixture_path("/first")
+        second_root = fixture_path("/second")
         self.discovery.results[first_root] = ["/first/photo.jpg"]
         self.discovery.results[second_root] = ["/second/photo.jpg"]
 
@@ -150,15 +171,15 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=current.workspace_generation,
                     request_id=current.request_id,
                     root=second_root,
-                    paths=("/second/photo.jpg",),
+                    paths=(fixture_path("/second/photo.jpg"),),
                     drop_sequence=None,
                 )
             ],
         )
 
     def test_superseded_folder_replacement_discards_its_failure(self) -> None:
-        first_root = "/first"
-        second_root = "/second"
+        first_root = fixture_path("/first")
+        second_root = fixture_path("/second")
         self.discovery.results[first_root] = RuntimeError("unavailable")
         self.discovery.results[second_root] = ["/second/photo.jpg"]
 
@@ -175,15 +196,15 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=current.workspace_generation,
                     request_id=current.request_id,
                     root=second_root,
-                    paths=("/second/photo.jpg",),
+                    paths=(fixture_path("/second/photo.jpg"),),
                     drop_sequence=None,
                 )
             ],
         )
 
     def test_additive_discoveries_release_in_drop_initiation_order(self) -> None:
-        first_root = "/first-drop"
-        second_root = "/second-drop"
+        first_root = fixture_path("/first-drop")
+        second_root = fixture_path("/second-drop")
         self.discovery.results[first_root] = ["/first-drop/one.jpg"]
         self.discovery.results[second_root] = ["/second-drop/two.jpg"]
 
@@ -202,7 +223,7 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=first.workspace_generation,
                     request_id=first.request_id,
                     root=first_root,
-                    paths=("/first-drop/one.jpg",),
+                    paths=(fixture_path("/first-drop/one.jpg"),),
                     drop_sequence=0,
                 ),
                 DiscoveryCompleted(
@@ -210,15 +231,15 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=second.workspace_generation,
                     request_id=second.request_id,
                     root=second_root,
-                    paths=("/second-drop/two.jpg",),
+                    paths=(fixture_path("/second-drop/two.jpg"),),
                     drop_sequence=1,
                 ),
             ],
         )
 
     def test_failed_drop_releases_later_drop_in_initiation_order(self) -> None:
-        first_root = "/first-drop"
-        second_root = "/second-drop"
+        first_root = fixture_path("/first-drop")
+        second_root = fixture_path("/second-drop")
         self.discovery.results[first_root] = RuntimeError("unavailable")
         self.discovery.results[second_root] = ["/second-drop/two.jpg"]
 
@@ -245,15 +266,15 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=second.workspace_generation,
                     request_id=second.request_id,
                     root=second_root,
-                    paths=("/second-drop/two.jpg",),
+                    paths=(fixture_path("/second-drop/two.jpg"),),
                     drop_sequence=1,
                 ),
             ],
         )
 
     def test_replacement_discards_pending_additive_discovery(self) -> None:
-        dropped_root = "/dropped"
-        replacement_root = "/replacement"
+        dropped_root = fixture_path("/dropped")
+        replacement_root = fixture_path("/replacement")
         self.discovery.results[dropped_root] = ["/dropped/photo.jpg"]
         self.discovery.results[replacement_root] = ["/replacement/photo.jpg"]
 
@@ -270,7 +291,7 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     workspace_generation=replacement.workspace_generation,
                     request_id=replacement.request_id,
                     root=replacement_root,
-                    paths=("/replacement/photo.jpg",),
+                    paths=(fixture_path("/replacement/photo.jpg"),),
                     drop_sequence=None,
                 )
             ],
@@ -297,33 +318,29 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         )
 
     def test_initial_sync_reuses_the_discovered_paths(self) -> None:
-        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.coordinator.ensure_index(root, [photo])
 
         self.runner.run()
 
         self.assertEqual(
             self.index.calls,
-            [
-                ("initialized", "/photos", None),
-                ("sync", "/photos", ("/photos/one.jpg",)),
-            ],
+            [("initialized", root, None), ("sync", root, (photo,))],
         )
         self.assertEqual(self.discovery.requests, [])
         self.assertEqual(
             self.events,
-            [
-                IndexEnsureCompleted(
-                    root="/photos",
-                    result={"paths": ("/photos/one.jpg",)},
-                )
-            ],
+            [IndexEnsureCompleted(root=root, result={"paths": (photo,)})],
         )
 
     def test_read_runs_without_waiting_for_a_root_write(self) -> None:
-        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
-        self.index.search_results[("/photos", "tag:bird")] = ["/photos/one.jpg"]
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.coordinator.ensure_index(root, [photo])
+        self.index.search_results[(root, "tag:bird")] = [photo]
         request = self.coordinator.search_index(
-            "/photos", "tag:bird", workspace_generation=4
+            root, "tag:bird", workspace_generation=4
         )
 
         self.assertEqual(len(self.runner.scheduled), 2)
@@ -331,41 +348,33 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
 
         self.assertEqual(
             self.events,
-            [
-                IndexSearchCompleted(
-                    request=request,
-                    paths=("/photos/one.jpg",),
-                )
-            ],
+            [IndexSearchCompleted(request=request, paths=(photo,))],
         )
 
     def test_superseded_search_does_not_emit_a_ui_eligible_result(self) -> None:
-        self.index.search_results[("/photos", "first")] = ["/photos/first.jpg"]
-        self.index.search_results[("/photos", "second")] = ["/photos/second.jpg"]
+        root = fixture_path("/photos")
+        self.index.search_results[(root, "first")] = [fixture_path("/photos/first.jpg")]
+        second_photo = fixture_path("/photos/second.jpg")
+        self.index.search_results[(root, "second")] = [second_photo]
 
-        self.coordinator.search_index("/photos", "first", workspace_generation=4)
-        current = self.coordinator.search_index(
-            "/photos", "second", workspace_generation=4
-        )
+        self.coordinator.search_index(root, "first", workspace_generation=4)
+        current = self.coordinator.search_index(root, "second", workspace_generation=4)
         self.runner.run(0)
         self.runner.run(0)
 
         self.assertEqual(
             self.events,
-            [
-                IndexSearchCompleted(
-                    request=current,
-                    paths=("/photos/second.jpg",),
-                )
-            ],
+            [IndexSearchCompleted(request=current, paths=(second_photo,))],
         )
 
     def test_superseded_known_tag_refresh_does_not_emit_a_result(self) -> None:
-        self.index.known_tags["/first"] = {"first"}
-        self.index.known_tags["/second"] = {"second"}
+        first_root = fixture_path("/first")
+        second_root = fixture_path("/second")
+        self.index.known_tags[first_root] = {"first"}
+        self.index.known_tags[second_root] = {"second"}
 
-        self.coordinator.load_known_tags("/first", workspace_generation=1)
-        current = self.coordinator.load_known_tags("/second", workspace_generation=2)
+        self.coordinator.load_known_tags(first_root, workspace_generation=1)
+        current = self.coordinator.load_known_tags(second_root, workspace_generation=2)
         self.runner.run(0)
         self.runner.run(0)
 
@@ -375,8 +384,10 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         )
 
     def test_different_roots_can_be_scheduled_independently(self) -> None:
-        self.coordinator.ensure_index("/first", ["/first/one.jpg"])
-        self.coordinator.ensure_index("/second", ["/second/two.jpg"])
+        first_root = fixture_path("/first")
+        second_root = fixture_path("/second")
+        self.coordinator.ensure_index(first_root, [fixture_path("/first/one.jpg")])
+        self.coordinator.ensure_index(second_root, [fixture_path("/second/two.jpg")])
 
         self.assertEqual(len(self.runner.scheduled), 2)
         self.runner.run(1)
@@ -384,27 +395,26 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
 
         self.assertEqual(
             [call[1] for call in self.index.calls if call[0] == "sync"],
-            ["/second", "/first"],
+            [second_root, first_root],
         )
 
     def test_updates_for_one_root_coalesce_to_the_newest_state(self) -> None:
-        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
-        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "old"})
-        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "new"})
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.coordinator.ensure_index(root, [photo])
+        self.coordinator.submit_confirmed_states(root, {photo: "old"})
+        self.coordinator.submit_confirmed_states(root, {photo: "new"})
 
         self.runner.run()
         self.runner.run()
 
-        self.assertEqual(
-            self.index.calls[-1],
-            ("update", "/photos", {"/photos/one.jpg": "new"}),
-        )
+        self.assertEqual(self.index.calls[-1], ("update", root, {photo: "new"}))
 
     def test_confirmed_update_waits_for_full_sync(self) -> None:
-        self.coordinator.ensure_index("/photos", ["/photos/one.jpg"])
-        self.coordinator.submit_confirmed_states(
-            "/photos", {"/photos/one.jpg": "tagged"}
-        )
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.coordinator.ensure_index(root, [photo])
+        self.coordinator.submit_confirmed_states(root, {photo: "tagged"})
 
         self.assertEqual(len(self.runner.scheduled), 1)
         self.runner.run()
@@ -416,13 +426,13 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         )
 
     def test_stale_index_refreshes_in_the_serial_root_queue(self) -> None:
-        self.index.initialized.add("/photos")
-        self.index.stale.add("/photos")
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.initialized.add(root)
+        self.index.stale.add(root)
 
-        request = self.coordinator.refresh_if_stale("/photos", workspace_generation=7)
-        self.coordinator.submit_confirmed_states(
-            "/photos", {"/photos/one.jpg": "tagged"}
-        )
+        request = self.coordinator.refresh_if_stale(root, workspace_generation=7)
+        self.coordinator.submit_confirmed_states(root, {photo: "tagged"})
         self.runner.run()
         self.runner.run()
 
@@ -430,27 +440,28 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
             [call[0] for call in self.index.calls], ["stale", "refresh", "update"]
         )
         self.assertIn(
-            IndexRefreshCompleted(request=request, result={"refreshed": "/photos"}),
+            IndexRefreshCompleted(request=request, result={"refreshed": root}),
             self.events,
         )
 
     def test_fresh_automatic_refresh_reports_no_work(self) -> None:
-        request = self.coordinator.refresh_if_stale("/photos", workspace_generation=3)
+        root = fixture_path("/photos")
+        request = self.coordinator.refresh_if_stale(root, workspace_generation=3)
 
         self.runner.run()
 
-        self.assertEqual(self.index.calls, [("stale", "/photos", None)])
+        self.assertEqual(self.index.calls, [("stale", root, None)])
         self.assertEqual(
             self.events,
             [IndexRefreshCompleted(request=request, result=None)],
         )
 
     def test_manual_reindex_failure_does_not_stop_later_writes(self) -> None:
-        self.index.fail_next.add(("refresh", "/photos"))
-        request = self.coordinator.reindex("/photos", workspace_generation=5)
-        self.coordinator.submit_confirmed_states(
-            "/photos", {"/photos/one.jpg": "tagged"}
-        )
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.fail_next.add(("refresh", root))
+        request = self.coordinator.reindex(root, workspace_generation=5)
+        self.coordinator.submit_confirmed_states(root, {photo: "tagged"})
 
         self.runner.run()
         self.runner.run()
@@ -460,17 +471,17 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
             IndexRefreshFailed(request=request, error="refresh failed"), self.events
         )
         self.assertIn(
-            IndexWriteCompleted(
-                root="/photos", operation=IndexOperationKind.UPDATE_STATES
-            ),
+            IndexWriteCompleted(root=root, operation=IndexOperationKind.UPDATE_STATES),
             self.events,
         )
 
     def test_failed_write_does_not_stop_later_work(self) -> None:
-        self.index.initialized.add("/photos")
-        self.index.fail_next.add(("update", "/photos"))
-        self.coordinator.submit_confirmed_states("/photos", {"/photos/one.jpg": "bad"})
-        self.coordinator.index_missing_paths("/photos", ["/photos/two.jpg"])
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.initialized.add(root)
+        self.index.fail_next.add(("update", root))
+        self.coordinator.submit_confirmed_states(root, {photo: "bad"})
+        self.coordinator.index_missing_paths(root, [fixture_path("/photos/two.jpg")])
 
         self.runner.run()
         self.runner.run()
@@ -478,17 +489,14 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         self.assertEqual([call[0] for call in self.index.calls], ["update", "missing"])
         self.assertIn(
             IndexWriteFailed(
-                root="/photos",
+                root=root,
                 operation=IndexOperationKind.UPDATE_STATES,
                 error="update failed",
             ),
             self.events,
         )
         self.assertIn(
-            IndexWriteCompleted(
-                root="/photos",
-                operation=IndexOperationKind.INDEX_MISSING,
-            ),
+            IndexWriteCompleted(root=root, operation=IndexOperationKind.INDEX_MISSING),
             self.events,
         )
 
