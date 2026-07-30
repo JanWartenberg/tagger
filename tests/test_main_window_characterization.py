@@ -21,7 +21,7 @@ from utils import normalize_path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 try:
-    from PyQt6 import QtCore, QtTest, QtWidgets
+    from PyQt6 import QtCore, QtGui, QtTest, QtWidgets
 except ModuleNotFoundError:
     PYQT_AVAILABLE = False
 else:
@@ -1021,6 +1021,60 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             timeout=5,
         )
         self.assertLess(time.monotonic() - started_at, 0.3)
+
+    def test_latest_selection_is_not_queued_behind_stale_preview_loads(self) -> None:
+        previous_max_threads = self.window.pool.maxThreadCount()
+        self.window.pool.setMaxThreadCount(1)
+        self.addCleanup(self.window.pool.setMaxThreadCount, previous_max_threads)
+
+        names = tuple(f"photo-{index}.jpg" for index in range(5))
+        for index, name in enumerate(names):
+            path = normalize_path(Path("C:/photos") / name)
+            FakeExifTool.states_by_path[path] = KeywordState(
+                [f"tag-{index}"], [f"tag-{index}"]
+            )
+        paths = self._add_paths(*names)
+        self._wait_until(
+            lambda: self.window.keywordsList.count() == 1
+            and self.window.keywordsList.item(0).text() == "tag-0"
+        )
+
+        class SlowImageReader:
+            started_paths: list[str] = []
+
+            def __init__(self, path: str) -> None:
+                self.path = path
+
+            def setAutoTransform(self, _enabled: bool) -> None:
+                pass
+
+            def read(self) -> QtGui.QImage:
+                type(self).started_paths.append(self.path)
+                time.sleep(0.1)
+                return QtGui.QImage(1, 1, QtGui.QImage.Format.Format_RGB32)
+
+        with patch("exif_ui.QtGui.QImageReader", SlowImageReader):
+            started_at = time.monotonic()
+            for row in range(1, len(paths)):
+                self.window.files.setCurrentItem(
+                    self.window.files.item(row),
+                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+                )
+                time.sleep(0.03)
+                self.app.processEvents()
+            self._wait_until(
+                lambda: self.window.keywordsList.count() == 1
+                and self.window.keywordsList.item(0).text() == "tag-4",
+                timeout=5,
+            )
+            self._wait_until(
+                lambda: self.window.previewLabel.pixmap() is not None
+                and not self.window.previewLabel.pixmap().isNull(),
+                timeout=5,
+            )
+
+        self.assertEqual(SlowImageReader.started_paths, [paths[-1]])
+        self.assertLess(time.monotonic() - started_at, 0.4)
 
     def test_clearing_selection_rejects_inflight_metadata_rendering(self) -> None:
         self._add_paths("first.jpg", "second.jpg")

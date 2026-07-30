@@ -59,6 +59,8 @@ from utils import dedupe_casefold, normalize_path
 
 DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
 METADATA_READ_DEBOUNCE_MS = 25
+PREVIEW_LOAD_DEBOUNCE_MS = 125
+METADATA_READ_PRIORITY = 1_000_000
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -213,6 +215,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
+        self._queued_preview_workers: list[Worker] = []
         self._tag_mutation_coordinator = TagMutationCoordinator(
             runner=QtTagMutationRunner(self.pool),
             event_sink=self._handle_tag_mutation_lifecycle,
@@ -234,6 +237,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._metadata_read_timer.setSingleShot(True)
         self._metadata_read_timer.setInterval(METADATA_READ_DEBOUNCE_MS)
         self._metadata_read_timer.timeout.connect(self._start_pending_metadata_read)
+        self._pending_preview_load: tuple[int, str] | None = None
+        self._preview_load_timer = QtCore.QTimer(self)
+        self._preview_load_timer.setSingleShot(True)
+        self._preview_load_timer.setInterval(PREVIEW_LOAD_DEBOUNCE_MS)
+        self._preview_load_timer.timeout.connect(self._start_pending_preview_load)
         self.photo_workspace = PhotoWorkspace()
         self._active_replacement_discovery: DiscoveryRequest | None = None
         self._pending_additive_discoveries: set[int] = set()
@@ -1932,6 +1940,9 @@ class MainWindow(QtWidgets.QMainWindow):
         sel = list(snapshot.selected_paths)
         if not sel:
             self._preview_token += 1
+            self._pending_preview_load = None
+            self._preview_load_timer.stop()
+            self._discard_queued_previews()
             self.selectedLabel.setText("Drop JPG/JPEG files here")
             self.mutationStatusLabel.setText("")
             self.mismatchLabel.setText("")
@@ -1994,14 +2005,36 @@ class MainWindow(QtWidgets.QMainWindow):
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        self.pool.start(worker, METADATA_READ_PRIORITY)
+
+    def _discard_queued_previews(self) -> None:
+        for worker in self._queued_preview_workers:
+            try:
+                self.pool.tryTake(worker)
+            except RuntimeError:
+                pass
+        self._queued_preview_workers.clear()
+
+    def _forget_queued_preview(self, worker: Worker) -> None:
+        try:
+            self._queued_preview_workers.remove(worker)
+        except ValueError:
+            pass
 
     def _load_preview_async(self, path: str) -> None:
+        self._discard_queued_previews()
         self._preview_token += 1
-        token = self._preview_token
+        self._pending_preview_load = (self._preview_token, path)
         self.previewLabel.setText("Loading preview...")
         self.previewLabel.setPixmap(QtGui.QPixmap())
         self._preview_image = None
+        self._preview_load_timer.start()
+
+    def _start_pending_preview_load(self) -> None:
+        if self._pending_preview_load is None:
+            return
+        token, path = self._pending_preview_load
+        self._pending_preview_load = None
 
         def _work(p: str) -> QtGui.QImage:
             reader = QtGui.QImageReader(p)
@@ -2014,6 +2047,7 @@ class MainWindow(QtWidgets.QMainWindow):
         worker = Worker(_work, path)
 
         def _ok(img: QtGui.QImage) -> None:
+            self._forget_queued_preview(worker)
             if token != self._preview_token:
                 return
             self._preview_image = img
@@ -2021,6 +2055,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.previewLabel.setText("")
 
         def _err(msg: str) -> None:
+            self._forget_queued_preview(worker)
             if token != self._preview_token:
                 return
             self.previewLabel.setText("No preview")
@@ -2029,6 +2064,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
+        self._queued_preview_workers.append(worker)
         self.pool.start(worker)
 
     def _update_preview_pixmap(self) -> None:
