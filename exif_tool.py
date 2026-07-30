@@ -118,12 +118,14 @@ class ExifTool:
             _clean(xmp),
             _first_str([
                 "EXIF:DateTimeOriginal",
+                "ExifIFD:DateTimeOriginal",
                 "DateTimeOriginal",
                 "Composite:SubSecDateTimeOriginal",
                 "SubSecDateTimeOriginal",
             ]),
             _first_str([
                 "EXIF:CreateDate",
+                "ExifIFD:CreateDate",
                 "CreateDate",
                 "Composite:SubSecCreateDate",
                 "SubSecCreateDate",
