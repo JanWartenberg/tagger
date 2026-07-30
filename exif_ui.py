@@ -58,6 +58,7 @@ from utils import dedupe_casefold, normalize_path
 
 
 DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
+METADATA_READ_DEBOUNCE_MS = 25
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -227,6 +228,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_index_refresh_request: IndexRefreshRequest | None = None
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
+        self._pending_metadata_read: tuple[int, str] | None = None
+        self._metadata_read_in_flight = False
+        self._metadata_read_timer = QtCore.QTimer(self)
+        self._metadata_read_timer.setSingleShot(True)
+        self._metadata_read_timer.setInterval(METADATA_READ_DEBOUNCE_MS)
+        self._metadata_read_timer.timeout.connect(self._start_pending_metadata_read)
         self.photo_workspace = PhotoWorkspace()
         self._active_replacement_discovery: DiscoveryRequest | None = None
         self._pending_additive_discoveries: set[int] = set()
@@ -1919,8 +1926,12 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.select_paths(requested_paths)
         if snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
             self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
+        self._selection_token += 1
+        self._pending_metadata_read = None
+        self._metadata_read_timer.stop()
         sel = list(snapshot.selected_paths)
         if not sel:
+            self._preview_token += 1
             self.selectedLabel.setText("Drop JPG/JPEG files here")
             self.mutationStatusLabel.setText("")
             self.mismatchLabel.setText("")
@@ -1929,6 +1940,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dateLabel.setText("")
             self.previewLabel.setText("No preview")
             self.previewLabel.setPixmap(QtGui.QPixmap())
+            self._preview_image = None
             self.refresh_known_tags()
             return
 
@@ -1938,33 +1950,47 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_mutation_status_view()
         self._load_preview_async(current)
 
-        self._selection_token += 1
-        token = self._selection_token
+        self._pending_metadata_read = (self._selection_token, current)
         self.statusBar().showMessage("Reading keywords...")
+        self._schedule_pending_metadata_read()
 
+    def _schedule_pending_metadata_read(self) -> None:
+        if self._metadata_read_in_flight:
+            return
+        self._metadata_read_timer.start()
+
+    def _start_pending_metadata_read(self) -> None:
+        if self._metadata_read_in_flight or self._pending_metadata_read is None:
+            return
+        token, current = self._pending_metadata_read
+        self._pending_metadata_read = None
+        self._metadata_read_in_flight = True
         worker = Worker(self.exif.read_keywords, current)
 
         def _ok(st: KeywordState) -> None:
-            if token != self._selection_token:
-                return
-            self._tag_mutation_coordinator.remember_confirmed({current: st})
-            displayed = self._tag_mutation_coordinator.metadata_for(current) or st
-            self._keywords_cache[current] = displayed
-            self._update_index_states({current: st})
-            self._render_keywords(displayed)
-            self._refresh_mutation_status_view()
-            if st.date_display:
-                self.dateLabel.setText(f"Capture date: {st.date_display}")
-            else:
-                self.dateLabel.setText("Capture date: (missing)")
-            self.statusBar().showMessage("Ready")
-            self.refresh_known_tags()
+            self._metadata_read_in_flight = False
+            if token == self._selection_token:
+                self._tag_mutation_coordinator.remember_confirmed({current: st})
+                displayed = self._tag_mutation_coordinator.metadata_for(current) or st
+                self._keywords_cache[current] = displayed
+                self._update_index_states({current: st})
+                self._render_keywords(displayed)
+                self._refresh_mutation_status_view()
+                if st.date_display:
+                    self.dateLabel.setText(f"Capture date: {st.date_display}")
+                else:
+                    self.dateLabel.setText("Capture date: (missing)")
+                if self.statusBar().currentMessage() == "Reading keywords...":
+                    self.statusBar().showMessage("Ready")
+                self.refresh_known_tags()
+            self._schedule_pending_metadata_read()
 
         def _err(msg: str) -> None:
-            if token != self._selection_token:
-                return
-            self.statusBar().showMessage("Error")
-            self._show_error(msg)
+            self._metadata_read_in_flight = False
+            if token == self._selection_token:
+                self.statusBar().showMessage("Error")
+                self._show_error(msg)
+            self._schedule_pending_metadata_read()
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)

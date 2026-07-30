@@ -88,8 +88,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         return [normalize_path(path) for path in paths]
 
-    def _wait_until(self, condition) -> None:
-        deadline = time.monotonic() + 2
+    def _wait_until(self, condition, *, timeout: float = 2) -> None:
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self.discovery_runner.run_index_work()
             self.app.processEvents()
@@ -989,6 +989,61 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Search: tag:second · 1 results · :back",
         )
 
+    def test_latest_selection_is_not_delayed_by_stale_metadata_reads(self) -> None:
+        previous_max_threads = self.window.pool.maxThreadCount()
+        self.window.pool.setMaxThreadCount(1)
+        self.addCleanup(self.window.pool.setMaxThreadCount, previous_max_threads)
+
+        names = tuple(f"photo-{index}.jpg" for index in range(7))
+        for index, name in enumerate(names):
+            path = normalize_path(Path("C:/photos") / name)
+            FakeExifTool.states_by_path[path] = KeywordState(
+                [f"tag-{index}"], [f"tag-{index}"]
+            )
+        paths = self._add_paths(*names)
+        self._wait_until(
+            lambda: self.window.keywordsList.count() == 1
+            and self.window.keywordsList.item(0).text() == "tag-0"
+        )
+
+        FakeExifTool.read_delay_seconds = 0.1
+        started_at = time.monotonic()
+        for row in range(1, len(paths)):
+            self.window.files.setCurrentItem(
+                self.window.files.item(row),
+                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            self.app.processEvents()
+
+        self._wait_until(
+            lambda: self.window.keywordsList.count() == 1
+            and self.window.keywordsList.item(0).text() == "tag-6",
+            timeout=5,
+        )
+        self.assertLess(time.monotonic() - started_at, 0.3)
+
+    def test_clearing_selection_rejects_inflight_metadata_rendering(self) -> None:
+        self._add_paths("first.jpg", "second.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.read_delay_seconds = 0.1
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self._wait_until(FakeExifTool.metadata_read_started.is_set)
+        self.window.files.selectionModel().clearSelection()
+        self.app.processEvents()
+
+        self._wait_until(lambda: not self.window.selected_file_paths())
+        QtTest.QTest.qWait(150)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selectedLabel.text(), "Drop JPG/JPEG files here")
+        self.assertEqual(self.window.keywordsList.count(), 0)
+        self.assertEqual(self.window.dateLabel.text(), "")
+        self.assertNotEqual(self.window.statusBar().currentMessage(), "Ready")
+
     def test_known_tag_filter_uses_the_loaded_snapshot_without_a_read(self) -> None:
         self._add_paths("one.jpg")
         FakePhotoIndex.known_tags = {"coordinator-bird", "coordinator-beach"}
@@ -1151,21 +1206,25 @@ class FakePhotoDiscovery:
 
 
 class FakeExifTool:
+    read_delay_seconds = 0.0
     fail_writes = False
     scan_error: Exception | None = None
     write_failures: list[bool] = []
     write_calls: list[tuple[str, list[str]]] = []
     states_by_path: dict[str, KeywordState] = {}
+    metadata_read_started = threading.Event()
     write_started = threading.Event()
     _allow_writes = threading.Event()
 
     @classmethod
     def reset(cls) -> None:
+        cls.read_delay_seconds = 0.0
         cls.fail_writes = False
         cls.scan_error = None
         cls.write_failures = []
         cls.write_calls = []
         cls.states_by_path = {}
+        cls.metadata_read_started = threading.Event()
         cls.write_started = threading.Event()
         cls._allow_writes = threading.Event()
         cls._allow_writes.set()
@@ -1179,6 +1238,9 @@ class FakeExifTool:
         cls._allow_writes.set()
 
     def read_keywords(self, path: str) -> "KeywordState":
+        if type(self).read_delay_seconds:
+            type(self).metadata_read_started.set()
+            time.sleep(type(self).read_delay_seconds)
         return type(self).states_by_path.get(
             normalize_path(path), KeywordState(["confirmed"], ["confirmed"])
         )
