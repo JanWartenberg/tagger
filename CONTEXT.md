@@ -14,6 +14,9 @@ The photo set produced by a user-triggered IPTC-empty filter run. Tagging photos
 **Capture date**:
 The calendar date used by a date query. It comes from `EXIF:DateTimeOriginal`; if that is absent, it comes from `EXIF:CreateDate`. Its stored time or timezone never changes its calendar day. A photo without either value, or with an unusable date value, has no capture date and is date-unknown.
 
+**Stale-result index repair**:
+A background root-index refresh started because TAGGER cannot read a path returned by an active indexed search. It removes missing index rows and may discover a renamed replacement during its normal scan. It is distinct from the IPTC-empty filter's future `:resync` command.
+
 **Confirmed metadata state**:
 The latest metadata state that TAGGER has successfully read from or written to a photo file. It is the basis for restoring a failed mutation and recomputing later pending mutations.
 
