@@ -1,6 +1,7 @@
 # AI-Assisted Tag Suggestions
 
 Status: needs-triage
+Priority: low
 
 ## Problem Statement
 

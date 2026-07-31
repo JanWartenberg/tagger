@@ -1,6 +1,7 @@
 # 01 — Research and Decide Keyword-Length Policy
 
 Status: needs-triage
+Priority: medium
 Category: research
 Blocked by: None
 

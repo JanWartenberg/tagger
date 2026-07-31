@@ -32,10 +32,17 @@ Linux and other POSIX environments:
 QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
 ```
 
-Windows, from the activated project virtual environment:
+Windows Command Prompt (`cmd.exe`), from the activated project virtual environment:
 
 ```bat
 set QT_QPA_PLATFORM=offscreen
+python -m unittest discover -s tests -v
+```
+
+Windows PowerShell:
+
+```powershell
+$env:QT_QPA_PLATFORM = 'offscreen'
 python -m unittest discover -s tests -v
 ```
 

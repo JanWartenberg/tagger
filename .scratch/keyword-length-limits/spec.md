@@ -1,6 +1,7 @@
 # Keyword Length Limits
 
 Status: needs-triage
+Priority: medium
 
 ## Problem Statement
 

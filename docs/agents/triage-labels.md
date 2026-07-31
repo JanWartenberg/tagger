@@ -9,3 +9,7 @@
 | `wontfix` | `wontfix` | Will not be actioned |
 
 Use the local status corresponding to the canonical role when an engineering skill requests a triage label.
+
+## Terminal state
+
+`completed` is a lifecycle state, not a triage label. Use `Status: completed` when a ticket's accepted work and required validation are finished. It is intentionally separate from the five triage labels above.

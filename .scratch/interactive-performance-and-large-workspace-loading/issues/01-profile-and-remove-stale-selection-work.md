@@ -1,6 +1,6 @@
 # 01 — Profile and Remove Stale Selection Work
 
-Status: ready-for-windows-acceptance
+Status: completed
 Category: bug
 Priority: high
 Blocked by: None
@@ -17,7 +17,7 @@ Make the last photo selected during rapid keyboard navigation responsive without
 - [x] The fix preserves non-blocking UI acknowledgement and existing selection behavior.
 - [x] The full offscreen suite, Ruff, formatting, and `git diff --check` pass.
 
-## Confirmed Reproduction
+## Original Reproduction (fixed)
 
 Run:
 
@@ -26,23 +26,19 @@ QT_QPA_PLATFORM=offscreen python3 -m unittest \
   tests.test_main_window_characterization.MainWindowCharacterizationTests.test_latest_selection_is_not_delayed_by_stale_metadata_reads -v
 ```
 
-Current result: red. The final selection took approximately 0.66 seconds and failed the 0.3-second budget. The test is intentionally minimized to six quick changes; the observed user workflow usually involves 20–30 changes and can take seconds.
+Before the fix, the final selection took approximately 0.66 seconds and failed the 0.3-second budget. The test is intentionally minimized to six quick changes; the observed user workflow usually involves 20–30 changes and could take seconds.
 
-## First Hypothesis to Test
+## Resolution
 
 `MainWindow.on_selection_changed()` starts a new worker for every selection. `_selection_token` suppresses stale rendering only after each `ExifTool.read_keywords()` call has already run. With constrained or busy workers, obsolete reads fill the queue and the final selection waits for them.
 
-Prediction: replace the per-selection FIFO submission with a latest-selection-wins/coalescing seam. The final selection will pass the regression test without making individual ExifTool reads faster.
+Implemented: a latest-selection-wins/coalescing seam replaces per-selection FIFO submission, allowing the final selection to pass the regression test without making individual ExifTool reads faster.
 
-## Follow-up Measurements, Not Preapproved Work
+## Follow-up Work
 
-After this hypothesis is tested and fixed, profile these separately before opening implementation work:
-
-1. Stale preview work shares the global Qt thread pool and may still occupy workers.
-2. Discovery of a 29,821-photo folder returns only after the complete traversal; assess progress reporting and an early usable batch.
-3. A `date:2025` search returning 2,910 results takes about five seconds; separate SQLite, queue-wait, and list-rendering costs.
-
-These follow-ups may be rejected if measurement does not establish a material bottleneck.
+1. Stale preview work shared the global Qt thread pool. Completed: preview loading is debounced and stale queued preview workers are discarded.
+2. Discovery of a 29,821-photo folder returns only after the complete traversal. Rejected for this feature.
+3. A `date:2025` search returning 2,910 results takes about five seconds. Rejected for this feature.
 
 ## User Observations
 
@@ -53,16 +49,16 @@ These follow-ups may be rejected if measurement does not establish a material bo
 
 ## Comments
 
-Created before product-ticket triage because interaction latency is a P0 usability issue. Continue tomorrow with the red regression test and the first hypothesis; do not begin the other optimizations without their own measurement.
+Created before product-ticket triage because interaction latency was a P0 usability issue. The regression and its first hypothesis are now resolved; the remaining follow-up work is recorded above.
 
 Implemented a latest-selection-wins metadata-read seam in `MainWindow`: selection changes replace one pending read, a 25 ms owned Qt timer coalesces rapid changes, and only one read can be in flight. Selection clearing invalidates pending metadata and preview work. Metadata completion also preserves newer status feedback rather than replacing it with `Ready`.
 
-Linux validation passed:
+Most recent Linux validation on the current `HEAD` passed:
 
-- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (111 tests)
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (113 tests)
 - `ruff check exif_ui.py tests/test_main_window_characterization.py`
 - `ruff format --check exif_ui.py tests/test_main_window_characterization.py`
 - `python3 -m compileall -q exif_ui.py tests/test_main_window_characterization.py`
 - `git diff --check`
 
-The project is Windows-first, so the required Windows offscreen acceptance remains before marking this ticket completed.
+Windows live acceptance confirmed that scrolling is responsive and behaves as expected. This closes the ticket. The user explicitly declined further investigation of 20,000+ photo loading, discovery progress, and large-search timing for this feature.

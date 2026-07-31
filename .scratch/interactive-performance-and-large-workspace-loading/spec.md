@@ -1,6 +1,6 @@
 # Interactive Performance and Large-Workspace Loading
 
-Status: ready-for-windows-acceptance
+Status: completed
 Priority: high
 
 ## Problem Statement
@@ -9,9 +9,13 @@ TAGGER becomes perceptibly slow on a real Windows/Dropbox photo library. Loading
 
 ## Desired Outcome
 
-Keep direct UI acknowledgement responsive while metadata, previews, discovery, and index work continue in the background. The final photo after rapid navigation must not wait behind stale work. Large folder loads must provide useful, truthful progress and be investigated for earlier usable rendering.
+Keep direct UI acknowledgement responsive while metadata and previews continue in the background. The final photo after rapid navigation must not wait behind stale work.
 
-## Confirmed Reproduction
+## Completion Decision
+
+Windows live acceptance found scrolling responsive and behaving as expected. The stale metadata-read and preview-load work is complete. Investigation of 20,000+ photo loading, discovery progress, and large search timing is not required for this feature and is closed without further work.
+
+## Original Reproduction (fixed)
 
 `tests/test_main_window_characterization.py` contains a minimal, agent-runnable red test for stale selection work:
 
@@ -25,10 +29,10 @@ It uses six rapid selection changes, a constrained one-worker pool, and 100 ms s
 ## Investigation Order
 
 1. Test and fix stale metadata-read work from rapid selection changes. The current selection token discards stale results but does not prevent their queued Exif reads from running.
-2. Measure whether stale preview jobs on the shared global Qt thread pool still delay the final selection after step 1.
-3. Measure large-folder discovery separately from workspace/list rendering. Current discovery returns one complete path list, so it cannot display an initial usable batch before traversal completes.
-4. Measure `date:` search separately for SQLite time, thread-pool wait time, and rendering time for the returned workspace.
-5. Only retain and implement later work that measurements show is material. Do not add a general cache, streaming discovery, or rendering rewrite speculatively.
+2. Measure whether stale preview jobs on the shared global Qt thread pool still delay the final selection after step 1. Completed: preview loading is debounced and stale queued preview workers are discarded.
+3. Measure large-folder discovery separately from workspace/list rendering. Rejected for this feature by the completion decision.
+4. Measure `date:` search separately for SQLite time, thread-pool wait time, and rendering time for the returned workspace. Rejected for this feature by the completion decision.
+5. Do not add a general cache, streaming discovery, or rendering rewrite speculatively.
 
 ## Constraints
 

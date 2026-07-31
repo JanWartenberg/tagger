@@ -1,6 +1,7 @@
 # 01 — Evaluate Practical Multi-Photo Tagging
 
 Status: needs-triage
+Priority: medium
 Category: product-discovery
 Blocked by: None
 

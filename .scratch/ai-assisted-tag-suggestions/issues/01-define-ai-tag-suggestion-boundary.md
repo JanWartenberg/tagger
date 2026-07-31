@@ -1,6 +1,7 @@
 # 01 — Define the AI Tag-Suggestion Product Boundary
 
 Status: needs-triage
+Priority: low
 Category: product-decision
 Blocked by: None
 

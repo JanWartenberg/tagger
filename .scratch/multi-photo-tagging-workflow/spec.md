@@ -1,6 +1,7 @@
 # Multi-Photo Tagging Workflow Evaluation
 
 Status: needs-triage
+Priority: medium
 
 ## Problem Statement
 
