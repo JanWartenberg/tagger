@@ -1,6 +1,6 @@
 # File-Pane Open, Copy, and Reveal Actions
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement
@@ -13,7 +13,7 @@ Add four file-pane actions to the existing action catalogue. Each action must be
 
 1. **Open** the active photo using the operating system's default application. On the Windows tagging workstation this is expected to be IrfanView through the normal file association; TAGGER must not hard-code an IrfanView executable path.
 2. **Open in GIMP** using `C:\Program Files\GIMP 3\bin\gimp-3.exe` on Windows, or a `gimp` executable found on `PATH` on other platforms.
-3. **Copy file path** for the active photo to the system clipboard as plain text.
+3. **Copy file paths** for every selected Photo Workspace photo to the system clipboard as newline-delimited plain text.
 4. **Open in system explorer** by opening the active photo's containing folder and selecting/revealing the photo where the platform supports that behavior.
 
 ## User Stories
@@ -27,7 +27,7 @@ Add four file-pane actions to the existing action catalogue. Each action must be
 
 - Add one catalogue action for each operation; do not add a parallel shortcut or command-dispatch mechanism. The commands are `:open`, `:opengimp` (with `:gimp` alias), `:copypath`, and `:reveal`.
 - Bind the file-pane sequences `Space O`, `Space G`, `Space C`, and `Space R`. Pressing `Space` shows a footer hint for those actions plus the existing `Space Y` and `Space P` routes for 1,000 ms.
-- Copy path and Reveal always target the active Photo Workspace path. If there is no active photo, do nothing destructive and use normal non-modal status feedback. Successful copying reports `"<absolute path>" was copied`; Reveal reports `Revealing "<absolute path>" in Explorer…` when initiated.
+- Copy path targets every selected Photo Workspace path and writes newline-delimited plain text. Reveal always targets the active Photo Workspace path. If there is no applicable photo, do nothing destructive and use normal non-modal status feedback. Successful single-path copying reports `"<absolute path>" was copied`; multi-path copying reports the copied count; Reveal reports `Revealing "<absolute path>" in Explorer…` when initiated.
 - Open uses the platform's normal file association. When opening all selected photos, submit each path independently and leave instance behavior to that application.
 - Open in GIMP resolves the fixed Windows path first and otherwise resolves `gimp` from `PATH`. It must report a non-modal error if no executable is available. When opening all selected photos, invoke GIMP once with every selected path and reuse an already-running GIMP instance when possible.
 - For either Open action with multiple selected photos, show a modal choice with All, active Only, and Cancel; Cancel is the default and Escape behavior.
@@ -37,7 +37,7 @@ Add four file-pane actions to the existing action catalogue. Each action must be
 ## Testing Decisions
 
 - Add offscreen MainWindow coverage that invokes each action through the action catalogue, command dispatcher, file-pane shortcut, and context menu as appropriate.
-- Assert the active path is passed to mocked OS opener/reveal helpers and that copy writes the expected plain-text path to a test clipboard.
+- Assert the active path is passed to mocked OS opener/reveal helpers and that copy writes the selected paths as expected newline-delimited plain text to a test clipboard.
 - Cover active-only, all, Cancel, launcher failure, and no-active-photo behavior.
 - Assert the four commands are included in the command list and their shortcuts/key routes are registered without displacing existing file-pane controls.
 - Cover right-click selection behavior: an unselected photo becomes the sole selection; a selected photo preserves the multi-selection; Ctrl+right-click adds an unselected photo, makes it active, and then opens the menu.
@@ -45,7 +45,7 @@ Add four file-pane actions to the existing action catalogue. Each action must be
 
 ## Triage Decisions
 
-- Copy path and Reveal operate on the active photo only. Both Open actions prompt for All, active Only, or Cancel when multiple photos are selected.
+- Copy path operates on every selected photo; Reveal operates on the active photo only. Both Open actions prompt for All, active Only, or Cancel when multiple photos are selected.
 - The file-pane context menu contains only the four new file actions. Right-clicking an unselected photo selects it alone; right-clicking an already selected photo preserves the selection; Ctrl+right-click adds an unselected photo and makes it active.
 - Launcher failures and no-active-photo cases use non-modal footer feedback.
 - GIMP configuration is intentionally deferred; the fixed Windows path and non-Windows `PATH` fallback are the current contract.
@@ -55,4 +55,4 @@ Add four file-pane actions to the existing action catalogue. Each action must be
 - Configuring, bundling, or detecting IrfanView.
 - A user-configurable GIMP executable path or support for other named editors.
 - Building an internal image viewer or file manager.
-- Bulk copying or revealing every selected file.
+- Bulk revealing every selected file.

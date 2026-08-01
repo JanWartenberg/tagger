@@ -5,8 +5,11 @@ TAGGER supports viewing, finding, and editing photo metadata while preserving a 
 ## Language
 
 **Photo Workspace**:
-The current collection of photos being worked on, including its active view mode, filter, selection, and restorable prior view state. It is the source of what the photo-files pane presents.
+The current collection of photos being worked on, including its active photo, active view mode, filter, selection, and restorable prior view state. It is the source of what the photo-files pane presents.
 _Avoid_: File list, photo list, files pane model
+
+**Active photo**:
+The selected Photo Workspace photo that drives the detail pane, preview, and active-only file actions. It may differ from the first photo in display-ordered multi-selection.
 
 **IPTC-empty filter view**:
 The photo set produced by a user-triggered IPTC-empty filter run. Tagging photos afterward must not remove them from this filtered list. The set remains stable after metadata mutations; the user explicitly reactivates the filter to compute a new view from current file metadata.
