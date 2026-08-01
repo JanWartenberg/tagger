@@ -3,6 +3,7 @@
 Status: needs-triage
 Category: product-decision
 Priority: low
+Milestone: M4 — Faster photo-finding and tagging workflows
 Blocked by: None
 
 ## Goal

@@ -3,6 +3,7 @@
 Status: needs-triage
 Category: feature
 Priority: low
+Milestone: M2 — Reliable, scalable index operations
 Blocked by: None
 
 ## Goal

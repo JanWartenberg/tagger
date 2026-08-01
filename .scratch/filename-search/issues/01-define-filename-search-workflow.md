@@ -5,6 +5,7 @@
 Status: needs-triage
 Category: enhancement
 Priority: medium
+Milestone: M4 — Faster photo-finding and tagging workflows
 Blocked by: None
 
 ## Goal

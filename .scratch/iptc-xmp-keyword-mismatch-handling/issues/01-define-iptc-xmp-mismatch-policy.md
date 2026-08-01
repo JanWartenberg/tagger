@@ -5,6 +5,7 @@
 Status: needs-triage
 Category: enhancement
 Priority: high
+Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
 Blocked by: None
 
 ## Goal

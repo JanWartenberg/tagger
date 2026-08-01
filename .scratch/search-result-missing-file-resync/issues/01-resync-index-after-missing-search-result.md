@@ -5,6 +5,7 @@
 Status: ready-for-agent
 Category: bug
 Priority: high
+Milestone: M2 — Reliable, scalable index operations
 Blocked by: None
 
 ## Reported Behavior
