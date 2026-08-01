@@ -350,6 +350,66 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
+            id="open",
+            description="Open active photo",
+            handler_name="_open_selected_photos",
+            command=CommandBinding("open"),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("Space", "o"),
+                    scope="list_widgets",
+                    widget_refs=("files",),
+                    timeout_ms=1_000,
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="opengimp",
+            description="Open active photo in GIMP",
+            handler_name="_open_selected_photos_in_gimp",
+            command=CommandBinding("opengimp", aliases=("gimp",)),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("Space", "g"),
+                    scope="list_widgets",
+                    widget_refs=("files",),
+                    timeout_ms=1_000,
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="copypath",
+            description="Copy active photo path",
+            handler_name="_copy_active_photo_path",
+            command=CommandBinding("copypath"),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("Space", "c"),
+                    scope="list_widgets",
+                    widget_refs=("files",),
+                    timeout_ms=1_000,
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="reveal",
+            description="Reveal active photo in Explorer",
+            handler_name="_reveal_active_photo",
+            command=CommandBinding("reveal"),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("Space", "r"),
+                    scope="list_widgets",
+                    widget_refs=("files",),
+                    timeout_ms=1_000,
+                ),
+            ),
+        ),
+        ActionSpec(
             id="escape",
             description="Reset focus / close command line",
             handler_name="_escape_action",

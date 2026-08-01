@@ -66,9 +66,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.reset()
         self.discovery = FakePhotoDiscovery()
         self.discovery_runner = DeterministicCoordinatorRunner()
+        self.file_actions = FakeFilePaneActions()
         self.window = MainWindow(
             discovery=self.discovery,
             background_runner=self.discovery_runner,
+            file_actions=self.file_actions,
         )
         self.window.show()
         self.window.activateWindow()
@@ -729,6 +731,177 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(clear.command.aliases, ("clear", "back"))
         self.assertEqual(clear.shortcuts[0].sequence, "Ctrl+Shift+X")
 
+    def test_file_pane_actions_are_catalogue_backed_and_listed(self) -> None:
+        expected = {
+            "open": ("open", (), "Space+o"),
+            "opengimp": ("opengimp", ("gimp",), "Space+g"),
+            "copypath": ("copypath", (), "Space+c"),
+            "reveal": ("reveal", (), "Space+r"),
+        }
+
+        for action_id, (command, aliases, shortcut) in expected.items():
+            action = self.window._actions_by_id[action_id]
+            self.assertEqual(action.command.name, command)
+            self.assertEqual(action.command.aliases, aliases)
+            self.assertIn(
+                shortcut, ["+".join(route.sequence) for route in action.key_routes]
+            )
+
+        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+            self.window._dispatch_command("listcommands", [])
+
+        command_list = information.call_args.args[2]
+        for command in expected.values():
+            self.assertIn(command[0], command_list)
+
+    def test_file_pane_actions_target_the_active_photo_through_commands_and_shortcuts(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.app.processEvents()
+
+        self.window._dispatch_command("open", [])
+        self.window._dispatch_command("gimp", [])
+        self.window._dispatch_command("copypath", [])
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), f'"{second}" was copied'
+        )
+        self.window._dispatch_command("reveal", [])
+
+        self.assertEqual(self.file_actions.default_open_calls, [(second,)])
+        self.assertEqual(self.file_actions.gimp_open_calls, [(second,)])
+        self.assertEqual(self.file_actions.copy_calls, [second])
+        self.assertEqual(QtWidgets.QApplication.clipboard().text(), second)
+        self.assertEqual(self.file_actions.reveal_calls, [second])
+        self.assertEqual(
+            self.window.statusBar().currentMessage(),
+            f'Revealing "{second}" in Explorer…',
+        )
+
+        self.window.files.setFocus()
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Space)
+        self.app.processEvents()
+        self.assertIn("Space O", self.window._cmdHint.text())
+        self.assertTrue(self.window._cmdHint.isVisible())
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_O)
+        for key in ("G", "C", "R"):
+            QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_Space)
+            QtTest.QTest.keyClick(
+                self.window.files, getattr(QtCore.Qt.Key, f"Key_{key}")
+            )
+        self.app.processEvents()
+
+        self.assertEqual(self.file_actions.default_open_calls, [(second,), (second,)])
+        self.assertEqual(self.file_actions.gimp_open_calls, [(second,), (second,)])
+        self.assertEqual(self.file_actions.copy_calls, [second, second])
+        self.assertEqual(self.file_actions.reveal_calls, [second, second])
+        self.assertNotEqual(first, second)
+
+    def test_open_actions_offer_all_active_only_and_cancel_for_multiple_photos(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+
+        self.window._open_selection_choice = lambda _title: "all"
+        self.window._dispatch_command("open", [])
+        self.window._open_selection_choice = lambda _title: "active"
+        self.window._dispatch_command("opengimp", [])
+        self.window._open_selection_choice = lambda _title: "cancel"
+        self.window._dispatch_command("open", [])
+
+        self.assertEqual(self.file_actions.default_open_calls, [(first, second)])
+        self.assertEqual(self.file_actions.gimp_open_calls, [(first,)])
+
+    def test_file_pane_actions_report_failures_and_missing_active_photo_non_modally(
+        self,
+    ) -> None:
+        self.window._dispatch_command("reveal", [])
+        self.assertEqual(self.window.statusBar().currentMessage(), "No active photo")
+
+        (path,) = self._add_paths("one.jpg")
+        self.file_actions.reveal_error = RuntimeError("Explorer unavailable")
+        self.window._dispatch_command("reveal", [])
+
+        self.assertEqual(self.file_actions.reveal_calls, [path])
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "Explorer unavailable"
+        )
+
+    def test_file_pane_context_menu_selects_the_clicked_photo_and_preserves_or_extends_selection(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        second_rect = self.window.files.visualItemRect(self.window.files.item(1))
+
+        QtWidgets.QApplication.sendEvent(
+            self.window.files.viewport(),
+            QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Reason.Mouse,
+                second_rect.center(),
+                self.window.files.viewport().mapToGlobal(second_rect.center()),
+            ),
+        )
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        menu = next(
+            menu
+            for menu in self.window.findChildren(QtWidgets.QMenu)
+            if menu.isVisible()
+        )
+        self.assertEqual(
+            [action.text() for action in menu.actions()],
+            ["Open", "Open in GIMP", "Copy file path", "Reveal in Explorer"],
+        )
+        menu.actions()[2].trigger()
+        self.assertEqual(self.file_actions.copy_calls, [second])
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+        first_rect = self.window.files.visualItemRect(self.window.files.item(0))
+        QtWidgets.QApplication.sendEvent(
+            self.window.files.viewport(),
+            QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Reason.Mouse,
+                first_rect.center(),
+                self.window.files.viewport().mapToGlobal(first_rect.center()),
+            ),
+        )
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [first, second])
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        QtWidgets.QApplication.sendEvent(
+            self.window.files.viewport(),
+            QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Reason.Mouse,
+                second_rect.center(),
+                self.window.files.viewport().mapToGlobal(second_rect.center()),
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+            ),
+        )
+        self.app.processEvents()
+        self.assertEqual(self.window.selected_file_paths(), [first, second])
+        self.assertEqual(self.window.active_file_path(), second)
+
     def test_reindex_command_refreshes_the_active_root_with_non_modal_feedback(
         self,
     ) -> None:
@@ -1322,6 +1495,30 @@ class FakeExifTool:
         if failed:
             raise RuntimeError("simulated write failure")
         type(self).states_by_path[path] = KeywordState(list(keywords), list(keywords))
+
+
+class FakeFilePaneActions:
+    def __init__(self) -> None:
+        self.default_open_calls: list[tuple[str, ...]] = []
+        self.gimp_open_calls: list[tuple[str, ...]] = []
+        self.copy_calls: list[str] = []
+        self.reveal_calls: list[str] = []
+        self.reveal_error: Exception | None = None
+
+    def open_default(self, paths: tuple[str, ...]) -> None:
+        self.default_open_calls.append(paths)
+
+    def open_gimp(self, paths: tuple[str, ...]) -> None:
+        self.gimp_open_calls.append(paths)
+
+    def copy_path(self, path: str) -> None:
+        self.copy_calls.append(path)
+        QtWidgets.QApplication.clipboard().setText(path)
+
+    def reveal(self, path: str) -> None:
+        self.reveal_calls.append(path)
+        if self.reveal_error is not None:
+            raise self.reveal_error
 
 
 class FakePhotoIndex:

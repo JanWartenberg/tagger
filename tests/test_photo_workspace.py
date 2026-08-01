@@ -11,21 +11,25 @@ class PhotoWorkspaceTests(unittest.TestCase):
     def test_add_preserves_normalized_path_order_and_ignores_duplicates(self) -> None:
         workspace = PhotoWorkspace()
 
-        snapshot = workspace.add_paths(["photos/one.jpg", "photos/two.jpg", "photos/one.jpg"])
+        snapshot = workspace.add_paths(
+            ["photos/one.jpg", "photos/two.jpg", "photos/one.jpg"]
+        )
 
         self.assertEqual(snapshot.paths, ("photos/one.jpg", "photos/two.jpg"))
         self.assertEqual(snapshot.visible_paths, ("photos/one.jpg", "photos/two.jpg"))
         self.assertEqual(snapshot.selected_paths, ("photos/one.jpg",))
         self.assertEqual(snapshot.active_path, "photos/one.jpg")
 
-    def test_selection_is_ordered_by_display_order_and_active_path_is_first(self) -> None:
+    def test_selection_is_ordered_by_display_order_and_tracks_requested_active_path(
+        self,
+    ) -> None:
         workspace = PhotoWorkspace()
         workspace.add_paths(["one.jpg", "two.jpg", "three.jpg"])
 
         snapshot = workspace.select_paths(["three.jpg", "one.jpg"])
 
         self.assertEqual(snapshot.selected_paths, ("one.jpg", "three.jpg"))
-        self.assertEqual(snapshot.active_path, "one.jpg")
+        self.assertEqual(snapshot.active_path, "three.jpg")
 
     def test_reload_replaces_membership_and_selects_first_path(self) -> None:
         workspace = PhotoWorkspace()

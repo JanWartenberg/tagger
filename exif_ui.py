@@ -7,6 +7,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
+from file_actions import FilePaneActions
 from indexing import (
     DateQueryError,
     IndexSyncResult,
@@ -207,12 +208,14 @@ class MainWindow(QtWidgets.QMainWindow):
         discovery: DiscoveryAdapter | None = None,
         background_runner: BackgroundRunner | None = None,
         index_adapter: IndexAdapter | None = None,
+        file_actions: FilePaneActions | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("TAGGER: Tool Annotator, Grouping Guiding EXIF Records")
         self.setAcceptDrops(True)
 
         self.exif = ExifTool()
+        self._file_actions = file_actions or FilePaneActions()
         self.tag_mutations = TagMutationService(self.exif)
         self.pool = QtCore.QThreadPool.globalInstance()
         self._queued_preview_workers: list[Worker] = []
@@ -259,8 +262,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.files = FileListWidget()
         self.files.filesDropped.connect(self.handle_dropped_urls)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
+        self.files.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+        self.files.customContextMenuRequested.connect(self._show_file_context_menu)
         self.files.setToolTip(
-            "Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · Copy all tags: Ctrl+C / Space y · Paste: Ctrl+V / Space p"
+            "Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · "
+            "Tags: Ctrl+C / Space y, Ctrl+V / Space p · "
+            "Files: Space O/G/C/R"
         )
         self.filesPaneMessage = QtWidgets.QLabel(self.files.viewport())
         self.filesPaneMessage.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -640,6 +647,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "_yank_selected_tags": self._yank_selected_tags,
             "_yank_current_file_tags": self._yank_current_file_tags,
             "_paste_yanked_tags": self._paste_yanked_tags,
+            "_open_selected_photos": self._open_selected_photos,
+            "_open_selected_photos_in_gimp": self._open_selected_photos_in_gimp,
+            "_copy_active_photo_path": self._copy_active_photo_path,
+            "_reveal_active_photo": self._reveal_active_photo,
             "_escape_action": self._escape_action,
             "_open_command_line": self._open_command_line,
             "_tab_complete_command_line": self._tab_complete_command_line,
@@ -710,6 +721,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if route.kind == "sequence":
             if len(route.sequence) == 2 and route.sequence[0] == route.sequence[1]:
                 return "".join(route.sequence)
+            if route.sequence[0] == "Space":
+                return f"Space {route.sequence[1].upper()}"
             return "+".join(route.sequence)
         return route.sequence[0]
 
@@ -763,6 +776,13 @@ class MainWindow(QtWidgets.QMainWindow):
             if callable(md) and event.mimeData().hasUrls():
                 self.handle_dropped_urls(event.mimeData().urls())
                 event.acceptProposedAction()
+                return True
+        if obj is self.files.viewport() and et == QtCore.QEvent.Type.ContextMenu:
+            context_event = event
+            if isinstance(context_event, QtGui.QContextMenuEvent):
+                self._show_file_context_menu(
+                    context_event.pos(), context_event.modifiers()
+                )
                 return True
         if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(
             event, QtGui.QKeyEvent
@@ -934,6 +954,12 @@ class MainWindow(QtWidgets.QMainWindow):
         if prefix == "Space":
             if token == prefix:
                 self._vim_space_pending = now
+                if list_widget is self.files:
+                    self._show_cmd_matches(
+                        "Space O open · G GIMP · C copy path · R reveal · "
+                        "Y yank tags · P paste tags"
+                    )
+                    QtCore.QTimer.singleShot(1_000, self._hide_cmd_matches)
                 return True
             if token == suffix and self._vim_space_pending is not None:
                 if route.widget_refs and list_widget is not None:
@@ -946,6 +972,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         return False
                 if (now - self._vim_space_pending) <= timeout_ms:
                     self._vim_space_pending = None
+                    self._hide_cmd_matches()
                     self._dispatch_action(action_id)
                     return True
                 self._vim_space_pending = None
@@ -970,6 +997,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not isinstance(focus, QtWidgets.QLineEdit) and self._mods_ok(
             event.modifiers()
         ):
+            if self._vim_space_pending is not None:
+                for spec in self._actions_by_id.values():
+                    for route in spec.key_routes:
+                        if (
+                            route.scope == "list_widgets"
+                            and route.sequence[0] == "Space"
+                        ):
+                            if self._handle_prefix_route(
+                                route, spec.id, token, obj, list_widget
+                            ):
+                                return True
             for scope in ("global_non_input", "list_widgets"):
                 match = self._find_matching_single_route(token, scope, obj, list_widget)
                 if match is not None:
@@ -1404,6 +1442,113 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._yanked_tags = tags
         self.statusBar().showMessage(f"Yanked {len(tags)} tag(s)")
+
+    def _open_selection_choice(self, title: str) -> str:
+        dialog = QtWidgets.QMessageBox(self)
+        dialog.setWindowTitle(title)
+        dialog.setText("Open all selected photos or only the active photo?")
+        all_button = dialog.addButton(
+            "All", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+        )
+        active_button = dialog.addButton(
+            "active Only", QtWidgets.QMessageBox.ButtonRole.ActionRole
+        )
+        cancel_button = dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        dialog.setDefaultButton(cancel_button)
+        dialog.exec()
+        if dialog.clickedButton() is all_button:
+            return "all"
+        if dialog.clickedButton() is active_button:
+            return "active"
+        return "cancel"
+
+    def _paths_to_open(self, title: str) -> tuple[str, ...]:
+        active_path = self.active_file_path()
+        if active_path is None:
+            self.statusBar().showMessage("No active photo")
+            return ()
+        selected_paths = tuple(self.selected_file_paths())
+        if len(selected_paths) < 2:
+            return (active_path,)
+        choice = self._open_selection_choice(title)
+        if choice == "all":
+            return selected_paths
+        if choice == "active":
+            return (active_path,)
+        return ()
+
+    def _open_selected_photos(self) -> None:
+        paths = self._paths_to_open("Open photos")
+        if not paths:
+            return
+        try:
+            self._file_actions.open_default(paths)
+        except Exception as error:
+            self.statusBar().showMessage(str(error))
+
+    def _open_selected_photos_in_gimp(self) -> None:
+        paths = self._paths_to_open("Open photos in GIMP")
+        if not paths:
+            return
+        try:
+            self._file_actions.open_gimp(paths)
+        except Exception as error:
+            self.statusBar().showMessage(str(error))
+
+    def _copy_active_photo_path(self) -> None:
+        path = self.active_file_path()
+        if path is None:
+            self.statusBar().showMessage("No active photo")
+            return
+        try:
+            self._file_actions.copy_path(path)
+        except Exception as error:
+            self.statusBar().showMessage(str(error))
+            return
+        self.statusBar().showMessage(f'"{path}" was copied')
+
+    def _reveal_active_photo(self) -> None:
+        path = self.active_file_path()
+        if path is None:
+            self.statusBar().showMessage("No active photo")
+            return
+        try:
+            self._file_actions.reveal(path)
+        except Exception as error:
+            self.statusBar().showMessage(str(error))
+            return
+        self.statusBar().showMessage(f'Revealing "{path}" in Explorer…')
+
+    def _show_file_context_menu(
+        self,
+        pos: QtCore.QPoint,
+        modifiers: QtCore.Qt.KeyboardModifier | None = None,
+    ) -> None:
+        item = self.files.itemAt(pos)
+        if item is None:
+            return
+        modifiers = modifiers or QtWidgets.QApplication.keyboardModifiers()
+        control_pressed = bool(modifiers & QtCore.Qt.KeyboardModifier.ControlModifier)
+        if control_pressed and not item.isSelected():
+            self.files.setCurrentItem(
+                item, QtCore.QItemSelectionModel.SelectionFlag.Select
+            )
+        elif not item.isSelected():
+            self.files.setCurrentItem(
+                item, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+            )
+        else:
+            self.files.setCurrentItem(
+                item, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate
+            )
+        self.on_selection_changed()
+
+        menu = QtWidgets.QMenu(self.files)
+        menu.addAction("Open", self._open_selected_photos)
+        menu.addAction("Open in GIMP", self._open_selected_photos_in_gimp)
+        menu.addAction("Copy file path", self._copy_active_photo_path)
+        menu.addAction("Reveal in Explorer", self._reveal_active_photo)
+        menu.popup(self.files.viewport().mapToGlobal(pos))
 
     def _yank_current_file_tags(self) -> None:
         files = self.selected_file_paths()
@@ -1929,8 +2074,17 @@ class MainWindow(QtWidgets.QMainWindow):
     def selected_file_paths(self) -> list[str]:
         return list(self.photo_workspace.snapshot().selected_paths)
 
+    def active_file_path(self) -> str | None:
+        return self.photo_workspace.snapshot().active_path
+
     def on_selection_changed(self) -> None:
-        requested_paths = tuple(item.text() for item in self.files.selectedItems())
+        selected_items = self.files.selectedItems()
+        current_item = self.files.currentItem()
+        requested_paths = tuple(
+            item.text()
+            for item in ([current_item] if current_item in selected_items else [])
+            + [item for item in selected_items if item is not current_item]
+        )
         snapshot = self.photo_workspace.select_paths(requested_paths)
         if snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
             self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))

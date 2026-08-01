@@ -45,6 +45,7 @@ class _FilterRestoreState:
     view_mode: PhotoWorkspaceViewMode
     visible_paths: frozenset[str]
     selected_paths: frozenset[str]
+    active_path: str | None
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ class _SearchRestoreState:
 
     paths: tuple[str, ...]
     selected_paths: frozenset[str]
+    active_path: str | None
 
 
 class PhotoWorkspace:
@@ -62,6 +64,7 @@ class PhotoWorkspace:
         self._paths: list[str] = []
         self._visible: set[str] = set()
         self._selected: set[str] = set()
+        self._active_path: str | None = None
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
 
         self._operation = 0
@@ -87,7 +90,7 @@ class PhotoWorkspace:
             paths=tuple(self._paths),
             visible_paths=visible,
             selected_paths=selected,
-            active_path=selected[0] if selected else None,
+            active_path=self._active_path if selected else None,
             view_mode=self._view_mode,
             filter_operation_id=self._operation if self._filter_running else None,
             filter_processed=self._processed,
@@ -112,6 +115,7 @@ class PhotoWorkspace:
         self._paths = []
         self._visible = set()
         self._selected = set()
+        self._active_path = None
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._filter_running = False
         self._batches = []
@@ -124,13 +128,18 @@ class PhotoWorkspace:
         return self.add_paths(paths)
 
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
-        """Apply a user selection and repair it against the visible paths."""
-        self._selected = set(paths) & self._visible
+        """Apply a user selection, with the first requested path as active."""
+        requested_paths = tuple(paths)
+        self._selected = set(requested_paths) & self._visible
+        self._active_path = next(
+            (path for path in requested_paths if path in self._selected), None
+        )
         if self._filter_running and self._filter_restore_state is not None:
             self._filter_restore_state = _FilterRestoreState(
                 self._filter_restore_state.view_mode,
                 self._filter_restore_state.visible_paths,
                 frozenset(self._selected),
+                self._active_path,
             )
         return self.snapshot()
 
@@ -141,7 +150,7 @@ class PhotoWorkspace:
         self.clear_iptc_empty_filter()
         if self._search_restore_state is None:
             self._search_restore_state = _SearchRestoreState(
-                tuple(self._paths), frozenset(self._selected)
+                tuple(self._paths), frozenset(self._selected), self._active_path
             )
 
         self._paths = []
@@ -164,6 +173,7 @@ class PhotoWorkspace:
         self._paths = list(state.paths)
         self._visible = set(self._paths)
         self._selected = set(state.selected_paths)
+        self._active_path = state.active_path
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._search_restore_state = None
         self._repair_selection()
@@ -178,6 +188,7 @@ class PhotoWorkspace:
             self._view_mode,
             frozenset(self._visible),
             frozenset(self._selected),
+            self._active_path,
         )
         self._filter_running = True
         self._inflight = None
@@ -268,6 +279,7 @@ class PhotoWorkspace:
         self._view_mode = state.view_mode
         self._visible = set(state.visible_paths)
         self._selected = set(state.selected_paths)
+        self._active_path = state.active_path
         self._repair_selection()
 
     def _reset_iptc_empty_filter(self) -> None:
@@ -284,4 +296,8 @@ class PhotoWorkspace:
         if not self._selected and self._visible:
             self._selected.add(
                 next(path for path in self._paths if path in self._visible)
+            )
+        if self._active_path not in self._selected:
+            self._active_path = next(
+                (path for path in self._paths if path in self._selected), None
             )
