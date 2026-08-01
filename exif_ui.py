@@ -1448,12 +1448,14 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog.setWindowTitle(title)
         dialog.setText("Open all selected photos or only the active photo?")
         all_button = dialog.addButton(
-            "All", QtWidgets.QMessageBox.ButtonRole.AcceptRole
+            "(A)ll", QtWidgets.QMessageBox.ButtonRole.AcceptRole
         )
         active_button = dialog.addButton(
-            "active Only", QtWidgets.QMessageBox.ButtonRole.ActionRole
+            "(O)nly", QtWidgets.QMessageBox.ButtonRole.ActionRole
         )
-        cancel_button = dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
+        cancel_button = dialog.addButton(
+            "(C)ancel", QtWidgets.QMessageBox.ButtonRole.RejectRole
+        )
         dialog.setDefaultButton(cancel_button)
         choice_shortcuts = [
             QtGui.QShortcut(QtGui.QKeySequence("A"), dialog),
@@ -2068,9 +2070,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._set_file_mutation_indicator(item, path)
 
     def _refresh_mutation_status_view(self) -> None:
-        selected = self.selected_file_paths()
+        active_path = self.active_file_path()
         status = (
-            self._tag_mutation_coordinator.status_for(selected[0]) if selected else None
+            self._tag_mutation_coordinator.status_for(active_path)
+            if active_path is not None
+            else None
         )
         if status is MutationStatus.PENDING:
             self.mutationStatusLabel.setText("Saving tag changes…")
@@ -2120,7 +2124,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_known_tags()
             return
 
-        current = sel[0]
+        current = snapshot.active_path
+        if current is None:
+            return
         self.selectedLabel.setText(current)
         self.resolveBtn.setEnabled(False)
         self._refresh_mutation_status_view()
@@ -2432,10 +2438,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.filterInfoLabel.setText(f"Folder view · {len(snapshot.paths)} photos")
 
     def _refresh_current_keywords_view_from_cache(self) -> None:
-        sel = self.selected_file_paths()
-        if not sel:
+        current = self.active_file_path()
+        if current is None:
             return
-        current = sel[0]
         st = self._keywords_cache.get(current)
         if st is None:
             return
@@ -2450,8 +2455,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self, files: list[str], intents: list[TagIntent]
     ) -> PendingTagMutation | None:
         intents_by_path = {path: intents for path in files}
-        selected = self.selected_file_paths()
-        current = normalize_path(selected[0]) if selected else None
+        active_path = self.active_file_path()
+        current = normalize_path(active_path) if active_path else None
         confirmed_states: dict[str, KeywordState] = {}
         for path in files:
             if self._tag_mutation_coordinator.confirmed_for(path) is not None:
@@ -2811,9 +2816,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.statusBar().showMessage("Error")
                 self._show_error(msg)
                 # Re-enable if still mismatched.
-                sel = self.selected_file_paths()
-                if sel:
-                    st = self._keywords_cache.get(sel[0])
+                active_path = self.active_file_path()
+                if active_path:
+                    st = self._keywords_cache.get(active_path)
                     self.resolveBtn.setEnabled(bool(st and st.mismatch))
 
         worker.signals.finished.connect(_ok)

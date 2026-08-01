@@ -826,6 +826,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             def press_key() -> None:
                 dialog = QtWidgets.QApplication.activeModalWidget()
                 self.assertIsInstance(dialog, QtWidgets.QMessageBox)
+                self.assertSetEqual(
+                    {button.text() for button in dialog.buttons()},
+                    {"(A)ll", "(O)nly", "(C)ancel"},
+                )
                 QtTest.QTest.keyClick(dialog, key)
                 QtCore.QTimer.singleShot(10, dialog.reject)
 
@@ -868,6 +872,50 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(
             self.window.statusBar().currentMessage(), "Explorer unavailable"
         )
+
+    def test_context_menu_active_photo_updates_the_preview_target(self) -> None:
+        first, second, third = self._add_paths("first.jpg", "second.jpg", "third.jpg")
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(2, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+
+        class ImageReader:
+            started_paths: list[str] = []
+
+            def __init__(self, path: str) -> None:
+                self.path = path
+
+            def setAutoTransform(self, _enabled: bool) -> None:
+                pass
+
+            def read(self) -> QtGui.QImage:
+                type(self).started_paths.append(self.path)
+                return QtGui.QImage(1, 1, QtGui.QImage.Format.Format_RGB32)
+
+        third_rect = self.window.files.visualItemRect(self.window.files.item(2))
+        with patch("exif_ui.QtGui.QImageReader", ImageReader):
+            QtWidgets.QApplication.sendEvent(
+                self.window.files.viewport(),
+                QtGui.QContextMenuEvent(
+                    QtGui.QContextMenuEvent.Reason.Mouse,
+                    third_rect.center(),
+                    self.window.files.viewport().mapToGlobal(third_rect.center()),
+                ),
+            )
+            self._wait_until(lambda: self.window.selectedLabel.text() == third)
+            self._wait_until(
+                lambda: bool(ImageReader.started_paths)
+                and ImageReader.started_paths[-1] == third
+            )
+
+        self.assertEqual(self.window.active_file_path(), third)
+        self.assertNotEqual(first, second)
 
     def test_file_pane_context_menu_selects_the_clicked_photo_and_preserves_or_extends_selection(
         self,
