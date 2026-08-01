@@ -649,7 +649,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_paste_yanked_tags": self._paste_yanked_tags,
             "_open_selected_photos": self._open_selected_photos,
             "_open_selected_photos_in_gimp": self._open_selected_photos_in_gimp,
-            "_copy_active_photo_path": self._copy_active_photo_path,
+            "_copy_selected_photo_paths": self._copy_selected_photo_paths,
             "_reveal_active_photo": self._reveal_active_photo,
             "_escape_action": self._escape_action,
             "_open_command_line": self._open_command_line,
@@ -1455,6 +1455,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         cancel_button = dialog.addButton(QtWidgets.QMessageBox.StandardButton.Cancel)
         dialog.setDefaultButton(cancel_button)
+        choice_shortcuts = [
+            QtGui.QShortcut(QtGui.QKeySequence("A"), dialog),
+            QtGui.QShortcut(QtGui.QKeySequence("O"), dialog),
+            QtGui.QShortcut(QtGui.QKeySequence("C"), dialog),
+        ]
+        choice_shortcuts[0].activated.connect(all_button.click)
+        choice_shortcuts[1].activated.connect(active_button.click)
+        choice_shortcuts[2].activated.connect(cancel_button.click)
         dialog.exec()
         if dialog.clickedButton() is all_button:
             return "all"
@@ -1495,17 +1503,20 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as error:
             self.statusBar().showMessage(str(error))
 
-    def _copy_active_photo_path(self) -> None:
-        path = self.active_file_path()
-        if path is None:
+    def _copy_selected_photo_paths(self) -> None:
+        paths = tuple(self.selected_file_paths())
+        if not paths:
             self.statusBar().showMessage("No active photo")
             return
         try:
-            self._file_actions.copy_path(path)
+            self._file_actions.copy_paths(paths)
         except Exception as error:
             self.statusBar().showMessage(str(error))
             return
-        self.statusBar().showMessage(f'"{path}" was copied')
+        if len(paths) == 1:
+            self.statusBar().showMessage(f'"{paths[0]}" was copied')
+            return
+        self.statusBar().showMessage(f"{len(paths)} file paths were copied")
 
     def _reveal_active_photo(self) -> None:
         path = self.active_file_path()
@@ -1546,7 +1557,7 @@ class MainWindow(QtWidgets.QMainWindow):
         menu = QtWidgets.QMenu(self.files)
         menu.addAction("Open", self._open_selected_photos)
         menu.addAction("Open in GIMP", self._open_selected_photos_in_gimp)
-        menu.addAction("Copy file path", self._copy_active_photo_path)
+        menu.addAction("Copy file path", self._copy_selected_photo_paths)
         menu.addAction("Reveal in Explorer", self._reveal_active_photo)
         menu.popup(self.files.viewport().mapToGlobal(pos))
 

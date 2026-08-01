@@ -28,12 +28,12 @@ class FilePaneActions:
             raise RuntimeError("GIMP executable was not found")
         subprocess.Popen([executable, *paths])
 
-    def copy_path(self, path: str) -> None:
-        QtWidgets.QApplication.clipboard().setText(path)
+    def copy_paths(self, paths: tuple[str, ...]) -> None:
+        QtWidgets.QApplication.clipboard().setText("\n".join(paths))
 
     def reveal(self, path: str) -> None:
         if os.name == "nt":
-            subprocess.Popen(["explorer.exe", f"/select,{path}"])
+            subprocess.Popen(["explorer.exe", "/select,", path])
             return
 
         directory = str(Path(path).parent)

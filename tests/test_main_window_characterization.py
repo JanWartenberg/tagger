@@ -774,7 +774,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.file_actions.default_open_calls, [(second,)])
         self.assertEqual(self.file_actions.gimp_open_calls, [(second,)])
-        self.assertEqual(self.file_actions.copy_calls, [second])
+        self.assertEqual(self.file_actions.copy_calls, [(second,)])
         self.assertEqual(QtWidgets.QApplication.clipboard().text(), second)
         self.assertEqual(self.file_actions.reveal_calls, [second])
         self.assertEqual(
@@ -797,7 +797,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.file_actions.default_open_calls, [(second,), (second,)])
         self.assertEqual(self.file_actions.gimp_open_calls, [(second,), (second,)])
-        self.assertEqual(self.file_actions.copy_calls, [second, second])
+        self.assertEqual(self.file_actions.copy_calls, [(second,), (second,)])
         self.assertEqual(self.file_actions.reveal_calls, [second, second])
         self.assertNotEqual(first, second)
 
@@ -820,6 +820,39 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.file_actions.default_open_calls, [(first, second)])
         self.assertEqual(self.file_actions.gimp_open_calls, [(first,)])
+
+    def test_open_choice_accepts_a_o_and_c_keys(self) -> None:
+        def choose_with(key: QtCore.Qt.Key) -> str:
+            def press_key() -> None:
+                dialog = QtWidgets.QApplication.activeModalWidget()
+                self.assertIsInstance(dialog, QtWidgets.QMessageBox)
+                QtTest.QTest.keyClick(dialog, key)
+                QtCore.QTimer.singleShot(10, dialog.reject)
+
+            QtCore.QTimer.singleShot(10, press_key)
+            return self.window._open_selection_choice("Open photos")
+
+        self.assertEqual(choose_with(QtCore.Qt.Key.Key_A), "all")
+        self.assertEqual(choose_with(QtCore.Qt.Key.Key_O), "active")
+        self.assertEqual(choose_with(QtCore.Qt.Key.Key_C), "cancel")
+
+    def test_copy_path_copies_every_selected_photo_path_as_plain_text(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+
+        self.window._dispatch_command("copypath", [])
+
+        self.assertEqual(self.file_actions.copy_calls, [(first, second)])
+        self.assertEqual(
+            QtWidgets.QApplication.clipboard().text(), f"{first}\n{second}"
+        )
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "2 file paths were copied"
+        )
 
     def test_file_pane_actions_report_failures_and_missing_active_photo_non_modally(
         self,
@@ -862,7 +895,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             ["Open", "Open in GIMP", "Copy file path", "Reveal in Explorer"],
         )
         menu.actions()[2].trigger()
-        self.assertEqual(self.file_actions.copy_calls, [second])
+        self.assertEqual(self.file_actions.copy_calls, [(second,)])
 
         self.window.files.setCurrentItem(
             self.window.files.item(0),
@@ -1501,7 +1534,7 @@ class FakeFilePaneActions:
     def __init__(self) -> None:
         self.default_open_calls: list[tuple[str, ...]] = []
         self.gimp_open_calls: list[tuple[str, ...]] = []
-        self.copy_calls: list[str] = []
+        self.copy_calls: list[tuple[str, ...]] = []
         self.reveal_calls: list[str] = []
         self.reveal_error: Exception | None = None
 
@@ -1511,9 +1544,9 @@ class FakeFilePaneActions:
     def open_gimp(self, paths: tuple[str, ...]) -> None:
         self.gimp_open_calls.append(paths)
 
-    def copy_path(self, path: str) -> None:
-        self.copy_calls.append(path)
-        QtWidgets.QApplication.clipboard().setText(path)
+    def copy_paths(self, paths: tuple[str, ...]) -> None:
+        self.copy_calls.append(paths)
+        QtWidgets.QApplication.clipboard().setText("\n".join(paths))
 
     def reveal(self, path: str) -> None:
         self.reveal_calls.append(path)

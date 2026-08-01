@@ -381,8 +381,8 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="copypath",
-            description="Copy active photo path",
-            handler_name="_copy_active_photo_path",
+            description="Copy selected photo paths",
+            handler_name="_copy_selected_photo_paths",
             command=CommandBinding("copypath"),
             key_routes=(
                 KeyRoute(

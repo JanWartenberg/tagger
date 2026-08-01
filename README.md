@@ -25,7 +25,7 @@ Commands & shortcuts
 - Index: `:reindex` fully refreshes the active root in the background
 - Lists: `j/k` move, `gg/G` top/bottom, `Home/End` also work
 - Tags: `Shift+V` visual select, `Ctrl+C` yank selected tags, `Ctrl+V` paste (current file), `dd`/`Del`/`Backspace` delete selected tags
-- File list: `Ctrl+C` or `Space y` yanks all tags from the current file; `Ctrl+V` or `Space p` pastes them onto the current file; `:open`/`Space O` opens selected photos (after an All/active Only/Cancel choice), `:opengimp`/`:gimp`/`Space G` opens them in GIMP, `:copypath`/`Space C` copies the active Photo Workspace path, and `:reveal`/`Space R` reveals it in the system file explorer
+- File list: `Ctrl+C` or `Space y` yanks all tags from the current file; `Ctrl+V` or `Space p` pastes them onto the current file; `:open`/`Space O` opens selected photos (after an All/active Only/Cancel choice), `:opengimp`/`:gimp`/`Space G` opens them in GIMP, `:copypath`/`Space C` copies all selected Photo Workspace paths (one per line), and `:reveal`/`Space R` reveals the active path in the system file explorer
 - Toggles: `Ctrl+Shift+B` keep *_original backups, `Ctrl+Shift+E` only IPTC-empty
 
 Prerequisites
