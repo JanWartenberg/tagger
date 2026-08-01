@@ -12,6 +12,7 @@ from services.background_coordinator import (
     IndexOperationKind,
     IndexRefreshCompleted,
     IndexRefreshFailed,
+    IndexRefreshKind,
     IndexSearchCompleted,
     KnownTagsCompleted,
     IndexWriteCompleted,
@@ -78,6 +79,20 @@ class FakeIndex:
             raise RuntimeError("refresh failed")
         self.stale.discard(root)
         return {"refreshed": root}
+
+    def remove_photo(self, root: str, path: str) -> bool:
+        self.calls.append(("remove", root, path))
+        if ("remove", root) in self.fail_next:
+            self.fail_next.remove(("remove", root))
+            raise RuntimeError("remove failed")
+        return True
+
+    def reconcile_directory(self, root: str, directory: str) -> object:
+        self.calls.append(("directory", root, directory))
+        if ("directory", root) in self.fail_next:
+            self.fail_next.remove(("directory", root))
+            raise RuntimeError("directory failed")
+        return {"directory": directory}
 
     def index_missing(self, root: str, paths: list[str]) -> int:
         self.calls.append(("missing", root, tuple(paths)))
@@ -455,6 +470,67 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
             self.events,
             [IndexRefreshCompleted(request=request, result=None)],
         )
+
+    def test_stale_result_repair_is_deduplicated_and_serializes_later_updates(
+        self,
+    ) -> None:
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+
+        request = self.coordinator.repair_stale_search_result(
+            root, photo, workspace_generation=5, query="tag:bird"
+        )
+        duplicate = self.coordinator.repair_stale_search_result(
+            root, photo, workspace_generation=5, query="tag:bird"
+        )
+        self.coordinator.submit_confirmed_states(root, {photo: "tagged"})
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(request.kind, IndexRefreshKind.STALE_RESULT_REPAIR)
+        self.assertIsNone(duplicate)
+        self.assertEqual(
+            [call[0] for call in self.index.calls], ["remove", "directory", "update"]
+        )
+        self.assertIn(
+            IndexRefreshCompleted(
+                request=request, result={"directory": fixture_path("/photos")}
+            ),
+            self.events,
+        )
+
+    def test_stale_result_repair_waits_for_previously_queued_root_writes(self) -> None:
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+
+        self.coordinator.submit_confirmed_states(root, {photo: "before-repair"})
+        self.coordinator.repair_stale_search_result(
+            root, photo, workspace_generation=5, query="tag:bird"
+        )
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls], ["update", "remove", "directory"]
+        )
+
+    def test_failed_stale_result_repair_allows_a_later_repair(self) -> None:
+        root = fixture_path("/photos")
+        self.index.fail_next.add(("remove", root))
+        photo = fixture_path("/photos/one.jpg")
+
+        request = self.coordinator.repair_stale_search_result(
+            root, photo, workspace_generation=5, query="tag:bird"
+        )
+        self.runner.run()
+        retry = self.coordinator.repair_stale_search_result(
+            root, photo, workspace_generation=5, query="tag:bird"
+        )
+
+        self.assertIn(
+            IndexRefreshFailed(request=request, error="remove failed"), self.events
+        )
+        self.assertIsNotNone(retry)
 
     def test_manual_reindex_failure_does_not_stop_later_writes(self) -> None:
         root = fixture_path("/photos")

@@ -102,6 +102,15 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             QtTest.QTest.qWait(10)
         self.fail("Timed out waiting for asynchronous UI work")
 
+    def _wait_for_ui(self, condition, *, timeout: float = 2) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            self.app.processEvents()
+            if condition():
+                return
+            QtTest.QTest.qWait(10)
+        self.fail("Timed out waiting for UI work")
+
     def _choose_folder(self, folder: str) -> None:
         with patch(
             "exif_ui.QtWidgets.QFileDialog.getExistingDirectory", return_value=folder
@@ -998,6 +1007,143 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakePhotoIndex.refresh_calls, ["refresh"])
         self.assertEqual(self.window.statusBar().currentMessage(), "Reindex complete")
 
+    def test_missing_active_search_result_repairs_and_refreshes_the_query(
+        self,
+    ) -> None:
+        self._add_paths("existing.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        stale_path = normalize_path("C:/photos/stale.jpg")
+        replacement = normalize_path("C:/photos/replacement.jpg")
+        FakeExifTool.metadata_read_error = RuntimeError("File not found")
+        FakePhotoIndex.search_results = {stale_path}
+        self.window.dbSearchEdit.setText("tag:bird")
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.window.apply_db_search()
+            self.discovery_runner.run_index_work()
+            self.app.processEvents()
+            self._wait_for_ui(
+                lambda: self.window.indexRepairStatusLabel.text()
+                == "Index repair queued: removing missing search result…"
+            )
+
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "DB search: 1 match(es)"
+        )
+        critical.assert_not_called()
+        FakeExifTool.metadata_read_error = None
+        FakePhotoIndex.search_results = {replacement}
+
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self._wait_for_ui(lambda: self.window.all_file_paths() == [replacement])
+
+        self.assertEqual(FakePhotoIndex.removed_paths, [stale_path])
+        self.assertEqual(
+            FakePhotoIndex.reconciled_directories,
+            [normalize_path("C:/photos")],
+        )
+        self.assertEqual(
+            FakePhotoIndex.search_queries, ["tag:bird", "tag:bird", "tag:bird"]
+        )
+        self.assertEqual(self.window.all_file_paths(), [replacement])
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(),
+            "Local index repair complete; refreshing search…",
+        )
+
+    def test_stale_result_repair_failure_keeps_ordinary_footer_feedback(self) -> None:
+        self._add_paths("existing.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        stale_path = normalize_path("C:/photos/stale.jpg")
+        FakeExifTool.metadata_read_error = RuntimeError("File not found")
+        FakePhotoIndex.refresh_error = RuntimeError("remove failed")
+        FakePhotoIndex.search_results = {stale_path}
+        self.window.dbSearchEdit.setText("tag:bird")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self._wait_for_ui(
+            lambda: self.window.indexRepairStatusLabel.text()
+            == "Index repair queued: removing missing search result…"
+        )
+
+        FakeExifTool.metadata_read_error = None
+        self.window.statusBar().showMessage("Ordinary feedback")
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.statusBar().currentMessage(), "Ordinary feedback")
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(),
+            "Index repair failed: remove failed",
+        )
+
+    def test_missing_folder_result_does_not_repair_the_index(self) -> None:
+        missing_path = "C:/photos/missing.jpg"
+        FakeExifTool.metadata_read_error = RuntimeError("File not found")
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.window.replace_photo_workspace([missing_path])
+            self._wait_until(
+                lambda: self.window.statusBar().currentMessage() == "Error"
+            )
+
+        self.assertEqual(FakePhotoIndex.refresh_calls, [])
+        self.assertEqual(self.window.indexRepairStatusLabel.text(), "")
+        critical.assert_called_once_with(self.window, "Error", "File not found")
+
+    def test_non_missing_search_metadata_error_stays_an_ordinary_error(self) -> None:
+        self._add_paths("existing.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        path = normalize_path("C:/photos/broken.jpg")
+        FakeExifTool.metadata_read_error = RuntimeError("metadata read failed")
+        FakePhotoIndex.search_results = {path}
+        self.window.dbSearchEdit.setText("tag:broken")
+
+        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+            self.window.apply_db_search()
+            self.discovery_runner.run_index_work()
+            self.app.processEvents()
+            self._wait_until(
+                lambda: self.window.statusBar().currentMessage() == "Error"
+            )
+
+        self.assertEqual(FakePhotoIndex.refresh_calls, [])
+        self.assertEqual(self.window.indexRepairStatusLabel.text(), "")
+        critical.assert_called_once_with(self.window, "Error", "metadata read failed")
+
+    def test_departed_stale_result_repair_keeps_current_ui_feedback(self) -> None:
+        self._add_paths("existing.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        stale_path = normalize_path("C:/photos/stale.jpg")
+        FakeExifTool.metadata_read_error = RuntimeError("File not found")
+        FakePhotoIndex.search_results = {stale_path}
+        self.window.dbSearchEdit.setText("tag:bird")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self._wait_for_ui(
+            lambda: self.window.indexRepairStatusLabel.text()
+            == "Index repair queued: removing missing search result…"
+        )
+        FakeExifTool.metadata_read_error = None
+
+        self.window.replace_photo_workspace(["C:/other/replacement.jpg"])
+        self.window.statusBar().showMessage("New workspace")
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(
+            self.window.all_file_paths(), [normalize_path("C:/other/replacement.jpg")]
+        )
+        self.assertEqual(self.window.statusBar().currentMessage(), "New workspace")
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(), "Index repair complete"
+        )
+
     def test_departed_reindex_completion_does_not_replace_current_feedback(
         self,
     ) -> None:
@@ -1515,6 +1661,7 @@ class FakePhotoDiscovery:
 
 class FakeExifTool:
     read_delay_seconds = 0.0
+    metadata_read_error: Exception | None = None
     fail_writes = False
     scan_error: Exception | None = None
     write_failures: list[bool] = []
@@ -1527,6 +1674,7 @@ class FakeExifTool:
     @classmethod
     def reset(cls) -> None:
         cls.read_delay_seconds = 0.0
+        cls.metadata_read_error = None
         cls.fail_writes = False
         cls.scan_error = None
         cls.write_failures = []
@@ -1546,6 +1694,8 @@ class FakeExifTool:
         cls._allow_writes.set()
 
     def read_keywords(self, path: str) -> "KeywordState":
+        if type(self).metadata_read_error is not None:
+            raise type(self).metadata_read_error
         if type(self).read_delay_seconds:
             type(self).metadata_read_started.set()
             time.sleep(type(self).read_delay_seconds)
@@ -1606,7 +1756,10 @@ class FakePhotoIndex:
     search_results: set[str] = set()
     search_queries: list[str] = []
     refresh_stale = False
+    refresh_error: Exception | None = None
     refresh_calls: list[str] = []
+    removed_paths: list[str] = []
+    reconciled_directories: list[str] = []
     states_by_path: dict[str, KeywordState] = {}
     known_tags: set[str] = set()
     known_tag_reads = 0
@@ -1616,7 +1769,10 @@ class FakePhotoIndex:
         cls.search_results = set()
         cls.search_queries = []
         cls.refresh_stale = False
+        cls.refresh_error = None
         cls.refresh_calls = []
+        cls.removed_paths = []
+        cls.reconciled_directories = []
         cls.states_by_path = {}
         cls.known_tags = set()
         cls.known_tag_reads = 0
@@ -1632,6 +1788,8 @@ class FakePhotoIndex:
 
     def sync_root(self, _exif) -> object:
         type(self).refresh_calls.append("refresh")
+        if type(self).refresh_error is not None:
+            raise type(self).refresh_error
         type(self).refresh_stale = False
         return object()
 
@@ -1641,6 +1799,16 @@ class FakePhotoIndex:
 
     def update_states(self, states: dict[str, "KeywordState"]) -> None:
         type(self).states_by_path.update(states)
+
+    def remove_photo(self, path: str) -> bool:
+        type(self).removed_paths.append(normalize_path(path))
+        if type(self).refresh_error is not None:
+            raise type(self).refresh_error
+        return True
+
+    def sync_directory(self, _exif, directory: str) -> object:
+        type(self).reconciled_directories.append(normalize_path(directory))
+        return object()
 
     def has_photos(self, paths: list[str]) -> set[str]:
         return {normalize_path(path) for path in paths}

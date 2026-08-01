@@ -1,3 +1,4 @@
+import re
 import sys
 from pathlib import Path
 from collections.abc import Mapping, Sequence
@@ -39,6 +40,7 @@ from services.background_coordinator import (
     IndexReadKind,
     IndexReadRequest,
     IndexSearchCompleted,
+    IndexStaleResultEvicted,
     IndexWriteCompleted,
     IndexWriteFailed,
     KnownTagsCompleted,
@@ -62,6 +64,9 @@ DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
 METADATA_READ_DEBOUNCE_MS = 25
 PREVIEW_LOAD_DEBOUNCE_MS = 125
 METADATA_READ_PRIORITY = 1_000_000
+_MISSING_FILE_ERROR = re.compile(
+    r"\bfile not found\b|\bno such file or directory\b", re.I
+)
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -174,6 +179,12 @@ class PhotoIndexAdapter:
     def refresh(self, root: str) -> object:
         return PhotoIndex(root).sync_root(self._exif)
 
+    def remove_photo(self, root: str, path: str) -> bool:
+        return PhotoIndex(root).remove_photo(path)
+
+    def reconcile_directory(self, root: str, directory: str) -> object:
+        return PhotoIndex(root).sync_directory(self._exif, directory)
+
     def index_missing(self, root: str, paths: Sequence[str]) -> int:
         index = PhotoIndex(root)
         normalized_paths = [normalize_path(path) for path in paths]
@@ -230,8 +241,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._known_tags_root: str | None = None
         self._active_known_tags_request: IndexReadRequest | None = None
         self._active_search_request: IndexReadRequest | None = None
+        self._displayed_search_request: IndexReadRequest | None = None
+        self._displayed_search_generation: int | None = None
         self._displayed_search_query: str | None = None
         self._active_index_refresh_request: IndexRefreshRequest | None = None
+        self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self._pending_metadata_read: tuple[int, str] | None = None
@@ -488,6 +502,9 @@ class MainWindow(QtWidgets.QMainWindow):
         leftSplitter.setMinimumWidth(250)
 
         self.setCentralWidget(splitter)
+        self.indexRepairStatusLabel = QtWidgets.QLabel()
+        self.indexRepairStatusLabel.setObjectName("indexRepairStatus")
+        self.statusBar().addPermanentWidget(self.indexRepairStatusLabel)
         self.statusBar().showMessage("Ready")
         self.resize(1100, 700)
         splitter.setSizes([450, 650])
@@ -1712,6 +1729,8 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> None:
         normalized_paths = [normalize_path(path) for path in paths]
         self._active_search_request = None
+        self._displayed_search_request = None
+        self._displayed_search_generation = None
         self._displayed_search_query = None
         self._active_known_tags_request = None
         self._active_index_refresh_request = None
@@ -1790,6 +1809,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 IndexWriteFailed,
                 IndexRefreshCompleted,
                 IndexRefreshFailed,
+                IndexStaleResultEvicted,
                 IndexSearchCompleted,
                 KnownTagsCompleted,
                 IndexReadFailed,
@@ -1807,6 +1827,7 @@ class MainWindow(QtWidgets.QMainWindow):
             | IndexWriteFailed
             | IndexRefreshCompleted
             | IndexRefreshFailed
+            | IndexStaleResultEvicted
             | IndexSearchCompleted
             | KnownTagsCompleted
             | IndexReadFailed
@@ -1816,6 +1837,9 @@ class MainWindow(QtWidgets.QMainWindow):
             event, (IndexSearchCompleted, KnownTagsCompleted, IndexReadFailed)
         ):
             self._handle_index_read_event(event)
+            return
+        if isinstance(event, IndexStaleResultEvicted):
+            self._handle_stale_result_evicted(event)
             return
         if isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed)):
             self._handle_index_refresh_event(event)
@@ -1857,6 +1881,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self, event: IndexRefreshCompleted | IndexRefreshFailed
     ) -> None:
         request = event.request
+        if request.kind is IndexRefreshKind.STALE_RESULT_REPAIR:
+            self._handle_stale_result_repair_event(event)
+            return
         if (
             request != self._active_index_refresh_request
             or request.workspace_generation
@@ -1896,6 +1923,66 @@ class MainWindow(QtWidgets.QMainWindow):
             else "Index refreshed"
         )
 
+    def _handle_stale_result_repair_event(
+        self, event: IndexRefreshCompleted | IndexRefreshFailed
+    ) -> None:
+        request = event.request
+        if self._stale_result_repairs.get(request.root) != request:
+            return
+        del self._stale_result_repairs[request.root]
+        if isinstance(event, IndexRefreshFailed):
+            self.indexRepairStatusLabel.setText(f"Index repair failed: {event.error}")
+            return
+
+        if not self._is_current_stale_result_repair(request):
+            self.indexRepairStatusLabel.setText("Index repair complete")
+            return
+
+        self._rerun_stale_result_repair_query(request)
+        self.indexRepairStatusLabel.setText(
+            "Local index repair complete; refreshing search…"
+        )
+
+    def _handle_stale_result_evicted(self, event: IndexStaleResultEvicted) -> None:
+        request = event.request
+        if self._stale_result_repairs.get(request.root) != request:
+            return
+        if self._is_current_stale_result_repair(request):
+            self._rerun_stale_result_repair_query(request)
+        self.indexRepairStatusLabel.setText(
+            "Missing result removed; checking parent folder…"
+        )
+
+    def _rerun_stale_result_repair_query(self, request: IndexRefreshRequest) -> None:
+        self._render_known_tags()
+        self._active_known_tags_request = self._background_coordinator.load_known_tags(
+            request.root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+        self._active_search_request = self._background_coordinator.search_index(
+            request.root,
+            request.query or "",
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+        self._update_view_indicator(self.photo_workspace.snapshot())
+
+    def _is_current_stale_result_repair(self, request: IndexRefreshRequest) -> bool:
+        displayed = self._displayed_search_request
+        return (
+            request.query is not None
+            and (
+                self._active_search_request is None
+                or (
+                    self._active_search_request.root == request.root
+                    and self._active_search_request.query == request.query
+                )
+            )
+            and displayed is not None
+            and self.photo_workspace.has_database_search
+            and request.root == self._index_root
+            and (displayed.root, displayed.query) == (request.root, request.query)
+        )
+
     def _handle_index_read_event(
         self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
     ) -> None:
@@ -1913,8 +2000,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_view_indicator(self.photo_workspace.snapshot())
                 self.statusBar().showMessage("Search failed")
                 return
+            self._displayed_search_request = request
             self._displayed_search_query = request.query
             self._apply_db_search_result(event.paths)
+            self._displayed_search_generation = (
+                self._tag_mutation_coordinator.workspace_generation
+            )
             return
 
         if (
@@ -2170,8 +2261,9 @@ class MainWindow(QtWidgets.QMainWindow):
         def _err(msg: str) -> None:
             self._metadata_read_in_flight = False
             if token == self._selection_token:
-                self.statusBar().showMessage("Error")
-                self._show_error(msg)
+                if not self._queue_stale_result_repair(current, msg):
+                    self.statusBar().showMessage("Error")
+                    self._show_error(msg)
             self._schedule_pending_metadata_read()
 
         worker.signals.finished.connect(_ok)
@@ -2539,6 +2631,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
         self._active_search_request = None
+        self._displayed_search_request = None
+        self._displayed_search_generation = None
         self._displayed_search_query = None
         self._background_coordinator.invalidate_search()
         before = self.selected_file_paths()
@@ -2584,6 +2678,42 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._update_view_indicator(self.photo_workspace.snapshot())
         self.statusBar().showMessage("Searching index…")
+
+    def _queue_stale_result_repair(self, path: str, error: str) -> bool:
+        """Queue index repair only for a confirmed missing active search result."""
+        if not _MISSING_FILE_ERROR.search(error):
+            return False
+        try:
+            if Path(path).exists():
+                return False
+        except OSError:
+            return False
+
+        request = self._displayed_search_request
+        snapshot = self.photo_workspace.snapshot()
+        if (
+            request is None
+            or self._active_search_request is not None
+            or snapshot.view_mode is not PhotoWorkspaceViewMode.DATABASE_SEARCH
+            or snapshot.active_path != path
+            or request.root != self._index_root
+            or self._displayed_search_generation
+            != self._tag_mutation_coordinator.workspace_generation
+        ):
+            return False
+
+        repair = self._background_coordinator.repair_stale_search_result(
+            request.root,
+            path,
+            workspace_generation=self._displayed_search_generation,
+            query=request.query or "",
+        )
+        if repair is not None:
+            self._stale_result_repairs[repair.root] = repair
+            self.indexRepairStatusLabel.setText(
+                "Index repair queued: removing missing search result…"
+            )
+        return True
 
     def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
         before = self.selected_file_paths()

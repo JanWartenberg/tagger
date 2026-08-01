@@ -27,6 +27,10 @@ class IndexAdapter(Protocol):
 
     def refresh(self, root: str) -> object: ...
 
+    def remove_photo(self, root: str, path: str) -> object: ...
+
+    def reconcile_directory(self, root: str, directory: str) -> object: ...
+
     def index_missing(self, root: str, paths: Sequence[str]) -> int: ...
 
     def update_states(self, root: str, states: Mapping[str, object]) -> None: ...
@@ -58,6 +62,7 @@ class IndexOperationKind(Enum):
 class IndexRefreshKind(Enum):
     AUTOMATIC = "automatic"
     MANUAL = "manual"
+    STALE_RESULT_REPAIR = "stale_result_repair"
 
 
 class IndexReadKind(Enum):
@@ -133,6 +138,8 @@ class IndexRefreshRequest:
     request_id: int
     workspace_generation: int
     root: str
+    query: str | None = None
+    path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -149,6 +156,13 @@ class IndexRefreshFailed:
 
     request: IndexRefreshRequest
     error: str
+
+
+@dataclass(frozen=True)
+class IndexStaleResultEvicted:
+    """The exact missing path was removed before local reconciliation."""
+
+    request: IndexRefreshRequest
 
 
 @dataclass(frozen=True)
@@ -187,6 +201,7 @@ IndexEvent: TypeAlias = (
     | IndexWriteFailed
     | IndexRefreshCompleted
     | IndexRefreshFailed
+    | IndexStaleResultEvicted
     | IndexSearchCompleted
     | KnownTagsCompleted
     | IndexReadFailed
@@ -246,6 +261,7 @@ class BackgroundCoordinator:
         self._completed_drops: dict[int, DiscoveryEvent] = {}
         self._index_queues: dict[str, _RootWriteQueue] = {}
         self._next_index_refresh_request_id = 0
+        self._stale_result_repair_roots: set[str] = set()
         self._next_index_read_request_id = 0
         self._current_search_request_id: int | None = None
         self._current_known_tags_request_id: int | None = None
@@ -332,6 +348,43 @@ class BackgroundCoordinator:
         )
         return request
 
+    def repair_stale_search_result(
+        self,
+        root: str | Path,
+        path: str | Path,
+        *,
+        workspace_generation: int,
+        query: str,
+    ) -> IndexRefreshRequest | None:
+        """Queue one deduplicated full repair after a stale search result.
+
+        Repairs remain queued for index integrity after the originating workspace
+        becomes obsolete. Callers receive ``None`` when this root already has a
+        repair pending or running.
+        """
+        normalized_root = _normalize_path(root)
+        with self._lock:
+            if normalized_root in self._stale_result_repair_roots:
+                return None
+            self._stale_result_repair_roots.add(normalized_root)
+            request = self._new_index_refresh_request_locked(
+                IndexRefreshKind.STALE_RESULT_REPAIR,
+                normalized_root,
+                workspace_generation,
+                query,
+                _normalize_path(path),
+            )
+            queue = self._index_queues.setdefault(normalized_root, _RootWriteQueue())
+            queue.pending.append(
+                _IndexOperation(
+                    IndexOperationKind.FULL_REINDEX, refresh_request=request
+                )
+            )
+            work = self._next_index_work_locked(normalized_root, queue)
+        if work is not None:
+            self._runner.submit(work)
+        return request
+
     def submit_confirmed_states(
         self, root: str | Path, states: Mapping[str, object]
     ) -> None:
@@ -401,13 +454,27 @@ class BackgroundCoordinator:
         workspace_generation: int,
     ) -> IndexRefreshRequest:
         with self._lock:
-            request_id = self._next_index_refresh_request_id
-            self._next_index_refresh_request_id += 1
+            return self._new_index_refresh_request_locked(
+                kind, root, workspace_generation
+            )
+
+    def _new_index_refresh_request_locked(
+        self,
+        kind: IndexRefreshKind,
+        root: str | Path,
+        workspace_generation: int,
+        query: str | None = None,
+        path: str | None = None,
+    ) -> IndexRefreshRequest:
+        request_id = self._next_index_refresh_request_id
+        self._next_index_refresh_request_id += 1
         return IndexRefreshRequest(
             kind=kind,
             request_id=request_id,
             workspace_generation=workspace_generation,
             root=_normalize_path(root),
+            query=query,
+            path=path,
         )
 
     def _new_index_read_request(
@@ -548,7 +615,16 @@ class BackgroundCoordinator:
                     operation.kind is IndexOperationKind.FULL_REINDEX
                     or self._index.is_refresh_stale(root)
                 )
-                result = self._index.refresh(root) if should_refresh else None
+                if request.kind is IndexRefreshKind.STALE_RESULT_REPAIR:
+                    if request.path is None:
+                        raise RuntimeError("Stale-result repair has no missing path")
+                    self._index.remove_photo(root, request.path)
+                    self._event_sink(IndexStaleResultEvicted(request))
+                    result = self._index.reconcile_directory(
+                        root, str(Path(request.path).parent)
+                    )
+                else:
+                    result = self._index.refresh(root) if should_refresh else None
                 event = IndexRefreshCompleted(request, result)
             elif operation.kind is IndexOperationKind.INDEX_MISSING:
                 self._index.index_missing(root, operation.paths)
@@ -575,6 +651,11 @@ class BackgroundCoordinator:
 
     def _complete_index_operation(self, root: str, event: IndexEvent) -> None:
         with self._lock:
+            if (
+                isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed))
+                and event.request.kind is IndexRefreshKind.STALE_RESULT_REPAIR
+            ):
+                self._stale_result_repair_roots.discard(root)
             queue = self._index_queues[root]
             queue.running = False
             work = self._next_index_work_locked(root, queue)

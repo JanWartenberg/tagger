@@ -84,6 +84,7 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
             root = Path(directory)
             kept = root / "kept.jpg"
             deleted = root / "deleted.jpg"
+            discovered = root / "discovered.jpg"
             kept.touch()
             deleted.touch()
             index = PhotoIndex(root)
@@ -99,10 +100,53 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
             self.assertTrue(index.is_refresh_stale(now=last_refresh + 24 * 60 * 60))
 
             deleted.unlink()
+            discovered.touch()
             refreshed = index.sync_root(exif)
 
             self.assertEqual(refreshed.deleted_count, 1)
-            self.assertEqual(index.has_photos([str(kept), str(deleted)]), {str(kept)})
+            self.assertEqual(
+                index.has_photos([str(kept), str(deleted), str(discovered)]),
+                {str(kept), str(discovered)},
+            )
+            self.assertEqual(
+                index.search_photos("tag:indexed"),
+                [normalize_path(discovered), normalize_path(kept)],
+            )
+
+    def test_local_repair_evicts_one_path_and_reconciles_only_its_parent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            parent = root / "parent"
+            nested = parent / "nested"
+            other = root / "other"
+            parent.mkdir()
+            nested.mkdir()
+            other.mkdir()
+            missing = parent / "missing.jpg"
+            discovered = parent / "discovered.jpg"
+            nested_photo = nested / "nested.jpg"
+            other_photo = other / "other.jpg"
+            for path in (missing, nested_photo, other_photo):
+                path.touch()
+
+            index = PhotoIndex(root)
+            exif = FakeExifTool()
+            index.sync_root(exif)
+            missing.unlink()
+            discovered.touch()
+
+            self.assertTrue(index.remove_photo(str(missing)))
+            repaired = index.sync_directory(exif, parent)
+
+            self.assertEqual(repaired.scanned_count, 1)
+            self.assertEqual(repaired.deleted_count, 0)
+            self.assertEqual(
+                index.has_photos(
+                    [str(missing), str(discovered), str(nested_photo), str(other_photo)]
+                ),
+                {str(discovered), str(nested_photo), str(other_photo)},
+            )
+            self.assertEqual(index.load_known_tags(), {"indexed"})
 
 
 class CaptureDateExifTool:

@@ -461,6 +461,16 @@ class PhotoIndex:
                     ("initialized", "1"),
                 )
 
+    def remove_photo(self, photo_path: str) -> bool:
+        """Remove one indexed photo and any tag vocabulary it leaves unused."""
+        normalized_path = normalize_path(photo_path)
+        with self._connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM photos WHERE path = ?", (normalized_path,)
+            )
+            self._prune_orphan_tags(conn)
+            return cursor.rowcount > 0
+
     def sync_root(self, exif: ExifTool, recursive: bool = True) -> IndexSyncResult:
         del recursive
         paths = [
@@ -468,74 +478,107 @@ class PhotoIndex:
             for path in self.root.rglob("*")
             if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
         ]
-        return self.sync_paths(exif, paths, force=True)
+        return self._sync_paths(exif, paths, force=True, deletion_directory=None)
+
+    def sync_directory(self, exif: ExifTool, directory: str | Path) -> IndexSyncResult:
+        """Synchronize direct supported files in one directory without recursion."""
+        scope = Path(directory).resolve()
+        paths = (
+            [
+                str(path)
+                for path in scope.iterdir()
+                if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+            ]
+            if scope.is_dir()
+            else []
+        )
+        return self._sync_paths(exif, paths, force=True, deletion_directory=scope)
 
     def sync_paths(
         self, exif: ExifTool, paths: list[str], *, force: bool = False
     ) -> IndexSyncResult:
-        """Synchronize the supplied discovery result without traversing the root."""
-        root = self.root
+        """Synchronize the supplied full-root discovery result without traversal."""
+        return self._sync_paths(exif, paths, force=force, deletion_directory=None)
+
+    def _sync_paths(
+        self,
+        exif: ExifTool,
+        paths: list[str],
+        *,
+        force: bool,
+        deletion_directory: Path | None,
+    ) -> IndexSyncResult:
         current_paths = [
             normalize_path(path)
             for path in paths
             if Path(path).suffix.lower() in SUPPORTED_EXTS
         ]
         current_set = set(current_paths)
-
-        scanned_count = len(current_paths)
         updated_count = 0
 
         with self._connection() as conn:
             existing = self._photo_rows(conn, current_paths)
             changed: list[str] = []
-
             for photo_path in current_paths:
                 try:
                     stat = Path(photo_path).stat()
                 except FileNotFoundError:
                     continue
                 row = existing.get(photo_path)
-                if force or row is None:
-                    changed.append(photo_path)
-                    continue
-                if int(row["mtime"]) != int(stat.st_mtime) or int(row["size"]) != int(
-                    stat.st_size
+                if (
+                    force
+                    or row is None
+                    or int(row["mtime"]) != int(stat.st_mtime)
+                    or int(row["size"]) != int(stat.st_size)
                 ):
                     changed.append(photo_path)
 
             if changed:
                 states = exif.read_keywords_many(changed)
-                with conn:
-                    for photo_path in changed:
-                        state = states.get(photo_path)
-                        if state is None:
-                            continue
-                        self.upsert_state(conn, photo_path, state)
-                        updated_count += 1
+                for photo_path in changed:
+                    state = states.get(photo_path)
+                    if state is None:
+                        continue
+                    self.upsert_state(conn, photo_path, state)
+                    updated_count += 1
 
-            db_rows = conn.execute("SELECT path FROM photos").fetchall()
-            db_paths = {str(row[0]) for row in db_rows}
-            missing = sorted(db_paths - current_set)
-            deleted_count = 0
-            if missing:
-                with conn:
-                    for photo_path in missing:
-                        conn.execute("DELETE FROM photos WHERE path = ?", (photo_path,))
-                        deleted_count += 1
+            db_paths = {
+                str(row[0])
+                for row in conn.execute("SELECT path FROM photos").fetchall()
+            }
+            if deletion_directory is None:
+                candidates = db_paths
+            else:
+                candidates = {
+                    photo_path
+                    for photo_path in db_paths
+                    if Path(photo_path).parent == deletion_directory
+                }
+            missing = sorted(candidates - current_set)
+            for photo_path in missing:
+                conn.execute("DELETE FROM photos WHERE path = ?", (photo_path,))
+            self._prune_orphan_tags(conn)
 
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                ("last_index_scan", str(int(time.time()))),
-            )
+            if deletion_directory is None:
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("last_index_scan", str(int(time.time()))),
+                )
             conn.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                 ("initialized", "1"),
             )
 
         return IndexSyncResult(
-            root=str(root),
-            scanned_count=scanned_count,
+            root=str(self.root),
+            scanned_count=len(current_paths),
             updated_count=updated_count,
-            deleted_count=deleted_count,
+            deleted_count=len(missing),
             known_tag_count=len(self.load_known_tags()),
+        )
+
+    def _prune_orphan_tags(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "DELETE FROM tags WHERE NOT EXISTS ("
+            "SELECT 1 FROM photo_tags WHERE photo_tags.tag_id = tags.id)"
         )
