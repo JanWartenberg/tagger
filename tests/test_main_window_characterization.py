@@ -237,6 +237,19 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [loaded_path])
         self.assertFalse(self.window.filesPaneMessage.isVisible())
 
+    def test_loading_photos_message_hides_letters_in_sequence(self) -> None:
+        self.window._show_files_pane_message("Loading photos…")
+
+        self.window._advance_loading_photos_animation()
+        self.assertEqual(self.window.filesPaneMessage.text(), " oading photos…")
+
+        for _ in range(len("Loadingphotos")):
+            self.window._advance_loading_photos_animation()
+        self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
+
+        self.window._show_files_pane_message("No photos loaded")
+        self.assertFalse(self.window._loading_photos_timer.isActive())
+
     def test_stale_folder_discovery_cannot_replace_a_newer_workspace(self) -> None:
         first = "/first"
         second = "/second"

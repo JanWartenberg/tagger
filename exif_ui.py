@@ -319,6 +319,13 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
         self.filesPaneMessage.hide()
+        self._loading_photos_message = "Loading photos…"
+        self._loading_photos_hidden_letters = 0
+        self._loading_photos_timer = QtCore.QTimer(self)
+        self._loading_photos_timer.setInterval(120)
+        self._loading_photos_timer.timeout.connect(
+            self._advance_loading_photos_animation
+        )
 
         self.selectedLabel = QtWidgets.QLabel("Drop JPG/JPEG files here")
         self.selectedLabel.setTextInteractionFlags(
@@ -2117,11 +2124,34 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Loading photos failed: {event.error}")
 
     def _show_files_pane_message(self, message: str) -> None:
-        self.filesPaneMessage.setText(message)
+        if message == self._loading_photos_message:
+            self._loading_photos_hidden_letters = 0
+            self.filesPaneMessage.setText(message)
+            self._loading_photos_timer.start()
+        else:
+            self._loading_photos_timer.stop()
+            self.filesPaneMessage.setText(message)
         self._position_files_pane_message()
         self.filesPaneMessage.show()
 
+    def _advance_loading_photos_animation(self) -> None:
+        message = self._loading_photos_message
+        letter_count = sum(character.isalpha() for character in message)
+        self._loading_photos_hidden_letters += 1
+        if self._loading_photos_hidden_letters > letter_count:
+            self._loading_photos_hidden_letters = 0
+        remaining = self._loading_photos_hidden_letters
+        rendered: list[str] = []
+        for character in message:
+            if character.isalpha() and remaining:
+                rendered.append(" ")
+                remaining -= 1
+            else:
+                rendered.append(character)
+        self.filesPaneMessage.setText("".join(rendered))
+
     def _hide_files_pane_message(self) -> None:
+        self._loading_photos_timer.stop()
         self.filesPaneMessage.hide()
 
     def _position_files_pane_message(self) -> None:
