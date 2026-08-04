@@ -158,6 +158,7 @@ class IndexRefreshProgress:
     discovered_count: int
     indexed_count: int
     resumed: bool = False
+    complete: bool = False
 
 
 class PhotoIndex:

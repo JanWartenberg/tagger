@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from collections.abc import Callable
 
+from indexing import IndexRefreshProgress as RefreshStep
 from services.background_coordinator import (
     BackgroundCoordinator,
     DiscoveryCompleted,
@@ -11,6 +12,7 @@ from services.background_coordinator import (
     IndexEnsureCompleted,
     IndexOperationKind,
     IndexRefreshCompleted,
+    IndexRefreshProgress,
     IndexRefreshFailed,
     IndexRefreshKind,
     IndexSearchCompleted,
@@ -461,6 +463,33 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         self.assertEqual(
             [call[0] for call in self.index.calls], ["stale", "refresh", "update"]
         )
+        self.assertIn(
+            IndexRefreshCompleted(request=request, result={"refreshed": root}),
+            self.events,
+        )
+
+    def test_real_refresh_progress_schedules_the_next_chunk(self) -> None:
+        root = fixture_path("/photos")
+        self.index.refresh_results = [
+            RefreshStep(root, "discovering", 1_000, 1_000),
+            {"refreshed": root},
+        ]
+
+        request = self.coordinator.reindex(root, workspace_generation=3)
+        self.runner.run()
+
+        self.assertEqual(
+            self.events,
+            [
+                IndexRefreshProgress(
+                    request,
+                    RefreshStep(root, "discovering", 1_000, 1_000),
+                )
+            ],
+        )
+        self.assertEqual(len(self.runner.scheduled), 1)
+
+        self.runner.run()
         self.assertIn(
             IndexRefreshCompleted(request=request, result={"refreshed": root}),
             self.events,
