@@ -84,6 +84,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("reindex"),
         ),
         ActionSpec(
+            id="cancel",
+            description="Cancel the active full-index refresh",
+            handler_name="cancel_active_refresh",
+            command=CommandBinding("cancel"),
+        ),
+        ActionSpec(
             id="retry",
             description="Retry failed tag changes for selected photos",
             handler_name="retry_failed_tag_mutations",

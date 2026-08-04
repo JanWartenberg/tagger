@@ -1,5 +1,7 @@
 import re
 import sys
+import time
+from dataclasses import replace
 from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import Callable
@@ -11,6 +13,7 @@ from exif_tool import ExifTool, KeywordState
 from file_actions import FilePaneActions
 from indexing import (
     DateQueryError,
+    IndexRefreshProgress as IndexRefreshStep,
     IndexSyncResult,
     PhotoIndex,
     resolve_index_root,
@@ -34,6 +37,7 @@ from services.background_coordinator import (
     IndexEnsureCompleted,
     IndexReadFailed,
     IndexRefreshCompleted,
+    IndexRefreshProgress,
     IndexRefreshFailed,
     IndexRefreshKind,
     IndexRefreshRequest,
@@ -166,6 +170,7 @@ class PhotoIndexAdapter:
 
     def __init__(self, exif: ExifTool) -> None:
         self._exif = exif
+        self._refresh_roots: set[str] = set()
 
     def is_initialized(self, root: str) -> bool:
         return PhotoIndex(root).is_initialized()
@@ -177,7 +182,31 @@ class PhotoIndexAdapter:
         return PhotoIndex(root).sync_paths(self._exif, list(paths))
 
     def refresh(self, root: str) -> object:
-        return PhotoIndex(root).sync_root(self._exif)
+        return self._run_refresh_step(root, restart=False)
+
+    def restart_refresh(self, root: str) -> object:
+        self._refresh_roots.discard(root)
+        return self._run_refresh_step(root, restart=True)
+
+    def _run_refresh_step(self, root: str, *, restart: bool) -> object:
+        index = PhotoIndex(root)
+        refresh_step = getattr(index, "refresh_step", None)
+        result = (
+            refresh_step(self._exif, restart=restart)
+            if refresh_step is not None
+            else index.sync_root(self._exif)
+        )
+        was_active = root in self._refresh_roots
+        if isinstance(result, IndexRefreshStep):
+            self._refresh_roots.add(root)
+            return replace(result, resumed=False) if was_active else result
+        self._refresh_roots.discard(root)
+        return result
+
+    def cancel_refresh(self, root: str) -> bool:
+        self._refresh_roots.discard(root)
+        cancel = getattr(PhotoIndex(root), "cancel_refresh", None)
+        return bool(cancel()) if cancel is not None else False
 
     def remove_photo(self, root: str, path: str) -> bool:
         return PhotoIndex(root).remove_photo(path)
@@ -245,6 +274,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._displayed_search_generation: int | None = None
         self._displayed_search_query: str | None = None
         self._active_index_refresh_request: IndexRefreshRequest | None = None
+        self._last_refresh_status_at = 0.0
         self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
@@ -635,6 +665,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "add_folder_dialog": self.add_folder_dialog,
             "force_refresh_known_tags": self.force_refresh_known_tags,
             "reindex_active_root": self.reindex_active_root,
+            "cancel_active_refresh": self.cancel_active_refresh,
             "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
             "retry_all_failed_tag_mutations": self.retry_all_failed_tag_mutations,
             "resolve_mismatch": self.resolve_mismatch,
@@ -1808,6 +1839,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 IndexWriteCompleted,
                 IndexWriteFailed,
                 IndexRefreshCompleted,
+                IndexRefreshProgress,
                 IndexRefreshFailed,
                 IndexStaleResultEvicted,
                 IndexSearchCompleted,
@@ -1826,6 +1858,7 @@ class MainWindow(QtWidgets.QMainWindow):
             | IndexWriteCompleted
             | IndexWriteFailed
             | IndexRefreshCompleted
+            | IndexRefreshProgress
             | IndexRefreshFailed
             | IndexStaleResultEvicted
             | IndexSearchCompleted
@@ -1841,7 +1874,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(event, IndexStaleResultEvicted):
             self._handle_stale_result_evicted(event)
             return
-        if isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed)):
+        if isinstance(
+            event, (IndexRefreshCompleted, IndexRefreshProgress, IndexRefreshFailed)
+        ):
             self._handle_index_refresh_event(event)
             return
         if isinstance(event, IndexEnsureCompleted):
@@ -1878,7 +1913,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return request is not None and request.root == root
 
     def _handle_index_refresh_event(
-        self, event: IndexRefreshCompleted | IndexRefreshFailed
+        self, event: IndexRefreshCompleted | IndexRefreshProgress | IndexRefreshFailed
     ) -> None:
         request = event.request
         if request.kind is IndexRefreshKind.STALE_RESULT_REPAIR:
@@ -1890,6 +1925,9 @@ class MainWindow(QtWidgets.QMainWindow):
             != self._tag_mutation_coordinator.workspace_generation
             or request.root != self._index_root
         ):
+            return
+        if isinstance(event, IndexRefreshProgress):
+            self._show_refresh_progress(event.result)
             return
         self._active_index_refresh_request = None
         if isinstance(event, IndexRefreshFailed):
@@ -1922,6 +1960,22 @@ class MainWindow(QtWidgets.QMainWindow):
             if request.kind is IndexRefreshKind.MANUAL
             else "Index refreshed"
         )
+
+    def _show_refresh_progress(self, progress: object) -> None:
+        if not isinstance(progress, IndexRefreshStep):
+            return
+        now = time.monotonic()
+        if now - self._last_refresh_status_at < 1.0:
+            return
+        self._last_refresh_status_at = now
+        if progress.phase == "discovering":
+            prefix = "Resumed; discovering" if progress.resumed else "Discovering"
+            self.indexRepairStatusLabel.setText(
+                f"{prefix}… {progress.discovered_count} found, "
+                f"{progress.indexed_count} indexed"
+            )
+        else:
+            self.indexRepairStatusLabel.setText("Reconciling index…")
 
     def _handle_stale_result_repair_event(
         self, event: IndexRefreshCompleted | IndexRefreshFailed
@@ -2838,6 +2892,15 @@ class MainWindow(QtWidgets.QMainWindow):
             retry,
             f"Retried tag changes for {len(retry_paths)} photo(s)",
         )
+
+    def cancel_active_refresh(self) -> None:
+        root = self._index_root
+        if root is None or self._active_index_refresh_request is None:
+            self.statusBar().showMessage("No active index refresh")
+            return
+        self._background_coordinator.cancel_refresh(root)
+        self._active_index_refresh_request = None
+        self.indexRepairStatusLabel.setText("Cancelling index refresh…")
 
     def reindex_active_root(self) -> None:
         root = self._index_root

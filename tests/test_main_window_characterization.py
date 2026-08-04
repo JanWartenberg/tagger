@@ -1007,6 +1007,20 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakePhotoIndex.refresh_calls, ["refresh"])
         self.assertEqual(self.window.statusBar().currentMessage(), "Reindex complete")
 
+    def test_cancel_command_stops_an_unstarted_full_refresh(self) -> None:
+        self._add_paths("one.jpg")
+
+        self.window._dispatch_command("reindex", [])
+        self.window._dispatch_command("cancel", [])
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.refresh_calls, [])
+        self.assertEqual(FakePhotoIndex.cancel_calls, 1)
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(), "Cancelling index refresh…"
+        )
+
     def test_missing_active_search_result_repairs_and_refreshes_the_query(
         self,
     ) -> None:
@@ -1758,6 +1772,7 @@ class FakePhotoIndex:
     refresh_stale = False
     refresh_error: Exception | None = None
     refresh_calls: list[str] = []
+    cancel_calls = 0
     removed_paths: list[str] = []
     reconciled_directories: list[str] = []
     states_by_path: dict[str, KeywordState] = {}
@@ -1771,6 +1786,7 @@ class FakePhotoIndex:
         cls.refresh_stale = False
         cls.refresh_error = None
         cls.refresh_calls = []
+        cls.cancel_calls = 0
         cls.removed_paths = []
         cls.reconciled_directories = []
         cls.states_by_path = {}
@@ -1792,6 +1808,10 @@ class FakePhotoIndex:
             raise type(self).refresh_error
         type(self).refresh_stale = False
         return object()
+
+    def cancel_refresh(self) -> bool:
+        type(self).cancel_calls += 1
+        return True
 
     def load_tags_for_root(self) -> set[str]:
         type(self).known_tag_reads += 1

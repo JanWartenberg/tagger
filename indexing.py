@@ -18,6 +18,9 @@ from utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
 # that limit so supported builds with the default limit can index large workspaces.
 _PATH_QUERY_BATCH_SIZE = 500
 _INDEX_REFRESH_MAX_AGE_SECONDS = 24 * 60 * 60
+_REFRESH_RESUME_MAX_AGE_SECONDS = 60 * 60
+_REFRESH_PATH_BATCH_SIZE = 1_000
+_REFRESH_EXIF_SUBGROUP_SIZE = 200
 
 
 def _normalize_root(root: str | Path) -> Path:
@@ -146,6 +149,17 @@ class IndexSyncResult:
     known_tag_count: int
 
 
+@dataclass(frozen=True)
+class IndexRefreshProgress:
+    """A committed, resumable refresh checkpoint between index chunks."""
+
+    root: str
+    phase: str
+    discovered_count: int
+    indexed_count: int
+    resumed: bool = False
+
+
 class PhotoIndex:
     def __init__(self, root: str | Path) -> None:
         self.root = _normalize_root(root)
@@ -203,8 +217,37 @@ class PhotoIndex:
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS refresh_checkpoint(
+              singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+              phase TEXT NOT NULL,
+              started_at INTEGER NOT NULL,
+              discovered_count INTEGER NOT NULL,
+              indexed_count INTEGER NOT NULL,
+              updated_count INTEGER NOT NULL,
+              deleted_count INTEGER NOT NULL,
+              resumed INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_directories(
+              path TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_paths(
+              path TEXT PRIMARY KEY
+            );
             """
         )
+        refresh_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(refresh_checkpoint)").fetchall()
+        }
+        if "resumed" not in refresh_columns:
+            conn.execute(
+                "ALTER TABLE refresh_checkpoint "
+                "ADD COLUMN resumed INTEGER NOT NULL DEFAULT 0"
+            )
+
         photo_columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(photos)").fetchall()
@@ -261,11 +304,34 @@ class PhotoIndex:
         max_age_seconds: int = _INDEX_REFRESH_MAX_AGE_SECONDS,
     ) -> bool:
         """Return whether this root needs a full metadata synchronization."""
+        current_time = time.time() if now is None else now
+        checkpoint_started = self._refresh_checkpoint_started()
+        if checkpoint_started is not None:
+            # An interrupted run is resumed for an hour; an older checkpoint is
+            # discarded and replaced by a new run when the root becomes active.
+            return True
         last_refresh = self.last_index_refresh()
         if last_refresh is None:
             return True
-        current_time = time.time() if now is None else now
         return current_time - last_refresh >= max_age_seconds
+
+    def _refresh_checkpoint_started(self) -> int | None:
+        with self._connection() as conn:
+            row = conn.execute(
+                "SELECT started_at FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+        return int(row[0]) if row is not None else None
+
+    def cancel_refresh(self) -> bool:
+        """Discard unfinished refresh recovery state for this index root."""
+        with self._connection() as conn:
+            present = conn.execute(
+                "SELECT 1 FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+            conn.execute("DELETE FROM refresh_directories")
+            conn.execute("DELETE FROM refresh_paths")
+            conn.execute("DELETE FROM refresh_checkpoint")
+        return present is not None
 
     def has_photos(self, paths: list[str]) -> set[str]:
         normalized = [normalize_path(p) for p in paths]
@@ -470,6 +536,240 @@ class PhotoIndex:
             )
             self._prune_orphan_tags(conn)
             return cursor.rowcount > 0
+
+    def refresh_step(
+        self, exif: ExifTool, *, restart: bool = False
+    ) -> IndexRefreshProgress | IndexSyncResult:
+        try:
+            return self._refresh_step(exif, restart=restart)
+        except Exception:
+            # A terminal subgroup failure must not leave a resumable checkpoint;
+            # earlier committed chunks remain normal index data.
+            self.cancel_refresh()
+            raise
+
+    def _refresh_step(
+        self, exif: ExifTool, *, restart: bool = False
+    ) -> IndexRefreshProgress | IndexSyncResult:
+        """Commit one bounded full-root refresh chunk.
+
+        The checkpoint stores only directories yet to walk and photos yet to index.
+        Completed paths live exclusively in the normal index, so a restart does not
+        create a second durable manifest of the root.
+        """
+        now = int(time.time())
+        resumed = False
+        with self._connection() as conn:
+            checkpoint = conn.execute(
+                "SELECT * FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+            if checkpoint is not None and (
+                restart
+                or now - int(checkpoint["started_at"])
+                >= _REFRESH_RESUME_MAX_AGE_SECONDS
+            ):
+                self._clear_refresh_checkpoint(conn)
+                checkpoint = None
+            if checkpoint is None:
+                conn.execute(
+                    """
+                    INSERT INTO refresh_checkpoint(
+                      singleton, phase, started_at, discovered_count, indexed_count,
+                      updated_count, deleted_count
+                    ) VALUES (1, 'discovering', ?, 0, 0, 0, 0)
+                    """,
+                    (now,),
+                )
+                conn.execute(
+                    "INSERT INTO refresh_directories(path) VALUES (?)",
+                    (str(self.root),),
+                )
+            else:
+                resumed = not bool(checkpoint["resumed"])
+                if resumed:
+                    conn.execute(
+                        "UPDATE refresh_checkpoint SET resumed = 1 WHERE singleton = 1"
+                    )
+
+            phase = str(
+                conn.execute(
+                    "SELECT phase FROM refresh_checkpoint WHERE singleton = 1"
+                ).fetchone()[0]
+            )
+            if phase == "discovering":
+                paths, discovered = self._take_refresh_path_batch(conn)
+                if paths:
+                    updated, deleted, indexed = self._index_refresh_paths(
+                        conn, exif, paths
+                    )
+                    conn.execute(
+                        """
+                        UPDATE refresh_checkpoint
+                        SET discovered_count = discovered_count + ?,
+                            indexed_count = indexed_count + ?,
+                            updated_count = updated_count + ?,
+                            deleted_count = deleted_count + ?
+                        WHERE singleton = 1
+                        """,
+                        (discovered, indexed, updated, deleted),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE refresh_checkpoint SET phase = 'reconciling' "
+                        "WHERE singleton = 1"
+                    )
+
+            checkpoint = conn.execute(
+                "SELECT * FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+            if str(checkpoint["phase"]) == "discovering":
+                return IndexRefreshProgress(
+                    root=str(self.root),
+                    phase="discovering",
+                    discovered_count=int(checkpoint["discovered_count"]),
+                    indexed_count=int(checkpoint["indexed_count"]),
+                    resumed=resumed,
+                )
+            if phase == "discovering":
+                return IndexRefreshProgress(
+                    root=str(self.root),
+                    phase="reconciling",
+                    discovered_count=int(checkpoint["discovered_count"]),
+                    indexed_count=int(checkpoint["indexed_count"]),
+                    resumed=resumed,
+                )
+
+        # Reconciliation deliberately happens once, after streamed discovery.  It
+        # observes additions, removals, and mtime/size changes made during the run.
+        paths = [
+            str(path)
+            for path in self.root.rglob("*")
+            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+        ]
+        reconciled = self._sync_paths(exif, paths, force=False, deletion_directory=None)
+        with self._connection() as conn:
+            checkpoint = conn.execute(
+                "SELECT * FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+            if checkpoint is None:
+                # Cancellation can run between a queued reconciliation and this
+                # completion; retain the committed index but report its result.
+                return reconciled
+            result = IndexSyncResult(
+                root=str(self.root),
+                scanned_count=reconciled.scanned_count,
+                updated_count=int(checkpoint["updated_count"])
+                + reconciled.updated_count,
+                deleted_count=int(checkpoint["deleted_count"])
+                + reconciled.deleted_count,
+                known_tag_count=reconciled.known_tag_count,
+            )
+            self._clear_refresh_checkpoint(conn)
+            return result
+
+    def _clear_refresh_checkpoint(self, conn: sqlite3.Connection) -> None:
+        conn.execute("DELETE FROM refresh_directories")
+        conn.execute("DELETE FROM refresh_paths")
+        conn.execute("DELETE FROM refresh_checkpoint")
+
+    def _take_refresh_path_batch(
+        self, conn: sqlite3.Connection
+    ) -> tuple[list[str], int]:
+        """Stream directories into one bounded, durable pending-photo batch."""
+        start = time.monotonic()
+        discovered = 0
+        while True:
+            rows = conn.execute(
+                "SELECT path FROM refresh_paths ORDER BY path LIMIT ?",
+                (_REFRESH_PATH_BATCH_SIZE,),
+            ).fetchall()
+            if len(rows) >= _REFRESH_PATH_BATCH_SIZE:
+                break
+            directory = conn.execute(
+                "SELECT path FROM refresh_directories ORDER BY path LIMIT 1"
+            ).fetchone()
+            if directory is None or time.monotonic() - start >= 30:
+                break
+            directory_path = Path(str(directory[0]))
+            conn.execute(
+                "DELETE FROM refresh_directories WHERE path = ?", (str(directory_path),)
+            )
+            try:
+                children = list(directory_path.iterdir())
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+            for child in children:
+                try:
+                    if child.is_dir():
+                        conn.execute(
+                            "INSERT OR IGNORE INTO refresh_directories(path) VALUES (?)",
+                            (normalize_path(child),),
+                        )
+                    elif child.is_file() and child.suffix.lower() in SUPPORTED_EXTS:
+                        cursor = conn.execute(
+                            "INSERT OR IGNORE INTO refresh_paths(path) VALUES (?)",
+                            (normalize_path(child),),
+                        )
+                        discovered += cursor.rowcount
+                except OSError:
+                    continue
+
+        rows = conn.execute(
+            "SELECT path FROM refresh_paths ORDER BY path LIMIT ?",
+            (_REFRESH_PATH_BATCH_SIZE,),
+        ).fetchall()
+        paths = [str(row[0]) for row in rows]
+        if paths:
+            conn.executemany(
+                "DELETE FROM refresh_paths WHERE path = ?", [(path,) for path in paths]
+            )
+        # Discovery count records every path that becomes ready for indexing once.
+        return paths, discovered
+
+    def _index_refresh_paths(
+        self, conn: sqlite3.Connection, exif: ExifTool, paths: list[str]
+    ) -> tuple[int, int, int]:
+        states: dict[str, KeywordState] = {}
+        started = time.monotonic()
+        processed: list[str] = []
+        for offset in range(0, len(paths), _REFRESH_EXIF_SUBGROUP_SIZE):
+            subgroup = paths[offset : offset + _REFRESH_EXIF_SUBGROUP_SIZE]
+            for attempt in range(3):
+                try:
+                    states.update(exif.read_keywords_many(subgroup))
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(0.1 * (attempt + 1))
+            processed.extend(subgroup)
+            # The time boundary is intentionally checked only between ExifTool
+            # subgroups; no subprocess is interrupted mid-request.
+            if time.monotonic() - started >= 30:
+                break
+
+        for path in paths[len(processed) :]:
+            conn.execute(
+                "INSERT OR IGNORE INTO refresh_paths(path) VALUES (?)", (path,)
+            )
+
+        updated = 0
+        deleted = 0
+        for path in processed:
+            state = states.get(path)
+            if state is None:
+                conn.execute("DELETE FROM photos WHERE path = ?", (path,))
+                deleted += 1
+                continue
+            try:
+                self.upsert_state(conn, path, state)
+            except FileNotFoundError:
+                conn.execute("DELETE FROM photos WHERE path = ?", (path,))
+                deleted += 1
+            else:
+                updated += 1
+        self._prune_orphan_tags(conn)
+        return updated, deleted, len(processed)
 
     def sync_root(self, exif: ExifTool, recursive: bool = True) -> IndexSyncResult:
         del recursive

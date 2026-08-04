@@ -1,6 +1,6 @@
 # 01 — Add Resumable Background Full-Index Refresh
 
-Status: ready-for-agent
+Status: completed
 Category: feature
 Priority: low
 Milestone: M2 — Reliable, scalable index operations
@@ -29,15 +29,15 @@ Replace the monolithic full-root refresh with a durable, streamed refresh that r
 
 ## Acceptance Criteria
 
-- [ ] Checkpoint writes and photo-index writes are atomic, and recovery state is local to the root's existing SQLite database.
-- [ ] Refresh begins metadata work while directory discovery continues; it commits bounded batches and can resume a recent interruption without repeating completed batches.
-- [ ] Completion runs one bounded reconciliation pass for membership and changed-file repair.
-- [ ] Automatic stale refresh and manual refresh use the same engine; explicit restart, cancellation, expiry, retries, and terminal failure follow the agreed contract.
-- [ ] Confirmed tag mutations and other incremental writes are committed between refresh chunks and win over older refresh state.
-- [ ] Searches see only committed data and existing displayed result views remain stable.
-- [ ] `:cancel` is present in the action catalogue and stops safely after the current subgroup.
-- [ ] The secondary footer supplies the agreed lifecycle feedback without replacing ordinary status messages.
-- [ ] Tests cover the durable index layer, deterministic coordinator scheduling/failure cases, and offscreen command/UI behavior.
+- [x] Checkpoint writes and photo-index writes are atomic, and recovery state is local to the root's existing SQLite database.
+- [x] Refresh begins metadata work while directory discovery continues; it commits bounded batches and can resume a recent interruption without repeating completed batches.
+- [x] Completion runs one bounded reconciliation pass for membership and changed-file repair.
+- [x] Automatic stale refresh and manual refresh use the same engine; explicit restart, cancellation, expiry, retries, and terminal failure follow the agreed contract.
+- [x] Confirmed tag mutations and other incremental writes are committed between refresh chunks and win over older refresh state.
+- [x] Searches see only committed data and existing displayed result views remain stable.
+- [x] `:cancel` is present in the action catalogue and stops safely after the current subgroup.
+- [x] The secondary footer supplies the agreed lifecycle feedback without replacing ordinary status messages.
+- [x] Tests cover the durable index layer, deterministic coordinator scheduling/failure cases, and offscreen command/UI behavior.
 
 ## Validation
 
@@ -48,3 +48,5 @@ Replace the monolithic full-root refresh with a durable, streamed refresh that r
 ## Comments
 
 Triage completed with the maintainer on 2026-08-02. The feature is ready for implementation.
+
+Implemented: durable SQLite checkpoints stream directories and 1,000-path chunks; coordinator continuations yield to incremental writes; final reconciliation, retries, restart/resume, and `:cancel` are covered by index, coordinator, and offscreen UI tests.

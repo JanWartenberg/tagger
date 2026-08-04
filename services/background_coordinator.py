@@ -27,6 +27,10 @@ class IndexAdapter(Protocol):
 
     def refresh(self, root: str) -> object: ...
 
+    def restart_refresh(self, root: str) -> object: ...
+
+    def cancel_refresh(self, root: str) -> bool: ...
+
     def remove_photo(self, root: str, path: str) -> object: ...
 
     def reconcile_directory(self, root: str, directory: str) -> object: ...
@@ -57,6 +61,7 @@ class IndexOperationKind(Enum):
     FULL_REINDEX = "full_reindex"
     INDEX_MISSING = "index_missing"
     UPDATE_STATES = "update_states"
+    CANCEL_REFRESH = "cancel_refresh"
 
 
 class IndexRefreshKind(Enum):
@@ -151,6 +156,14 @@ class IndexRefreshCompleted:
 
 
 @dataclass(frozen=True)
+class IndexRefreshProgress:
+    """One committed refresh chunk; later root writes may run before the next one."""
+
+    request: IndexRefreshRequest
+    result: object
+
+
+@dataclass(frozen=True)
 class IndexRefreshFailed:
     """A failed freshness check or full refresh."""
 
@@ -200,6 +213,7 @@ IndexEvent: TypeAlias = (
     | IndexWriteCompleted
     | IndexWriteFailed
     | IndexRefreshCompleted
+    | IndexRefreshProgress
     | IndexRefreshFailed
     | IndexStaleResultEvicted
     | IndexSearchCompleted
@@ -214,6 +228,7 @@ class _IndexOperation:
     kind: IndexOperationKind
     paths: tuple[str, ...] = ()
     refresh_request: IndexRefreshRequest | None = None
+    restart: bool = False
 
 
 @dataclass
@@ -221,6 +236,7 @@ class _RootWriteQueue:
     pending: list[_IndexOperation] = field(default_factory=list)
     pending_states: dict[str, object] = field(default_factory=dict)
     update_scheduled: bool = False
+    cancel_requested: bool = False
     running: bool = False
 
 
@@ -344,9 +360,35 @@ class BackgroundCoordinator:
         )
         self._enqueue_index_operation(
             request.root,
-            _IndexOperation(IndexOperationKind.FULL_REINDEX, refresh_request=request),
+            _IndexOperation(
+                IndexOperationKind.FULL_REINDEX,
+                refresh_request=request,
+                restart=True,
+            ),
         )
         return request
+
+    def cancel_refresh(self, root: str | Path) -> None:
+        """Cancel a refresh at its next chunk boundary and drop its checkpoint."""
+        normalized_root = _normalize_path(root)
+        with self._lock:
+            queue = self._index_queues.setdefault(normalized_root, _RootWriteQueue())
+            # Cancellation must beat a refresh continuation but cannot interrupt
+            # the ExifTool subgroup currently owned by a worker.
+            queue.cancel_requested = True
+            queue.pending = [
+                operation
+                for operation in queue.pending
+                if operation.kind
+                not in {
+                    IndexOperationKind.REFRESH_IF_STALE,
+                    IndexOperationKind.FULL_REINDEX,
+                }
+            ]
+            queue.pending.insert(0, _IndexOperation(IndexOperationKind.CANCEL_REFRESH))
+            work = self._next_index_work_locked(normalized_root, queue)
+        if work is not None:
+            self._runner.submit(work)
 
     def repair_stale_search_result(
         self,
@@ -377,7 +419,9 @@ class BackgroundCoordinator:
             queue = self._index_queues.setdefault(normalized_root, _RootWriteQueue())
             queue.pending.append(
                 _IndexOperation(
-                    IndexOperationKind.FULL_REINDEX, refresh_request=request
+                    IndexOperationKind.FULL_REINDEX,
+                    refresh_request=request,
+                    restart=True,
                 )
             )
             work = self._next_index_work_locked(normalized_root, queue)
@@ -596,6 +640,24 @@ class BackgroundCoordinator:
         return lambda: self._run_index_operation(root, operation)
 
     def _run_index_operation(self, root: str, operation: _IndexOperation) -> None:
+        with self._lock:
+            cancel_refresh = (
+                operation.kind
+                in {
+                    IndexOperationKind.REFRESH_IF_STALE,
+                    IndexOperationKind.FULL_REINDEX,
+                }
+                and self._index_queues[root].cancel_requested
+            )
+        if cancel_refresh:
+            # The queued CANCEL_REFRESH operation owns checkpoint cleanup. This
+            # continuation must not start another ExifTool subgroup before it runs.
+            self._complete_index_operation(
+                root,
+                IndexWriteCompleted(root, IndexOperationKind.CANCEL_REFRESH),
+                operation,
+            )
+            return
         try:
             if operation.kind is IndexOperationKind.ENSURE:
                 result = (
@@ -624,8 +686,20 @@ class BackgroundCoordinator:
                         root, str(Path(request.path).parent)
                     )
                 else:
-                    result = self._index.refresh(root) if should_refresh else None
-                event = IndexRefreshCompleted(request, result)
+                    if not should_refresh:
+                        result = None
+                    elif operation.restart and hasattr(self._index, "restart_refresh"):
+                        result = self._index.restart_refresh(root)
+                    else:
+                        result = self._index.refresh(root)
+                if result is not None and getattr(result, "complete", True) is False:
+                    event = IndexRefreshProgress(request, result)
+                else:
+                    event = IndexRefreshCompleted(request, result)
+            elif operation.kind is IndexOperationKind.CANCEL_REFRESH:
+                if hasattr(self._index, "cancel_refresh"):
+                    self._index.cancel_refresh(root)
+                event = IndexWriteCompleted(root, operation.kind)
             elif operation.kind is IndexOperationKind.INDEX_MISSING:
                 self._index.index_missing(root, operation.paths)
                 event = IndexWriteCompleted(root, operation.kind)
@@ -639,7 +713,7 @@ class BackgroundCoordinator:
                 event = IndexRefreshFailed(operation.refresh_request, str(error))
             else:
                 event = IndexWriteFailed(root, operation.kind, str(error))
-        self._complete_index_operation(root, event)
+        self._complete_index_operation(root, event, operation)
 
     def _take_pending_states(self, root: str) -> dict[str, object]:
         with self._lock:
@@ -649,7 +723,9 @@ class BackgroundCoordinator:
             queue.update_scheduled = False
             return states
 
-    def _complete_index_operation(self, root: str, event: IndexEvent) -> None:
+    def _complete_index_operation(
+        self, root: str, event: IndexEvent, operation: _IndexOperation
+    ) -> None:
         with self._lock:
             if (
                 isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed))
@@ -658,6 +734,19 @@ class BackgroundCoordinator:
                 self._stale_result_repair_roots.discard(root)
             queue = self._index_queues[root]
             queue.running = False
+            if isinstance(event, IndexRefreshProgress) and not queue.cancel_requested:
+                # Append after pending writes so confirmed mutations are committed
+                # before the next older refresh chunk can overwrite their index row.
+                queue.pending.append(
+                    _IndexOperation(
+                        operation.kind,
+                        operation.paths,
+                        operation.refresh_request,
+                        restart=False,
+                    )
+                )
+            if operation.kind is IndexOperationKind.CANCEL_REFRESH:
+                queue.cancel_requested = False
             work = self._next_index_work_locked(root, queue)
         self._event_sink(event)
         if work is not None:

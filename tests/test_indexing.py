@@ -6,7 +6,13 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from exif_tool import KeywordState
-from indexing import DateQueryError, _PATH_QUERY_BATCH_SIZE, PhotoIndex
+from indexing import (
+    DateQueryError,
+    IndexRefreshProgress,
+    IndexSyncResult,
+    _PATH_QUERY_BATCH_SIZE,
+    PhotoIndex,
+)
 from utils import normalize_path
 
 
@@ -147,6 +153,68 @@ class PhotoIndexPathBatchingTests(unittest.TestCase):
                 {str(discovered), str(nested_photo), str(other_photo)},
             )
             self.assertEqual(index.load_known_tags(), {"indexed"})
+
+
+class PhotoIndexResumableRefreshTests(unittest.TestCase):
+    def test_refresh_streams_bounded_chunks_then_reconciles_and_cleans_checkpoint(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for number in range(1_001):
+                (root / f"photo-{number:04}.jpg").touch()
+            index = PhotoIndex(root)
+            exif = FakeExifTool()
+
+            first = index.refresh_step(exif)
+            self.assertIsInstance(first, IndexRefreshProgress)
+            self.assertEqual(first.phase, "discovering")
+            self.assertEqual(first.indexed_count, 1_000)
+            self.assertEqual(sum(map(len, exif.read_batches)), 1_000)
+
+            resumed = PhotoIndex(root).refresh_step(exif)
+            self.assertIsInstance(resumed, IndexRefreshProgress)
+            self.assertTrue(resumed.resumed)
+            self.assertEqual(resumed.indexed_count, 1_001)
+
+            self.assertIsInstance(index.refresh_step(exif), IndexRefreshProgress)
+            completed = index.refresh_step(exif)
+            self.assertIsInstance(completed, IndexSyncResult)
+            self.assertEqual(completed.updated_count, 1_001)
+            self.assertFalse(index.is_refresh_stale())
+            self.assertFalse(index.cancel_refresh())
+
+    def test_third_subgroup_failure_discards_recovery_state(self) -> None:
+        class FailingExifTool:
+            calls = 0
+
+            def read_keywords_many(self, _paths: list[str]) -> dict[str, KeywordState]:
+                self.calls += 1
+                raise RuntimeError("ExifTool failed")
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "photo.jpg").touch()
+            index = PhotoIndex(root)
+            exif = FailingExifTool()
+
+            with self.assertRaisesRegex(RuntimeError, "ExifTool failed"):
+                index.refresh_step(exif)
+
+            self.assertEqual(exif.calls, 3)
+            self.assertFalse(index.cancel_refresh())
+
+    def test_cancel_discards_durable_recovery_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "photo.jpg").touch()
+            index = PhotoIndex(root)
+
+            self.assertIsInstance(
+                index.refresh_step(FakeExifTool()), IndexRefreshProgress
+            )
+            self.assertTrue(index.cancel_refresh())
+            self.assertFalse(index.cancel_refresh())
 
 
 class CaptureDateExifTool:

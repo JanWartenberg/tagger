@@ -47,6 +47,10 @@ class DeterministicRunner:
         self.scheduled.pop(index)()
 
 
+class IncompleteRefresh:
+    complete = False
+
+
 class FakeIndex:
     def __init__(self) -> None:
         self.initialized: set[str] = set()
@@ -55,6 +59,7 @@ class FakeIndex:
         self.fail_next: set[tuple[str, str]] = set()
         self.search_results: dict[tuple[str, str], list[str]] = {}
         self.known_tags: dict[str, set[str]] = {}
+        self.refresh_results: list[object] = []
 
     def is_initialized(self, root: str) -> bool:
         self.calls.append(("initialized", root, None))
@@ -78,7 +83,9 @@ class FakeIndex:
             self.fail_next.remove(("refresh", root))
             raise RuntimeError("refresh failed")
         self.stale.discard(root)
-        return {"refreshed": root}
+        return (
+            self.refresh_results.pop(0) if self.refresh_results else {"refreshed": root}
+        )
 
     def remove_photo(self, root: str, path: str) -> bool:
         self.calls.append(("remove", root, path))
@@ -457,6 +464,24 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         self.assertIn(
             IndexRefreshCompleted(request=request, result={"refreshed": root}),
             self.events,
+        )
+
+    def test_refresh_chunk_yields_to_confirmed_updates_before_continuing(self) -> None:
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.refresh_results = [IncompleteRefresh(), {"refreshed": root}]
+
+        self.coordinator.reindex(root, workspace_generation=3)
+        self.coordinator.submit_confirmed_states(root, {photo: "tagged"})
+        self.runner.run()
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls], ["refresh", "update", "refresh"]
+        )
+        self.assertTrue(
+            any(isinstance(event, IndexRefreshCompleted) for event in self.events)
         )
 
     def test_fresh_automatic_refresh_reports_no_work(self) -> None:

@@ -1,6 +1,6 @@
 # Resumable Background Full-Index Refresh
 
-Status: ready-for-agent
+Status: completed
 Priority: low
 
 ## Problem Statement
