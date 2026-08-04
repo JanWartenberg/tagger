@@ -157,7 +157,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(
             self.window.filterInfoLabel.text(),
-            "Search: tag:second · 1 results · :back",
+            "Search: tag:second · 1 results",
         )
 
         self.window._dispatch_command("back", [])
@@ -227,26 +227,104 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.all_file_paths(), [])
         self.assertEqual(self.window.files.count(), 0)
-        self.assertTrue(self.window.filesPaneMessage.isVisible())
-        self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
+        self.assertFalse(self.window.filesPaneMessage.isVisible())
+        self.assertTrue(self.window.filesRenderProgressLabel.isVisible())
+        self.assertFalse(self.window.filterInfoLabel.isVisible())
+        self.assertTrue(self.window._loading_photos_timer.isActive())
+        self.assertEqual(self.window.statusBar().currentMessage(), "Loading...")
         self.assertNotEqual(self.window.selectedLabel.text(), old_path)
 
         timer_was_active_while_rendering: list[bool] = []
+        replacement_paths_are_normalized: list[bool] = []
         original_replace = self.window.replace_photo_workspace
+        original_index_root_for_paths = self.window._index_root_for_paths
 
         def record_replace(*args, **kwargs):
             timer_was_active_while_rendering.append(
                 self.window._loading_photos_timer.isActive()
             )
+            replacement_paths_are_normalized.append(kwargs["paths_are_normalized"])
             return original_replace(*args, **kwargs)
 
-        with patch.object(self.window, "replace_photo_workspace", record_replace):
+        with (
+            patch.object(self.window, "replace_photo_workspace", record_replace),
+            patch.object(
+                self.window,
+                "_index_root_for_paths",
+                wraps=original_index_root_for_paths,
+            ) as index_root_for_paths,
+        ):
             self.discovery_runner.run_discovery()
+        index_root_for_paths.assert_called_once_with([normalize_path(folder)])
+        self.assertTrue(self.window._loading_photos_timer.isActive())
+        self.assertTrue(self.window.filesRenderProgressLabel.isVisible())
+        self.assertFalse(self.window.filterInfoLabel.isVisible())
+        self.assertFalse(self.window.files.isEnabled())
+        self._wait_for_ui(lambda: self.window.files.count() == 1)
         (loaded_path,) = [normalize_path(f"{folder}/one.jpg")]
         self.assertEqual(self.window.all_file_paths(), [loaded_path])
         self.assertEqual(self.window.selected_file_paths(), [loaded_path])
         self.assertFalse(self.window.filesPaneMessage.isVisible())
         self.assertEqual(timer_was_active_while_rendering, [True])
+        self.assertEqual(replacement_paths_are_normalized, [True])
+        self.assertFalse(self.window.filesRenderProgressLabel.isVisible())
+        self.assertFalse(self.window._loading_photos_timer.isActive())
+        self.assertTrue(self.window.filterInfoLabel.isVisible())
+        self.assertTrue(self.window.files.isEnabled())
+
+    def test_folder_discovery_renders_large_path_sets_in_event_loop_batches(
+        self,
+    ) -> None:
+        folder = "/large-replacement"
+        paths = [f"{folder}/photo-{number:05}.jpg" for number in range(2_000)]
+        self.discovery.results[folder] = paths
+
+        self._choose_folder(folder)
+        self.discovery_runner.run_discovery()
+
+        self.assertEqual(self.window.files.count(), 0)
+        self.assertTrue(self.window.filesRenderProgressLabel.isVisible())
+        self.assertFalse(self.window.files.isEnabled())
+        self._wait_for_ui(lambda: self.window.files.count() == len(paths))
+        self.assertFalse(self.window.filesRenderProgressLabel.isVisible())
+        self.assertTrue(self.window.files.isEnabled())
+
+    def test_render_progress_advances_while_large_path_set_is_rendered(self) -> None:
+        folder = "/animated-replacement"
+        paths = [f"{folder}/photo-{number:05}.jpg" for number in range(10_000)]
+        self.discovery.results[folder] = paths
+
+        self._choose_folder(folder)
+        self.discovery_runner.run_discovery()
+        self._wait_for_ui(
+            lambda: self.window.files.count() > 0
+            and self.window.files.count() < len(paths),
+            timeout=3,
+        )
+        self.assertFalse(self.window.filesPaneLoadingIcon.isVisible())
+        self._wait_for_ui(lambda: self.window.files.count() == len(paths), timeout=3)
+
+    def test_files_render_progress_animates_before_discovery_count_is_known(
+        self,
+    ) -> None:
+        self.window._show_files_render_progress()
+
+        self.assertTrue(self.window.filesRenderProgressIcon.isVisible())
+        self.assertTrue(self.window.filesPaneLoadingIcon.isVisible())
+        self.assertEqual(self.window.filesRenderProgressLabel.text(), "Loading")
+        self.assertFalse(self.window.filterInfoLabel.isVisible())
+        progress_width = self.window.filesRenderProgress.width()
+        self.window._advance_loading_photos_animation()
+        self.assertEqual(self.window.filesRenderProgressLabel.text(), " oading")
+        self.assertEqual(self.window.filesRenderProgress.width(), progress_width)
+        self.window._show_files_render_progress(1_000, 10_000)
+        self.assertEqual(
+            self.window.filesRenderProgressCountLabel.text(), "1 000 / 10 000"
+        )
+
+        self.window._hide_files_render_progress()
+        self.assertFalse(self.window.filesPaneLoadingIcon.isVisible())
+        self.assertTrue(self.window.filterInfoLabel.isVisible())
         self.assertFalse(self.window._loading_photos_timer.isActive())
 
     def test_loading_photos_message_hides_letters_in_sequence(self) -> None:
@@ -1428,7 +1506,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertEqual(
             self.window.filterInfoLabel.text(),
-            "Search: tag:second · 1 results · :back",
+            "Search: tag:second · 1 results",
         )
 
     def test_latest_selection_is_not_delayed_by_stale_metadata_reads(self) -> None:

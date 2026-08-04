@@ -314,14 +314,22 @@ class BackgroundCoordinator:
         self._schedule_discovery(request)
         return request
 
-    def ensure_index(self, root: str | Path, paths: Iterable[str | Path]) -> None:
+    def ensure_index(
+        self,
+        root: str | Path,
+        paths: Iterable[str | Path],
+        *,
+        paths_are_normalized: bool = False,
+    ) -> None:
         """Check and, when needed, fully synchronize one discovered path set."""
+        normalized_paths = (
+            tuple(str(path) for path in paths)
+            if paths_are_normalized
+            else tuple(_normalize_path(path) for path in paths)
+        )
         self._enqueue_index_operation(
             _normalize_path(root),
-            _IndexOperation(
-                IndexOperationKind.ENSURE,
-                tuple(_normalize_path(path) for path in paths),
-            ),
+            _IndexOperation(IndexOperationKind.ENSURE, normalized_paths),
         )
 
     def index_missing_paths(

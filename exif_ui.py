@@ -67,10 +67,53 @@ from utils import dedupe_casefold, normalize_path
 DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
 METADATA_READ_DEBOUNCE_MS = 25
 PREVIEW_LOAD_DEBOUNCE_MS = 125
+FILE_PANE_RENDER_BATCH_SIZE = 250
 METADATA_READ_PRIORITY = 1_000_000
 _MISSING_FILE_ERROR = re.compile(
     r"\bfile not found\b|\bno such file or directory\b", re.I
 )
+
+
+class LoadingSpinner(QtWidgets.QWidget):
+    """Small indeterminate spinner painted without an external image asset."""
+
+    def __init__(self, size: int = 32, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(size, size)
+        self._angle = 0
+        self._timer = QtCore.QTimer(self)
+        self._timer.setInterval(16)
+        self._timer.timeout.connect(self._advance)
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event: QtGui.QHideEvent) -> None:
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def _advance(self) -> None:
+        self._angle = (self._angle + 6) % 360
+        self.update()
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        pen = QtGui.QPen(QtGui.QColor("#0099e5"))
+        pen.setWidthF(self.width() * 0.10)
+        pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
+        painter.setPen(pen)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self._angle)
+        radius = self.width() * 0.35
+        painter.drawArc(
+            QtCore.QRectF(-radius, -radius, radius * 2, radius * 2),
+            20 * 16,
+            270 * 16,
+        )
+        painter.end()
 
 
 class FileListWidget(QtWidgets.QListWidget):
@@ -278,6 +321,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
+        self._files_render_token = 0
         self._pending_metadata_read: tuple[int, str] | None = None
         self._metadata_read_in_flight = False
         self._metadata_read_timer = QtCore.QTimer(self)
@@ -319,8 +363,16 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
         )
         self.filesPaneMessage.hide()
+        self.filesPaneLoadingIcon = LoadingSpinner(32, self.files.viewport())
+        self.filesPaneLoadingIcon.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents
+        )
+        self.filesPaneLoadingIcon.hide()
         self._loading_photos_message = "Loading photos…"
         self._loading_photos_hidden_letter_index = 0
+        self._files_render_loaded: int | None = None
+        self._files_render_total: int | None = None
+        self._files_render_hidden_letter_index = 0
         self._loading_photos_timer = QtCore.QTimer(self)
         self._loading_photos_timer.setInterval(120)
         self._loading_photos_timer.timeout.connect(
@@ -431,6 +483,36 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dbSearchClearBtn.setToolTip("Clear photo-tag search (Ctrl+Shift+X)")
         self.filterInfoLabel = QtWidgets.QLabel("")
         self.filterInfoLabel.setToolTip("Filter result count")
+        self.filesRenderProgressIcon = LoadingSpinner(16)
+        self.filesRenderProgressIcon.setObjectName("filesRenderProgressIcon")
+        self.filesRenderProgressIcon.setToolTip("Loading discovered photo paths")
+        self.filesRenderProgressLabel = QtWidgets.QLabel("")
+        self.filesRenderProgressLabel.setObjectName("filesRenderProgress")
+        self.filesRenderProgressLabel.setToolTip("Loading discovered photo paths")
+        self.filesRenderProgressCountLabel = QtWidgets.QLabel("")
+        self.filesRenderProgressCountLabel.setObjectName("filesRenderProgressCount")
+        self.filesRenderProgressCountLabel.setToolTip("Loading discovered photo paths")
+        progress_font_metrics = self.filesRenderProgressLabel.fontMetrics()
+        self.filesRenderProgressLabel.setFixedWidth(
+            progress_font_metrics.horizontalAdvance("Loading")
+        )
+        self.filesRenderProgressCountLabel.setFixedWidth(
+            progress_font_metrics.horizontalAdvance("9 999 999 / 9 999 999")
+        )
+        self.filesRenderProgress = QtWidgets.QWidget()
+        progress_layout = QtWidgets.QHBoxLayout(self.filesRenderProgress)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(4)
+        progress_layout.addWidget(self.filesRenderProgressIcon)
+        progress_layout.addWidget(self.filesRenderProgressLabel)
+        progress_layout.addWidget(self.filesRenderProgressCountLabel)
+        self.filesRenderProgress.setFixedWidth(
+            24
+            + self.filesRenderProgressLabel.width()
+            + self.filesRenderProgressCountLabel.width()
+        )
+        self.filesRenderProgress.setToolTip("Loading discovered photo paths")
+        self.filesRenderProgress.hide()
 
         self.addFolderBtn = QtWidgets.QPushButton("Add folder")
         self.addFolderBtn.setToolTip("Add all JPG/JPEG files from a folder (Ctrl+O)")
@@ -517,6 +599,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filesTopRow.setContentsMargins(0, 0, 0, 0)
         filesTopRow.addWidget(self.onlyUntagged)
         filesTopRow.addWidget(self.filterInfoLabel)
+        filesTopRow.addWidget(self.filesRenderProgress)
         filesTopRow.addWidget(self.addFolderBtn)
         filesTopRow.addStretch(1)
         filesLayout.addLayout(filesTopRow)
@@ -644,7 +727,13 @@ class MainWindow(QtWidgets.QMainWindow):
         root = resolve_index_root(paths, preferred_root=DEFAULT_INDEX_ROOT)
         return str(root) if root is not None else self._index_root
 
-    def _schedule_index_sync(self, root: str | None, paths: list[str]) -> None:
+    def _schedule_index_sync(
+        self,
+        root: str | None,
+        paths: list[str],
+        *,
+        paths_are_normalized: bool = False,
+    ) -> None:
         if not root:
             return
         root = normalize_path(root)
@@ -653,7 +742,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._index_sync_inflight.add(root)
         self._index_root = root
         self.statusBar().showMessage("Indexing photos…")
-        self._background_coordinator.ensure_index(root, paths)
+        self._background_coordinator.ensure_index(
+            root, paths, paths_are_normalized=paths_are_normalized
+        )
 
     def _update_index_states(self, states: dict[str, KeywordState]) -> None:
         if not states:
@@ -1763,9 +1854,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._index_missing_paths(root, added_paths)
 
     def replace_photo_workspace(
-        self, paths: list[str], *, invalidate_discoveries: bool = True
+        self,
+        paths: list[str],
+        *,
+        invalidate_discoveries: bool = True,
+        paths_are_normalized: bool = False,
+        render_in_batches: bool = False,
+        on_rendered: Callable[[], None] | None = None,
     ) -> None:
-        normalized_paths = [normalize_path(path) for path in paths]
+        # BackgroundCoordinator canonicalizes discovery paths before delivering
+        # them. Re-resolving thousands of them here can block the UI, especially
+        # on Windows shares.
+        normalized_paths = (
+            list(paths)
+            if paths_are_normalized
+            else [normalize_path(path) for path in paths]
+        )
         self._active_search_request = None
         self._displayed_search_request = None
         self._displayed_search_generation = None
@@ -1787,8 +1891,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self._search_restore_scroll = None
 
         snapshot = self.photo_workspace.reload_paths(normalized_paths)
+        self._files_render_token += 1
+        self.files.setEnabled(True)
+        self._hide_files_render_progress()
+        if render_in_batches:
+            self._render_photo_workspace_in_batches(
+                snapshot, self._files_render_token, on_rendered
+            )
+            return
         self._render_photo_workspace(snapshot)
         self.on_selection_changed()
+        if on_rendered is not None:
+            on_rendered()
 
     def _reset_files_pane_for_reload(self) -> None:
         self.replace_photo_workspace([])
@@ -1807,7 +1921,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _start_folder_discovery(self, folder: str) -> None:
         # A folder selection replaces the current workspace before discovery starts.
         self._reset_files_pane_for_reload()
-        self._show_files_pane_message("Loading photos…")
+        self._hide_files_pane_message()
+        self._show_files_render_progress()
+        self.statusBar().showMessage("Loading...")
         request = self._background_coordinator.replace_workspace_from_folder(folder)
         self._active_replacement_discovery = request
         self._pending_additive_discoveries.clear()
@@ -2095,19 +2211,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._active_replacement_discovery = None
             if isinstance(event, DiscoveryCompleted):
+
+                def finish_render() -> None:
+                    if self.files.count() > 0:
+                        self.files.setFocus()
+
                 self.replace_photo_workspace(
-                    list(event.paths), invalidate_discoveries=False
+                    list(event.paths),
+                    invalidate_discoveries=False,
+                    paths_are_normalized=True,
+                    render_in_batches=True,
+                    on_rendered=finish_render,
                 )
-                # Keep the animation alive until the new photo paths have been
-                # rendered into the files pane, not merely until discovery ends.
-                self._hide_files_pane_message()
-                root = self._index_root_for_paths(list(event.paths) or [event.root])
+                # All discovered paths are beneath event.root. Resolving the
+                # root from every path would synchronously stat every photo on
+                # the UI thread before the first render batch can run.
+                root = self._index_root_for_paths([event.root])
                 if root:
                     self._index_root = root
-                self._schedule_index_sync(root, list(event.paths))
-                if self.files.count() > 0:
-                    self.files.setFocus()
+                self._schedule_index_sync(
+                    root, list(event.paths), paths_are_normalized=True
+                )
             else:
+                self._hide_files_render_progress()
                 self._show_files_pane_message("No photos loaded")
                 self.statusBar().showMessage(f"Loading photos failed: {event.error}")
             return
@@ -2137,14 +2263,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filesPaneMessage.show()
 
     def _advance_loading_photos_animation(self) -> None:
-        message = self._loading_photos_message
+        if self.filesPaneMessage.isVisible():
+            text, self._loading_photos_hidden_letter_index = self._loading_text(
+                self._loading_photos_message,
+                self._loading_photos_hidden_letter_index,
+            )
+            self.filesPaneMessage.setText(text)
+        if self.filesRenderProgress.isVisible():
+            self._update_files_render_progress_text()
+
+    @staticmethod
+    def _loading_text(message: str, hidden_letter: int) -> tuple[str, int]:
+        """Hide one alphabetic character and restore the full text between cycles."""
         letter_count = sum(character.isalpha() for character in message)
-        hidden_letter = self._loading_photos_hidden_letter_index
         if hidden_letter >= letter_count:
-            self._loading_photos_hidden_letter_index = 0
-            self.filesPaneMessage.setText(message)
-            return
-        self._loading_photos_hidden_letter_index = hidden_letter + 1
+            return message, 0
         rendered: list[str] = []
         letter_index = 0
         for character in message:
@@ -2153,14 +2286,61 @@ class MainWindow(QtWidgets.QMainWindow):
                 letter_index += 1
             else:
                 rendered.append(character)
-        self.filesPaneMessage.setText("".join(rendered))
+        return "".join(rendered), hidden_letter + 1
 
     def _hide_files_pane_message(self) -> None:
-        self._loading_photos_timer.stop()
         self.filesPaneMessage.hide()
+        if not self.filesRenderProgress.isVisible():
+            self._loading_photos_timer.stop()
+
+    def _show_files_render_progress(
+        self, loaded: int | None = None, total: int | None = None
+    ) -> None:
+        if not self.filesRenderProgress.isVisible():
+            self._files_render_hidden_letter_index = len("Loading")
+        self._files_render_loaded = loaded
+        self._files_render_total = total
+        self.filterInfoLabel.hide()
+        self._update_files_render_progress_text()
+        self.filesRenderProgress.show()
+        if self.files.count() == 0:
+            self.filesPaneLoadingIcon.show()
+            self._position_files_pane_message()
+        else:
+            self.filesPaneLoadingIcon.hide()
+        self._loading_photos_timer.start()
+
+    def _update_files_render_progress_text(self) -> None:
+        loading, self._files_render_hidden_letter_index = self._loading_text(
+            "Loading", self._files_render_hidden_letter_index
+        )
+        self.filesRenderProgressLabel.setText(loading)
+        if self._files_render_total is not None:
+            self.filesRenderProgressCountLabel.setText(
+                f"{self._format_loading_count(self._files_render_loaded)} / "
+                f"{self._format_loading_count(self._files_render_total)}"
+            )
+        else:
+            self.filesRenderProgressCountLabel.clear()
+
+    @staticmethod
+    def _format_loading_count(number: int | None) -> str:
+        return f"{number or 0:,}".replace(",", " ")
+
+    def _hide_files_render_progress(self) -> None:
+        self.filesRenderProgress.hide()
+        self.filesPaneLoadingIcon.hide()
+        self.filterInfoLabel.show()
+        if not self.filesPaneMessage.isVisible():
+            self._loading_photos_timer.stop()
 
     def _position_files_pane_message(self) -> None:
-        self.filesPaneMessage.setGeometry(self.files.viewport().rect())
+        viewport = self.files.viewport().rect()
+        self.filesPaneMessage.setGeometry(viewport)
+        self.filesPaneLoadingIcon.move(
+            (viewport.width() - self.filesPaneLoadingIcon.width()) // 2,
+            (viewport.height() - self.filesPaneLoadingIcon.height()) // 2,
+        )
 
     def _set_last_folder(self, folder: str) -> None:
         try:
@@ -2220,6 +2400,69 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self.files.blockSignals(False)
             self.onlyUntagged.blockSignals(False)
+
+    def _render_photo_workspace_in_batches(
+        self,
+        snapshot: PhotoWorkspaceSnapshot,
+        token: int,
+        on_rendered: Callable[[], None] | None,
+    ) -> None:
+        """Populate a large replacement view without monopolizing the UI thread."""
+        self._hide_files_pane_message()
+        self._update_view_indicator(snapshot)
+        self.onlyUntagged.blockSignals(True)
+        try:
+            self.onlyUntagged.setChecked(
+                snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            )
+        finally:
+            self.onlyUntagged.blockSignals(False)
+        self.files.blockSignals(True)
+        try:
+            self.files.clear()
+        finally:
+            self.files.blockSignals(False)
+
+        paths = snapshot.paths
+        self.files.setEnabled(False)
+        self._show_files_render_progress(0, len(paths))
+        visible_paths = set(snapshot.visible_paths)
+        selected_paths = set(snapshot.selected_paths)
+        position = 0
+
+        def render_next_batch() -> None:
+            nonlocal position
+            if token != self._files_render_token:
+                return
+            end = min(position + FILE_PANE_RENDER_BATCH_SIZE, len(paths))
+            self.files.blockSignals(True)
+            try:
+                for path in paths[position:end]:
+                    item = QtWidgets.QListWidgetItem(path)
+                    self._set_file_mutation_indicator(item, path)
+                    self.files.addItem(item)
+                    item.setHidden(path not in visible_paths)
+                    item.setSelected(path in selected_paths)
+            finally:
+                self.files.blockSignals(False)
+            position = end
+            self._show_files_render_progress(position, len(paths))
+            if position < len(paths):
+                # Yield to the platform event queue so mouse and paint events
+                # are not starved by a long sequence of zero-delay batches.
+                QtCore.QTimer.singleShot(1, render_next_batch)
+                return
+            self.files.setEnabled(True)
+            self._hide_files_render_progress()
+            if snapshot.active_path is not None:
+                item = self._find_item_by_path(snapshot.active_path)
+                if item is not None:
+                    self.files.setCurrentItem(item)
+            self.on_selection_changed()
+            if on_rendered is not None:
+                on_rendered()
+
+        QtCore.QTimer.singleShot(0, render_next_batch)
 
     def _set_file_mutation_indicator(
         self, item: QtWidgets.QListWidgetItem, path: str
@@ -2613,7 +2856,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.filterInfoLabel.setText(
                 "Search: "
                 f"{self._displayed_search_query or ''} · "
-                f"{len(snapshot.visible_paths)} results · :back"
+                f"{len(snapshot.visible_paths)} results"
             )
         elif snapshot.view_mode is PhotoWorkspaceViewMode.NORMAL:
             self.filterInfoLabel.setText(f"Folder view · {len(snapshot.paths)} photos")

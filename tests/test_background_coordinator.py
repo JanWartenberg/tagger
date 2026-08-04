@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Callable
+from unittest.mock import patch
 
 from indexing import IndexRefreshProgress as RefreshStep
 from services.background_coordinator import (
@@ -357,6 +358,22 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
             self.events,
             [IndexEnsureCompleted(root=root, result={"paths": (photo,)})],
         )
+
+    def test_initial_sync_accepts_normalized_discovery_paths_without_repeating_io(
+        self,
+    ) -> None:
+        root = fixture_path("/photos")
+        paths = [fixture_path(f"/photos/{number}.jpg") for number in range(2)]
+
+        with patch(
+            "services.background_coordinator._normalize_path",
+            wraps=normalize_path,
+        ) as normalize:
+            self.coordinator.ensure_index(root, paths, paths_are_normalized=True)
+
+        normalize.assert_called_once_with(root)
+        self.runner.run()
+        self.assertIn(("sync", root, tuple(paths)), self.index.calls)
 
     def test_read_runs_without_waiting_for_a_root_write(self) -> None:
         root = fixture_path("/photos")
