@@ -231,11 +231,23 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
         self.assertNotEqual(self.window.selectedLabel.text(), old_path)
 
-        self.discovery_runner.run_discovery()
+        timer_was_active_while_rendering: list[bool] = []
+        original_replace = self.window.replace_photo_workspace
+
+        def record_replace(*args, **kwargs):
+            timer_was_active_while_rendering.append(
+                self.window._loading_photos_timer.isActive()
+            )
+            return original_replace(*args, **kwargs)
+
+        with patch.object(self.window, "replace_photo_workspace", record_replace):
+            self.discovery_runner.run_discovery()
         (loaded_path,) = [normalize_path(f"{folder}/one.jpg")]
         self.assertEqual(self.window.all_file_paths(), [loaded_path])
         self.assertEqual(self.window.selected_file_paths(), [loaded_path])
         self.assertFalse(self.window.filesPaneMessage.isVisible())
+        self.assertEqual(timer_was_active_while_rendering, [True])
+        self.assertFalse(self.window._loading_photos_timer.isActive())
 
     def test_loading_photos_message_hides_letters_in_sequence(self) -> None:
         self.window._show_files_pane_message("Loading photos…")
@@ -243,7 +255,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window._advance_loading_photos_animation()
         self.assertEqual(self.window.filesPaneMessage.text(), " oading photos…")
 
-        for _ in range(len("Loadingphotos")):
+        self.window._advance_loading_photos_animation()
+        self.assertEqual(self.window.filesPaneMessage.text(), "L ading photos…")
+
+        for _ in range(len("Loadingphotos") - 1):
             self.window._advance_loading_photos_animation()
         self.assertEqual(self.window.filesPaneMessage.text(), "Loading photos…")
 

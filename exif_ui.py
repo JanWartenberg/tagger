@@ -320,7 +320,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.filesPaneMessage.hide()
         self._loading_photos_message = "Loading photos…"
-        self._loading_photos_hidden_letters = 0
+        self._loading_photos_hidden_letter_index = 0
         self._loading_photos_timer = QtCore.QTimer(self)
         self._loading_photos_timer.setInterval(120)
         self._loading_photos_timer.timeout.connect(
@@ -2095,10 +2095,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._active_replacement_discovery = None
             if isinstance(event, DiscoveryCompleted):
-                self._hide_files_pane_message()
                 self.replace_photo_workspace(
                     list(event.paths), invalidate_discoveries=False
                 )
+                # Keep the animation alive until the new photo paths have been
+                # rendered into the files pane, not merely until discovery ends.
+                self._hide_files_pane_message()
                 root = self._index_root_for_paths(list(event.paths) or [event.root])
                 if root:
                     self._index_root = root
@@ -2125,7 +2127,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_files_pane_message(self, message: str) -> None:
         if message == self._loading_photos_message:
-            self._loading_photos_hidden_letters = 0
+            self._loading_photos_hidden_letter_index = 0
             self.filesPaneMessage.setText(message)
             self._loading_photos_timer.start()
         else:
@@ -2137,15 +2139,18 @@ class MainWindow(QtWidgets.QMainWindow):
     def _advance_loading_photos_animation(self) -> None:
         message = self._loading_photos_message
         letter_count = sum(character.isalpha() for character in message)
-        self._loading_photos_hidden_letters += 1
-        if self._loading_photos_hidden_letters > letter_count:
-            self._loading_photos_hidden_letters = 0
-        remaining = self._loading_photos_hidden_letters
+        hidden_letter = self._loading_photos_hidden_letter_index
+        if hidden_letter >= letter_count:
+            self._loading_photos_hidden_letter_index = 0
+            self.filesPaneMessage.setText(message)
+            return
+        self._loading_photos_hidden_letter_index = hidden_letter + 1
         rendered: list[str] = []
+        letter_index = 0
         for character in message:
-            if character.isalpha() and remaining:
-                rendered.append(" ")
-                remaining -= 1
+            if character.isalpha():
+                rendered.append(" " if letter_index == hidden_letter else character)
+                letter_index += 1
             else:
                 rendered.append(character)
         self.filesPaneMessage.setText("".join(rendered))
