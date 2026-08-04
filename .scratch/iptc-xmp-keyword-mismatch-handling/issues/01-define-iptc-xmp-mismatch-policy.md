@@ -12,22 +12,76 @@ Blocked by: None
 
 Define how TAGGER understands and handles photos whose `IPTC:Keywords` and `XMP-dc:Subject` differ, including whether any mismatch can be resolved automatically without losing user intent.
 
+## Decision table (to complete during triage)
+
+### Agreed baseline
+
+- `IPTC:Keywords` remains TAGGER's canonical tag truth.
+- An absent keyword field and a present-but-empty keyword field both mean no tags to TAGGER; no separate policy is needed for that storage distinction.
+- Ordering does not matter for comparison.
+- On detection, delete duplicate tag values in place from the field containing them; duplicates do not participate in comparison.
+- Compare case-only differences as equal for now; do not rewrite a field solely to change casing.
+- Trim leading and trailing whitespace on detection, while preserving whitespace between words (for example, `Beltringharder Koog`).
+- Normalize keyword values to Unicode NFC before comparison. NFC-equivalent values are equal and do not cause a rewrite; other Unicode differences, including merely similar-looking characters, remain distinct values and go to the resolution dialog when they produce a set difference.
+- Ignore empty values. Readable-but-invalid values have undefined behavior until a concrete case is identified; do not add an assumed validation policy.
+- TAGGER does not parse or infer hierarchical keyword conventions. Unless TAGGER adopts a clear, interoperable hierarchy standard in a future explicit policy, every keyword value is treated and compared as one literal full string after the above normalization.
+- Display IPTC tags as the current tags. When there is a discrepancy, show a hint beside them; show contradicting XMP values only in the Resolve dialog.
+- SQLite keyword lookup stores canonical IPTC facts only. Do not add XMP values to the index; resolve XMP discrepancies as photos are selected.
+- An unreadable field is an operational error, not a normal set-comparison case. Open the Resolve dialog, showing every field value that could be read, and offer only **Delete** for the unreadable field (plus Cancel). Never derive an overwrite value from the other field.
+
+Let `I` be the normalized IPTC tag set and `X` be the normalized XMP tag set. The following are all possible relationships when both fields are readable.
+
+| ID | Relationship | Example (`I` / `X`) | Current decision | Remaining decision |
+| --- | --- | --- | --- | --- |
+| S1 | Both empty | `{}` / `{}` | No issue. | None. |
+| S2 | IPTC empty; XMP non-empty | `{}` / `{beach}` | Open the Resolve dialog; the user confirms copying XMP tags to IPTC. | None. |
+| S3 | IPTC non-empty; XMP empty | `{beach}` / `{}` | Leave XMP empty. IPTC remains displayed and indexed as truth; show no warning or dialog. Later ordinary TAGGER mutations preserve the empty XMP field. | None. |
+| S4 | Equal non-empty sets | `{beach, bird}` / `{beach, bird}` | No issue. | None. |
+| S5 | IPTC is a proper subset of XMP | `{beach}` / `{beach, bird}` | Always open the Resolve dialog. | None. |
+| S6 | XMP is a proper subset of IPTC | `{beach, bird}` / `{beach}` | Always open the Resolve dialog. | None. |
+| S7 | Overlap; neither set contains the other | `{beach, bird}` / `{beach, sunset}` | Always open the Resolve dialog. | None. |
+| S8 | Disjoint non-empty sets | `{beach}` / `{mountain}` | Always open the Resolve dialog. | None. |
+
+### External edits while the dialog is open
+
+Metadata cannot reveal whether a difference is fresh external work, stale history, intentional field-specific data, or an incomplete prior write. The Resolve dialog lets the user decide rather than TAGGER guessing. Before Apply, reread and reconcile the fields if that guard is simple to implement; otherwise retain the selection-time snapshot behavior rather than adding a complex synchronization mechanism.
+
+### Resolve modal
+
+Use one **Resolve** modal per photo for S2 and S5–S8, and for unreadable-field recovery. It is not a multi-photo workflow. For readable mismatches, it shows the normalized tag lists side by side:
+
+```text
+IPTC (I)                 XMP (X)
+beach                    bar
+bird                     foo
+                         baz
+```
+
+The modal provides:
+
+- per-tag `>` and `<` controls to **copy** one tag from IPTC to XMP or from XMP to IPTC, preserving the source tag;
+- list-level `>>` and `<<` controls to **copy** all tags in one direction, preserving the source list;
+- per-tag deletion controls and one delete control per complete field list;
+- **Apply** to make the chosen metadata writes and **Cancel** to leave both fields unchanged. Apply may leave the fields mismatched; the user chooses the resulting field state.
+
+For unreadable metadata, the same dialog shows whatever was readable, or explicitly says that no keyword field could be read. It never offers copying from the other field as an overwrite strategy. The only recovery action is **Delete** for the unreadable field; **Cancel** makes no metadata change.
+
+On **Apply**, write the chosen field changes in one ExifTool operation. Use the existing pending/failed-mutation flow for this operation; make at most three total attempts, then show a warning in the footer.
+
+### Detection scope
+
+Detect discrepancies when a photo is selected. Do not add background discovery, indexing, or filter-time discrepancy scanning for now: surfacing multiple background findings would require a separate result view and workflow.
+
 ## Context
 
 TAGGER currently shows the union of both fields and warns when their non-empty tag sets differ. `IPTC:Keywords` is TAGGER's canonical tag field; `XMP-dc:Subject` is a compatibility mirror. Its IPTC-empty filter uses only `IPTC:Keywords`, while the SQLite index currently stores only merged tags. Consequently, a photo with empty IPTC keywords and non-empty XMP keywords is IPTC-empty but cannot be represented correctly by a merged-tag-only index query.
 
-## Required Triage Before Implementation
+## Remaining implementation planning
 
-- Which meaningful field states exist: both fields empty; IPTC-only tags; XMP-only tags; identical non-empty sets; partially overlapping sets; disjoint sets; and absent or unreadable metadata? What does each state mean to the user?
-- With IPTC canonical, what should TAGGER display as the current tag truth for each mismatch state, and when is a merged view useful versus misleading?
-- Under what exact conditions, if any, may TAGGER automatically synchronize the XMP mirror from IPTC without silently discarding information? Which states must require explicit user confirmation?
-- Should automatic handling write metadata at all, or only propose an action through the existing warning and Resolve workflow?
-- When should mismatches be detected and surfaced: indexing, folder discovery, photo selection, IPTC-empty verification, or another defined point?
-- How should TAGGER behave when another tool changes IPTC or XMP while TAGGER is running, especially if that external change conflicts with pending TAGGER work?
-- How should multi-photo mismatch resolution behave, including mixed mismatch states and partial write failures?
-- Which field-specific facts must SQLite store, and how are merged-only index rows migrated, without redefining IPTC-empty? The SQLite IPTC-empty crosscheck ticket owns its cache/verification workflow.
-- Should the current warning and Resolve action remain, change wording, offer explicit resolution choices, or be replaced?
-- Split approved behavior into implementation tickets, keeping SQLite IPTC-empty crosscheck work separate.
+- Integrate and test the existing pending/failed tag-mutation coordinator for one two-field Resolve operation, including three total attempts and consistent UI state after a partial write failure.
+- Add canonical IPTC index facts and migrate merged-only rows without changing IPTC-empty semantics. Do not index XMP values. The separate SQLite crosscheck ticket owns its cache/verification workflow.
+- Define tests for selection-time modal presentation, S3's deliberately silent state, copy/delete outcomes, cancellation, write retries, and failed writes.
+- Split this approved policy into concrete implementation ticket(s), keeping the SQLite IPTC-empty crosscheck work separate.
 
 ## Comments
 

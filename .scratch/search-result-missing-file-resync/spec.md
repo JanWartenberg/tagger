@@ -1,6 +1,6 @@
 # Search Result Missing-File Resync
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement
