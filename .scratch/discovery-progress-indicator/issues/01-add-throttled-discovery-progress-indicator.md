@@ -1,6 +1,6 @@
 # 01 — Add Throttled Discovery Progress Indicator
 
-Status: needs-triage
+Status: wontfix
 Category: feature
 Priority: low
 Milestone: M2 — Reliable, scalable index operations
@@ -19,3 +19,7 @@ Make large background photo discoveries visibly progress without delaying or rep
 ## Comments
 
 Created from `BACKLOG.md`; the completed background-discovery work deliberately deferred this follow-up.
+
+Tracker cleanup: the Aug. 4 responsive loading animation is indeterminate feedback only. It complements this ticket's proposed discovered-photo count and does not satisfy or supersede it.
+
+Closed as `wontfix`: the existing folder-loading feedback plus DB-index refresh progress is sufficient. A third, separate folder-discovery count is not useful enough to justify its UI and event-lifecycle complexity.

@@ -11,11 +11,13 @@ TAGGER currently accepts `date:<substring>` in the indexed search field. The SQL
 
 Give the keyboard-driven Photo Workspace a documented, predictable way to find photos by capture year, month, day, and inclusive date range. Results must use the existing temporary database-search view and its persistent files-pane view indicator rather than introducing another result mechanism.
 
-## Existing Baseline
+## Historical Baseline
 
-- `PhotoIndex.search_photos()` handles `date:` through a substring `LIKE` query over `photos.date_taken`.
-- `photos.date_taken` is populated from `KeywordState.date_display`, which currently retains the selected ExifTool capture/create date string.
-- `PhotoWorkspaceViewMode.DATABASE_SEARCH` already renders and restores temporary indexed result views.
+Before implementation:
+
+- `PhotoIndex.search_photos()` handled `date:` through a substring `LIKE` query over `photos.date_taken`.
+- `photos.date_taken` was populated from `KeywordState.date_display`, which retained the selected ExifTool capture/create date string.
+- `PhotoWorkspaceViewMode.DATABASE_SEARCH` already rendered and restored temporary indexed result views.
 
 ## Resolved Decisions
 

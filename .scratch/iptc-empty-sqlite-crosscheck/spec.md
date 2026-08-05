@@ -21,12 +21,18 @@ Show the SQLite-derived IPTC-empty Photo Workspace view immediately, then verify
 - Treat successful tag mutations made after filter activation as intentional changes, not crosscheck discrepancies.
 - Retain the SQLite-derived view and report verification failure when the crosscheck fails.
 
+The IPTC/XMP mismatch-policy follow-on owns the schema/data migration that creates canonical IPTC index facts from existing merged-only rows. This feature consumes that fact; it owns neither XMP policy nor the migration.
+
 ## Open Triage Decisions
 
-- Exact activation and eligibility rules for SQLite-derived IPTC-empty results.
+- Exact activation and eligibility rules for SQLite-derived IPTC-empty results, including the meaning of missing or unreadable IPTC metadata in the canonical fact.
 - Crosscheck batching, progress feedback, and cancellation semantics.
 - Discrepancy reporting and index-repair timing.
 - `:resync` command wording and behavior when no completed crosscheck exists.
+
+## Implementation Prerequisite
+
+Do not implement this feature until the canonical-IPTC index-fact migration from the IPTC/XMP mismatch-policy follow-on is available. Its workflow triage may proceed independently.
 
 ## Constraints
 

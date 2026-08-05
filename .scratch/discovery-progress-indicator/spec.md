@@ -1,6 +1,6 @@
 # Discovery Progress Indicator
 
-Status: needs-triage
+Status: wontfix
 Priority: low
 
 ## Problem Statement
@@ -16,6 +16,10 @@ Show a throttled running count of discovered photos during background discovery 
 - Update cadence, wording, and whether replacement and additive discovery use distinct feedback.
 - Event shape and stale-result handling through `BackgroundCoordinator`.
 - Whether counts include only accepted image paths or every visited path.
+
+## Resolution
+
+Closed as `wontfix`: the existing folder-loading feedback plus DB-index refresh progress is sufficient. TAGGER will not add a separate discovered-photo counter.
 
 ## Constraints
 

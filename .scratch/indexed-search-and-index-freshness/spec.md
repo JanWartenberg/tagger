@@ -11,12 +11,14 @@ TAGGER already maintains a per-root SQLite index and runs index reads in the bac
 
 Complete indexed reverse search without disturbing the normal folder-tagging workflow, and make index freshness explicit and user-controllable. These are separate deliverables sharing the same SQLite index, so they are tracked as independent tickets rather than one coupled implementation.
 
-## Existing Baseline
+## Historical Baseline
 
-- `PhotoIndex.search_photos()` already supports `tag:`, `date:`, and bare tag queries.
-- The background coordinator already runs identified index reads off the UI thread and rejects stale completions.
-- The Photo Workspace currently intersects database matches with loaded paths, so it cannot show all indexed results.
-- Per-root serialized index writes and discovery-path sync already exist.
+Before implementation:
+
+- `PhotoIndex.search_photos()` supported `tag:`, `date:`, and bare tag queries.
+- The background coordinator ran identified index reads off the UI thread and rejected stale completions.
+- The Photo Workspace intersected database matches with loaded paths, so it could not show all indexed results.
+- Per-root serialized index writes and discovery-path sync already existed.
 
 ## Ticket Boundaries
 
@@ -33,6 +35,10 @@ Neither ticket is formally blocked by the other: the existing index lifecycle is
 - Stale completions must not alter the current workspace or replace current footer feedback.
 - An accepted non-empty search result focuses the files pane so keyboard navigation continues from its first photo.
 - Confirmed tag mutations remain the only source of immediate index updates.
+
+## Completion
+
+Ticket 01 implemented indexed reverse-search result mode and restoration. Ticket 02 implemented freshness detection, serialized full refresh, deletion cleanup, and `:reindex`.
 
 ## Out of Scope
 

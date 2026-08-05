@@ -2,7 +2,6 @@
 
 Active work is tracked in one-feature `.scratch/` directories. The former backlog entries now have their own triage tickets:
 
-- [Discovery progress indicator](.scratch/discovery-progress-indicator/issues/01-add-throttled-discovery-progress-indicator.md)
 - [Known-tags pane evaluation](.scratch/known-tags-pane-evaluation/issues/01-evaluate-known-tags-pane-workflow.md)
 - [Session error history and `:errors`](.scratch/error-history-command/issues/01-add-session-error-history-command.md)
 - [Keyword-length policy](.scratch/keyword-length-limits/issues/01-research-and-decide-keyword-length-policy.md)

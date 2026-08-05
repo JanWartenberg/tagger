@@ -34,7 +34,7 @@ Keep normal index updates incremental while making a long full refresh resumable
 - A refresh yields after every committed chunk. All queued incremental writes for that root, especially confirmed tag-mutation updates, run before its next chunk; those newer states therefore win over older refresh data.
 - Search reads remain available through SQLite and see only the last committed snapshot. An already displayed search result never changes automatically during or after refresh; the user reruns the query to see later data.
 - Present persistent, non-modal refresh feedback on a secondary footer line so ordinary status messages remain available. Update it no more than once per second.
-- The footer distinguishes queued, discovery (`Discovering… N found, M indexed`), determinate refresh (`Refreshing… M / total (percent)` after discovery completes), resumed, cancelled, failed, and completed (`Complete: updated, removed`) states.
+- The footer distinguishes queued, discovery (`Discovering images for DB index… M indexed`, with a subtle low-frequency animation of `Discovering`), determinate refresh (`Refreshing… M / total (percent)` after discovery completes), resumed, cancelled, failed, and completed (`Complete: updated, removed`) states.
 
 ## Constraints
 
@@ -44,17 +44,17 @@ Keep normal index updates incremental while making a long full refresh resumable
 
 ## Acceptance Criteria
 
-- [ ] The root SQLite database atomically persists and resumes an unfinished directory walk and bounded batch without duplicating durable checkpoint state for every completed photo.
-- [ ] Refresh discovery and indexing start incrementally; no complete initial filesystem manifest is required before the first metadata batch.
-- [ ] Every chunk commits index state and checkpoint together after at most 1,000 photos or 30 seconds, with ExifTool calls bounded to 200 paths.
-- [ ] A root activated within one hour resumes an interrupted refresh automatically; an older checkpoint is discarded and a new scan begins.
-- [ ] Automatic stale refreshes and manual `:reindex` share the refresh engine. `:reindex` and a second in-flight `:reindex` restart fresh as specified.
-- [ ] `:cancel` safely stops after a subgroup and does not leave resumable state.
-- [ ] Incremental root writes run between chunks and supersede older refresh data.
-- [ ] A subgroup is retried twice, then reports a terminal failure while preserving prior committed chunks and removing unfinished state.
-- [ ] One final reconciliation accounts for additions, deletions, and changed files observed during the streamed refresh without an unbounded quiet-period loop.
-- [ ] Search and displayed search-result view consistency match the resolved rules.
-- [ ] Secondary-footer feedback is throttled, persistent, and covers all agreed lifecycle states without replacing ordinary feedback.
+- [x] The root SQLite database atomically persists and resumes an unfinished directory walk and bounded batch without duplicating durable checkpoint state for every completed photo.
+- [x] Refresh discovery and indexing start incrementally; no complete initial filesystem manifest is required before the first metadata batch.
+- [x] Every chunk commits index state and checkpoint together after at most 1,000 photos or 30 seconds, with ExifTool calls bounded to 200 paths.
+- [x] A root activated within one hour resumes an interrupted refresh automatically; an older checkpoint is discarded and a new scan begins.
+- [x] Automatic stale refreshes and manual `:reindex` share the refresh engine. `:reindex` and a second in-flight `:reindex` restart fresh as specified.
+- [x] `:cancel` safely stops after a subgroup and does not leave resumable state.
+- [x] Incremental root writes run between chunks and supersede older refresh data.
+- [x] A subgroup is retried twice, then reports a terminal failure while preserving prior committed chunks and removing unfinished state.
+- [x] One final reconciliation accounts for additions, deletions, and changed files observed during the streamed refresh without an unbounded quiet-period loop.
+- [x] Search and displayed search-result view consistency match the resolved rules.
+- [x] Secondary-footer feedback is throttled, persistent, and covers all agreed lifecycle states without replacing ordinary feedback.
 
 ## Testing Requirements
 

@@ -68,6 +68,7 @@ DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
 METADATA_READ_DEBOUNCE_MS = 25
 PREVIEW_LOAD_DEBOUNCE_MS = 125
 FILE_PANE_RENDER_BATCH_SIZE = 250
+REFRESH_DISCOVERY_ANIMATION_INTERVAL_MS = 1_000
 METADATA_READ_PRIORITY = 1_000_000
 _MISSING_FILE_ERROR = re.compile(
     r"\bfile not found\b|\bno such file or directory\b", re.I
@@ -318,6 +319,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._displayed_search_query: str | None = None
         self._active_index_refresh_request: IndexRefreshRequest | None = None
         self._last_refresh_status_at = 0.0
+        self._refresh_discovery_progress: IndexRefreshStep | None = None
+        self._refresh_discovery_hidden_letter_index = 0
+        self._refresh_discovery_timer = QtCore.QTimer(self)
+        self._refresh_discovery_timer.setInterval(
+            REFRESH_DISCOVERY_ANIMATION_INTERVAL_MS
+        )
+        self._refresh_discovery_timer.timeout.connect(
+            self._advance_refresh_discovery_animation
+        )
         self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
@@ -2053,7 +2063,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._show_refresh_progress(event.result)
             return
         self._active_index_refresh_request = None
+        self._stop_refresh_discovery_animation()
         if isinstance(event, IndexRefreshFailed):
+            self.indexRepairStatusLabel.setText("Index refresh failed")
             if not self._has_active_search_for(request.root):
                 label = (
                     "Reindex failed"
@@ -2062,6 +2074,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 self.statusBar().showMessage(label)
             return
+        self.indexRepairStatusLabel.setText("Index refresh complete")
         if event.result is None:
             return
         self.force_refresh_known_tags()
@@ -2075,6 +2088,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             self.statusBar().showMessage(
                 f"{prefix}: {event.result.updated_count} updated, "
+                f"{event.result.deleted_count} removed"
+            )
+            self.indexRepairStatusLabel.setText(
+                f"Index refresh complete: {event.result.updated_count} updated, "
                 f"{event.result.deleted_count} removed"
             )
             return
@@ -2092,13 +2109,36 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._last_refresh_status_at = now
         if progress.phase == "discovering":
-            prefix = "Resumed; discovering" if progress.resumed else "Discovering"
-            self.indexRepairStatusLabel.setText(
-                f"{prefix}… {progress.discovered_count} found, "
-                f"{progress.indexed_count} indexed"
-            )
-        else:
-            self.indexRepairStatusLabel.setText("Reconciling index…")
+            if self._refresh_discovery_progress is None:
+                self._refresh_discovery_hidden_letter_index = len("Discovering")
+                self._refresh_discovery_timer.start()
+            self._refresh_discovery_progress = progress
+            self._update_refresh_discovery_status()
+            return
+        self._stop_refresh_discovery_animation()
+        self.indexRepairStatusLabel.setText("Reconciling index…")
+
+    def _advance_refresh_discovery_animation(self) -> None:
+        if self._refresh_discovery_progress is not None:
+            self._update_refresh_discovery_status()
+
+    def _update_refresh_discovery_status(self) -> None:
+        progress = self._refresh_discovery_progress
+        if progress is None:
+            return
+        discovering, self._refresh_discovery_hidden_letter_index = self._loading_text(
+            "Discovering", self._refresh_discovery_hidden_letter_index
+        )
+        prefix = "Resumed; " if progress.resumed else ""
+        self.indexRepairStatusLabel.setText(
+            f"{prefix}{discovering} images for DB index… "
+            f"{progress.indexed_count} indexed"
+        )
+
+    def _stop_refresh_discovery_animation(self) -> None:
+        self._refresh_discovery_timer.stop()
+        self._refresh_discovery_progress = None
+        self._refresh_discovery_hidden_letter_index = 0
 
     def _handle_stale_result_repair_event(
         self, event: IndexRefreshCompleted | IndexRefreshFailed

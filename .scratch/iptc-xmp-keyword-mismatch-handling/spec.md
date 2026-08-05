@@ -1,6 +1,6 @@
 # IPTC/XMP Keyword Mismatch Handling
 
-Status: needs-triage
+Status: ready-for-agent
 Priority: high
 
 ## Problem Statement
@@ -16,9 +16,10 @@ Define the meaning of each IPTC/XMP keyword state and a durable policy for detec
 - Define keyword-field states and their user-visible meaning.
 - Define mismatch detection, display, and resolution policy, including whether any automatic resolution is safe.
 - Define the relationship between field-specific metadata facts and index-derived features.
-- Create separately scoped implementation tickets after the policy is agreed.
+- Create separately scoped implementation tickets from the agreed policy.
 
 ## Out of Scope
 
 - Implementing the SQLite IPTC-empty crosscheck and `:resync` workflow.
+- Defining its verification, result-application, or cache-repair workflow.
 - Redefining IPTC-empty as merged-keyword emptiness.

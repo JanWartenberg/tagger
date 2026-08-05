@@ -10,7 +10,7 @@ Several completed historical tickets record Windows offscreen acceptance as outs
 
 Make the current full offscreen unit suite pass in the Windows project environment, then record the passing result so outstanding historical acceptance notes can be closed with evidence.
 
-## Current Failure
+## Historical Failure and Resolution
 
 The required command initially failed with 20 failures and 7 errors. After the tracked repairs in `.scratch/platform-neutral-test-fixtures/`, `.scratch/sqlite-connection-lifecycle/`, and `.scratch/main-window-test-storage-isolation/`, the Windows rerun passed all 109 tests.
 

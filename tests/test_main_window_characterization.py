@@ -30,8 +30,11 @@ else:
 if PYQT_AVAILABLE:
     from exif_tool import KeywordState
     from exif_ui import MainWindow
+    from indexing import IndexRefreshProgress as IndexRefreshStep
     from services.background_coordinator import (
         IndexEnsureCompleted,
+        IndexRefreshCompleted,
+        IndexRefreshProgress,
         IndexWriteFailed,
         IndexOperationKind,
     )
@@ -1112,6 +1115,66 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(FakePhotoIndex.refresh_calls, ["refresh"])
         self.assertEqual(self.window.statusBar().currentMessage(), "Reindex complete")
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(), "Index refresh complete"
+        )
+
+    def test_index_discovery_progress_uses_indexed_count_and_animates_slowly(
+        self,
+    ) -> None:
+        progress = IndexRefreshStep(
+            root="C:/photos",
+            phase="discovering",
+            discovered_count=4_007,
+            indexed_count=4_000,
+        )
+
+        with patch("exif_ui.time.monotonic", return_value=1.0):
+            self.window._show_refresh_progress(progress)
+
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(),
+            "Discovering images for DB index… 4000 indexed",
+        )
+        self.assertTrue(self.window._refresh_discovery_timer.isActive())
+        self.assertEqual(self.window._refresh_discovery_timer.interval(), 1_000)
+
+        self.window._advance_refresh_discovery_animation()
+
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(),
+            " iscovering images for DB index… 4000 indexed",
+        )
+
+    def test_index_discovery_progress_is_replaced_when_refresh_completes(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        self.window._dispatch_command("reindex", [])
+        request = self.window._active_index_refresh_request
+        self.assertIsNotNone(request)
+        assert request is not None
+        progress = IndexRefreshStep(
+            root=request.root,
+            phase="discovering",
+            discovered_count=4_007,
+            indexed_count=4_000,
+        )
+
+        with patch("exif_ui.time.monotonic", return_value=1.0):
+            self.window._handle_index_refresh_event(
+                IndexRefreshProgress(request, progress)
+            )
+
+        self.assertTrue(self.window._refresh_discovery_timer.isActive())
+        self.window._handle_index_refresh_event(
+            IndexRefreshCompleted(request, object())
+        )
+
+        self.assertEqual(
+            self.window.indexRepairStatusLabel.text(), "Index refresh complete"
+        )
+        self.assertFalse(self.window._refresh_discovery_timer.isActive())
 
     def test_cancel_command_stops_an_unstarted_full_refresh(self) -> None:
         self._add_paths("one.jpg")

@@ -2,7 +2,7 @@
 
 # 01 — Define IPTC/XMP Keyword Mismatch Policy
 
-Status: needs-triage
+Status: ready-for-agent
 Category: enhancement
 Priority: high
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
@@ -12,7 +12,7 @@ Blocked by: None
 
 Define how TAGGER understands and handles photos whose `IPTC:Keywords` and `XMP-dc:Subject` differ, including whether any mismatch can be resolved automatically without losing user intent.
 
-## Decision table (to complete during triage)
+## Resolved Policy
 
 ### Agreed baseline
 
@@ -31,20 +31,20 @@ Define how TAGGER understands and handles photos whose `IPTC:Keywords` and `XMP-
 
 Let `I` be the normalized IPTC tag set and `X` be the normalized XMP tag set. The following are all possible relationships when both fields are readable.
 
-| ID | Relationship | Example (`I` / `X`) | Current decision | Remaining decision |
-| --- | --- | --- | --- | --- |
-| S1 | Both empty | `{}` / `{}` | No issue. | None. |
-| S2 | IPTC empty; XMP non-empty | `{}` / `{beach}` | Open the Resolve dialog; the user confirms copying XMP tags to IPTC. | None. |
-| S3 | IPTC non-empty; XMP empty | `{beach}` / `{}` | Leave XMP empty. IPTC remains displayed and indexed as truth; show no warning or dialog. Later ordinary TAGGER mutations preserve the empty XMP field. | None. |
-| S4 | Equal non-empty sets | `{beach, bird}` / `{beach, bird}` | No issue. | None. |
-| S5 | IPTC is a proper subset of XMP | `{beach}` / `{beach, bird}` | Always open the Resolve dialog. | None. |
-| S6 | XMP is a proper subset of IPTC | `{beach, bird}` / `{beach}` | Always open the Resolve dialog. | None. |
-| S7 | Overlap; neither set contains the other | `{beach, bird}` / `{beach, sunset}` | Always open the Resolve dialog. | None. |
-| S8 | Disjoint non-empty sets | `{beach}` / `{mountain}` | Always open the Resolve dialog. | None. |
+| ID | Relationship | Example (`I` / `X`) | Policy |
+| --- | --- | --- | --- |
+| S1 | Both empty | `{}` / `{}` | No issue. |
+| S2 | IPTC empty; XMP non-empty | `{}` / `{beach}` | Open the Resolve dialog; the user confirms copying XMP tags to IPTC. |
+| S3 | IPTC non-empty; XMP empty | `{beach}` / `{}` | Leave XMP empty. IPTC remains displayed and indexed as truth; show no warning or dialog. Later ordinary TAGGER mutations preserve the empty XMP field. |
+| S4 | Equal non-empty sets | `{beach, bird}` / `{beach, bird}` | No issue. |
+| S5 | IPTC is a proper subset of XMP | `{beach}` / `{beach, bird}` | Always open the Resolve dialog. |
+| S6 | XMP is a proper subset of IPTC | `{beach, bird}` / `{beach}` | Always open the Resolve dialog. |
+| S7 | Overlap; neither set contains the other | `{beach, bird}` / `{beach, sunset}` | Always open the Resolve dialog. |
+| S8 | Disjoint non-empty sets | `{beach}` / `{mountain}` | Always open the Resolve dialog. |
 
 ### External edits while the dialog is open
 
-Metadata cannot reveal whether a difference is fresh external work, stale history, intentional field-specific data, or an incomplete prior write. The Resolve dialog lets the user decide rather than TAGGER guessing. Before Apply, reread and reconcile the fields if that guard is simple to implement; otherwise retain the selection-time snapshot behavior rather than adding a complex synchronization mechanism.
+Metadata cannot reveal whether a difference is fresh external work, stale history, intentional field-specific data, or an incomplete prior write. The Resolve dialog lets the user decide rather than TAGGER guessing. Before Apply, attempt one lightweight reread of both fields. If that read is unavailable or fails, do not add synchronization or conflict handling: apply the user's selection-time choices.
 
 ### Resolve modal
 
@@ -76,10 +76,10 @@ Detect discrepancies when a photo is selected. Do not add background discovery, 
 
 TAGGER currently shows the union of both fields and warns when their non-empty tag sets differ. `IPTC:Keywords` is TAGGER's canonical tag field; `XMP-dc:Subject` is a compatibility mirror. Its IPTC-empty filter uses only `IPTC:Keywords`, while the SQLite index currently stores only merged tags. Consequently, a photo with empty IPTC keywords and non-empty XMP keywords is IPTC-empty but cannot be represented correctly by a merged-tag-only index query.
 
-## Remaining implementation planning
+## Agent Handoff
 
 - Integrate and test the existing pending/failed tag-mutation coordinator for one two-field Resolve operation, including three total attempts and consistent UI state after a partial write failure.
-- Add canonical IPTC index facts and migrate merged-only rows without changing IPTC-empty semantics. Do not index XMP values. The separate SQLite crosscheck ticket owns its cache/verification workflow.
+- Add canonical IPTC index facts and migrate merged-only rows without changing IPTC-empty semantics. Do not index XMP values. This follow-on work owns the schema/data migration only; the separate SQLite crosscheck ticket owns cache verification, result application, and `:resync`.
 - Define tests for selection-time modal presentation, S3's deliberately silent state, copy/delete outcomes, cancellation, write retries, and failed writes.
 - Split this approved policy into concrete implementation ticket(s), keeping the SQLite IPTC-empty crosscheck work separate.
 
@@ -88,3 +88,5 @@ TAGGER currently shows the union of both fields and warns when their non-empty t
 > *This was generated by AI during triage.*
 
 Created as a high-priority follow-up during IPTC-empty SQLite crosscheck triage.
+
+Tracker cleanup: policy triage is complete. The remaining task is to create the separately scoped implementation tickets described above; it is ready for an agent, not awaiting another product decision.

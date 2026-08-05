@@ -16,9 +16,9 @@ When TAGGER encounters a missing file from the active indexed search result, it 
 **Stale-result index repair**:
 A background scan of the index root triggered after TAGGER cannot read metadata from an image file returned by a current indexed search. It removes records for missing files and indexes independently discovered files with their current metadata; it does not identify filesystem renames. It is not the IPTC-empty filter's future `:resync` command.
 
-## Existing Behavior
+## Historical Baseline
 
-The completed index-freshness work provides background full reindexing and deletion cleanup through `:reindex`, but the reported missing search-result path does not currently trigger that repair automatically.
+Before this feature, the completed index-freshness work provided background full reindexing and deletion cleanup through `:reindex`, but a missing search-result path did not trigger repair automatically.
 
 ## Resolved Triage
 
@@ -27,6 +27,10 @@ The completed index-freshness work provides background full reindexing and delet
 - A successful repair reruns and atomically applies the original query only while its root, workspace generation, and query remain current. Obsolete repairs do not alter current UI state or ordinary feedback.
 - Repair has persistent non-blocking secondary-footer feedback, leaving ordinary footer messages readable. Selection, preview, and normal tagging remain usable; confirmed metadata updates are serialized after repair and win over older index state.
 - A scan can independently discover a new path and its current metadata, but does not identify it as a renamed former path.
+
+## Completion
+
+Ticket 01 added the root-scoped stale-result repair. Ticket 02 replaced its automatic recursive full-root scan with immediate local removal of the missing path plus the normal background refresh, avoiding the unacceptable latency observed on a 29,000-photo root.
 
 ## Constraints
 

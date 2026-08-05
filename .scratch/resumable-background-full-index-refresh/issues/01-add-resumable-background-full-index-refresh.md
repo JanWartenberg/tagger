@@ -25,7 +25,7 @@ Replace the monolithic full-root refresh with a durable, streamed refresh that r
 - Retry a failed 200-photo subgroup twice with short backoff. On the third failure, report the refresh as failed, retain already committed index changes, discard unfinished recovery state, and leave a later `:reindex` as the fresh recovery route.
 - After streamed discovery completes, perform exactly one reconciliation traversal that removes deleted paths and re-reads only files added or changed during the refresh. Do not wait for a permanently quiet tree.
 - SQLite searches remain available against committed snapshots. Do not automatically replace an already displayed search-result view during or after the refresh.
-- Use a throttled (at most once per second), persistent secondary footer line for queued, discovery, determinate progress, resumed, cancelled, failed, and completion states. Ordinary footer messages remain independent.
+- Use a throttled (at most once per second), persistent secondary footer line for queued, discovery, determinate progress, resumed, cancelled, failed, and completion states. During discovery, show `Discovering images for DB index… N indexed`; do not expose a separate found count, and animate only `Discovering` subtly at low frequency. Ordinary footer messages remain independent.
 
 ## Acceptance Criteria
 
