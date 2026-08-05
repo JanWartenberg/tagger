@@ -60,6 +60,9 @@ A persistent, non-alarming attention marker on a photo with a failed tag mutatio
 **Application session**:
 The lifetime of one running TAGGER process. Failed tag mutations and their unresolved mutation indicators exist only during this session and are not persisted across restart.
 
+**Session error**:
+A timestamped, user-reviewable record of an operational failure during one Application session. It includes one aggregate record for a failed tag mutation, but excludes expected input validation and workflow-state guidance. It is not persisted across restart.
+
 **Partial tag mutation**:
 A multi-photo tag mutation with both confirmed and failed photo writes. Confirmed photos retain their changes; only failed photos are restored, marked failed, and included in a retry.
 

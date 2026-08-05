@@ -24,6 +24,7 @@ from photo_workspace import (
     PhotoWorkspaceSnapshot,
     PhotoWorkspaceViewMode,
 )
+from services.error_history import SessionErrorHistory
 from services.background_coordinator import (
     BackgroundCoordinator,
     BackgroundRunner,
@@ -301,6 +302,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.exif = ExifTool()
         self._file_actions = file_actions or FilePaneActions()
         self.tag_mutations = TagMutationService(self.exif)
+        self._error_history = SessionErrorHistory()
         self.pool = QtCore.QThreadPool.globalInstance()
         self._queued_preview_workers: list[Worker] = []
         self._tag_mutation_coordinator = TagMutationCoordinator(
@@ -774,6 +776,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "force_refresh_known_tags": self.force_refresh_known_tags,
             "reindex_active_root": self.reindex_active_root,
             "cancel_active_refresh": self.cancel_active_refresh,
+            "show_error_history": self.show_error_history,
             "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
             "retry_all_failed_tag_mutations": self.retry_all_failed_tag_mutations,
             "resolve_mismatch": self.resolve_mismatch,
@@ -871,7 +874,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._dispatch_action(spec.id, command_args=args)
         except Exception as e:
-            self._show_error(str(e))
+            self._show_error(str(e), source="Command")
 
     def _format_key_route_label(self, route: KeyRoute) -> str:
         if route.kind == "sequence":
@@ -1650,7 +1653,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._file_actions.open_default(paths)
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self._report_file_action_error("Open photos", error)
 
     def _open_selected_photos_in_gimp(self) -> None:
         paths = self._paths_to_open("Open photos in GIMP")
@@ -1659,7 +1662,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._file_actions.open_gimp(paths)
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self._report_file_action_error("Open photos in GIMP", error)
 
     def _copy_selected_photo_paths(self) -> None:
         paths = tuple(self.selected_file_paths())
@@ -1669,7 +1672,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._file_actions.copy_paths(paths)
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self._report_file_action_error("Copy photo paths", error)
             return
         if len(paths) == 1:
             self.statusBar().showMessage(f'"{paths[0]}" was copied')
@@ -1684,9 +1687,14 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             self._file_actions.reveal(path)
         except Exception as error:
-            self.statusBar().showMessage(str(error))
+            self._report_file_action_error("Reveal photo", error)
             return
         self.statusBar().showMessage(f'Revealing "{path}" in Explorer…')
+
+    def _report_file_action_error(self, source: str, error: Exception) -> None:
+        detail = str(error)
+        self._record_session_error(source, detail)
+        self.statusBar().showMessage(detail)
 
     def _show_file_context_menu(
         self,
@@ -2036,6 +2044,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.root != self._index_root:
             return
         if isinstance(event, IndexWriteFailed):
+            self._record_session_error("Index update", event.error)
             if not self._has_active_search_for(event.root):
                 self.statusBar().showMessage("Index update failed")
             return
@@ -2065,6 +2074,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_index_refresh_request = None
         self._stop_refresh_discovery_animation()
         if isinstance(event, IndexRefreshFailed):
+            self._record_session_error("Index refresh", event.error)
             self.indexRepairStatusLabel.setText("Index refresh failed")
             if not self._has_active_search_for(request.root):
                 label = (
@@ -2148,6 +2158,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         del self._stale_result_repairs[request.root]
         if isinstance(event, IndexRefreshFailed):
+            self._record_session_error("Index repair", event.error)
             self.indexRepairStatusLabel.setText(f"Index repair failed: {event.error}")
             return
 
@@ -2214,6 +2225,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self._active_search_request = None
             if isinstance(event, IndexReadFailed):
+                self._record_session_error("Index search", event.error)
                 self._update_view_indicator(self.photo_workspace.snapshot())
                 self.statusBar().showMessage("Search failed")
                 return
@@ -2233,6 +2245,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             return
         if isinstance(event, IndexReadFailed):
+            self._record_session_error("Known-tag refresh", event.error)
             self.statusBar().showMessage("Known-tag refresh failed")
             return
         if isinstance(event, KnownTagsCompleted):
@@ -2273,6 +2286,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     root, list(event.paths), paths_are_normalized=True
                 )
             else:
+                self._record_session_error("Photo discovery", event.error)
                 self._hide_files_render_progress()
                 self._show_files_pane_message("No photos loaded")
                 self.statusBar().showMessage(f"Loading photos failed: {event.error}")
@@ -2289,6 +2303,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self._pending_additive_discoveries:
                 self.statusBar().showMessage("Loading photos…")
         else:
+            self._record_session_error("Photo discovery", event.error)
             self.statusBar().showMessage(f"Loading photos failed: {event.error}")
 
     def _show_files_pane_message(self, message: str) -> None:
@@ -2635,7 +2650,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if token == self._selection_token:
                 if not self._queue_stale_result_repair(current, msg):
                     self.statusBar().showMessage("Error")
-                    self._show_error(msg)
+                    self._show_error(msg, source="Read keywords")
             self._schedule_pending_metadata_read()
 
         worker.signals.finished.connect(_ok)
@@ -2696,6 +2711,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.previewLabel.setText("No preview")
             self.previewLabel.setPixmap(QtGui.QPixmap())
             self._preview_image = None
+            self._record_session_error("Image preview", msg)
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
@@ -2851,6 +2867,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._render_photo_workspace_snapshot(
                 snapshot, before, scroll_active_to_top=True
             )
+            self._record_session_error("IPTC-empty filter", msg)
             self.statusBar().showMessage(f"Filtering IPTC-empty failed: {msg}")
 
         worker.signals.finished.connect(_ok)
@@ -2945,6 +2962,11 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         if event.kind is TagMutationLifecycleKind.COMPLETED:
+            if event.failed_paths:
+                self._record_session_error(
+                    "Tag mutation",
+                    f"{len(event.failed_paths)} photo(s) failed — use :retry",
+                )
             confirmed_states = dict(event.confirmed_states)
             restored_states = dict(event.restored_states)
             self._update_index_states(confirmed_states)
@@ -2969,13 +2991,15 @@ class MainWindow(QtWidgets.QMainWindow):
             return
 
         restored_states = dict(event.restored_states)
+        detail = event.error or "Unknown tag mutation failure"
         if not event.render_workspace:
+            self._record_session_error("Tag mutation", detail)
             return
         self._keywords_cache.update(restored_states)
         self._refresh_file_mutation_indicators(list(restored_states))
         self._refresh_current_keywords_view_from_cache()
         self.statusBar().showMessage("Error")
-        self._show_error(event.error or "Unknown tag mutation failure")
+        self._show_error(detail, source="Tag mutation")
 
     def _current_keywords_from_ui(self) -> list[str]:
         items = [self.keywordsList.item(i) for i in range(self.keywordsList.count())]
@@ -3294,7 +3318,22 @@ class MainWindow(QtWidgets.QMainWindow):
         state = "ON" if self.onlyUntagged.isChecked() else "OFF"
         self.statusBar().showMessage(f"Only IPTC-empty: {state}")
 
-    def _show_error(self, msg: str) -> None:
+    def _record_session_error(self, source: str, detail: str) -> None:
+        self._error_history.record(source, detail)
+
+    def show_error_history(self) -> None:
+        entries = self._error_history.entries()
+        if not entries:
+            text = "No errors in this session."
+        else:
+            text = "\n".join(
+                f"{entry.timestamp} — {entry.source}: {entry.detail}"
+                for entry in entries
+            )
+        QtWidgets.QMessageBox.information(self, "Errors", text)
+
+    def _show_error(self, msg: str, *, source: str = "TAGGER") -> None:
+        self._record_session_error(source, msg)
         QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     def resolve_mismatch(self) -> None:
@@ -3325,7 +3364,7 @@ class MainWindow(QtWidgets.QMainWindow):
         def _err(msg: str) -> None:
             if token == self._selection_token:
                 self.statusBar().showMessage("Error")
-                self._show_error(msg)
+                self._show_error(msg, source="Resolve IPTC/XMP mismatch")
                 # Re-enable if still mismatched.
                 active_path = self.active_file_path()
                 if active_path:
@@ -3351,7 +3390,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def _err(msg: str) -> None:
             self.statusBar().showMessage("Error")
-            self._show_error(msg)
+            self._show_error(msg, source="Copy EXIF date")
 
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)

@@ -90,6 +90,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("cancel"),
         ),
         ActionSpec(
+            id="errors",
+            description="Show operational errors from this session",
+            handler_name="show_error_history",
+            command=CommandBinding("errors"),
+        ),
+        ActionSpec(
             id="retry",
             description="Retry failed tag changes for selected photos",
             handler_name="retry_failed_tag_mutations",

@@ -458,6 +458,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         critical.assert_not_called()
 
+        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+            self.window._dispatch_command("errors", [])
+
+        self.assertIn("Index update: index failed", information.call_args.args[2])
+
     def test_backups_are_disabled_by_default(self) -> None:
         self.assertFalse(self.window.keepBackup.isChecked())
 
@@ -593,6 +598,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertNotIn(second, FakePhotoIndex.states_by_path)
         self.assertIn("1 succeeded, 1 failed", self.window.statusBar().currentMessage())
+
+        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+            self.window._dispatch_command("errors", [])
+
+        self.assertIn(
+            "Tag mutation: 1 photo(s) failed — use :retry",
+            information.call_args.args[2],
+        )
 
         self.window.files.setCurrentItem(
             self.window.files.item(1),
@@ -1175,6 +1188,34 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.indexRepairStatusLabel.text(), "Index refresh complete"
         )
         self.assertFalse(self.window._refresh_discovery_timer.isActive())
+
+    def test_errors_command_reports_an_empty_session(self) -> None:
+        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+            self.window._dispatch_command("errors", [])
+
+        information.assert_called_once_with(
+            self.window, "Errors", "No errors in this session."
+        )
+
+    def test_errors_command_records_filter_failures_but_not_unknown_commands(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        self.window._dispatch_command("not-a-command", [])
+        FakeExifTool.scan_error = RuntimeError("simulated filter failure")
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: self.window.statusBar()
+            .currentMessage()
+            .startswith("Filtering IPTC-empty failed:")
+        )
+
+        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+            self.window._dispatch_command("errors", [])
+
+        message = information.call_args.args[2]
+        self.assertIn("IPTC-empty filter: simulated filter failure", message)
+        self.assertNotIn("not-a-command", message)
 
     def test_cancel_command_stops_an_unstarted_full_refresh(self) -> None:
         self._add_paths("one.jpg")
