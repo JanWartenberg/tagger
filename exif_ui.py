@@ -220,6 +220,9 @@ class PhotoIndexAdapter:
     def is_initialized(self, root: str) -> bool:
         return PhotoIndex(root).is_initialized()
 
+    def needs_keyword_index_rebuild(self, root: str) -> bool:
+        return PhotoIndex(root).needs_keyword_index_rebuild()
+
     def is_refresh_stale(self, root: str) -> bool:
         return PhotoIndex(root).is_refresh_stale()
 
@@ -736,6 +739,11 @@ class MainWindow(QtWidgets.QMainWindow):
         }
 
     def _index_root_for_paths(self, paths: list[str]) -> str | None:
+        # An empty database-search result has no paths of its own. Keep its
+        # originating root rather than treating the configured default as a new
+        # root for the next query.
+        if not paths:
+            return self._index_root
         root = resolve_index_root(paths, preferred_root=DEFAULT_INDEX_ROOT)
         return str(root) if root is not None else self._index_root
 
@@ -2038,6 +2046,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 if not self._has_active_search_for(event.root):
                     self.statusBar().showMessage("Index ready")
+            elif getattr(event.result, "complete", True) is False:
+                if not self._has_active_search_for(event.root):
+                    self.statusBar().showMessage("Rebuilding canonical IPTC index…")
             return
         if isinstance(event, IndexWriteFailed):
             self._index_sync_inflight.discard(event.root)

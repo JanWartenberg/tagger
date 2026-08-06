@@ -24,6 +24,7 @@ Before implementation:
 
 1. **Complete indexed reverse-search result mode** owns the user-visible search-result view, its workspace restoration state, commands, and adapter behavior. It does not alter index scheduling or schema.
 2. **Index freshness and manual reindexing** owns stale-index detection, background full reindex scheduling, deletion cleanup, and `:reindex`. It does not change search-result view semantics.
+3. **Preserve index root after an empty search** owns retaining the originating root across an empty database-search view. It does not change query syntax or index contents.
 
 Neither ticket is formally blocked by the other: the existing index lifecycle is sufficient to deliver reverse-search behavior, while maintenance work must preserve whatever query interface exists.
 
@@ -38,7 +39,7 @@ Neither ticket is formally blocked by the other: the existing index lifecycle is
 
 ## Completion
 
-Ticket 01 implemented indexed reverse-search result mode and restoration. Ticket 02 implemented freshness detection, serialized full refresh, deletion cleanup, and `:reindex`.
+Ticket 01 implemented indexed reverse-search result mode and restoration. Ticket 02 implemented freshness detection, serialized full refresh, deletion cleanup, and `:reindex`. Ticket 03 retained the active index root across empty search results.
 
 ## Out of Scope
 

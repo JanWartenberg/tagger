@@ -167,6 +167,30 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
+    def test_search_after_an_empty_result_keeps_the_active_index_root(self) -> None:
+        _first, second = self._add_paths("first.jpg", "second.jpg")
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch("exif_ui.DEFAULT_INDEX_ROOT", Path(directory)),
+        ):
+            FakePhotoIndex.search_results = set()
+            self.window.dbSearchEdit.setText("tag:missing")
+            self.window.apply_db_search()
+            self.discovery_runner.run_index_work()
+            self.app.processEvents()
+            self.assertEqual(self.window.all_file_paths(), [])
+            first_search_root = FakePhotoIndex.search_roots[-1]
+
+            FakePhotoIndex.search_results = {second}
+            self.window.dbSearchEdit.setText("tag:second")
+            self.window.apply_db_search()
+            self.discovery_runner.run_index_work()
+            self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.search_roots[-1], first_search_root)
+        self.assertEqual(self.window.all_file_paths(), [second])
+
     def test_invalid_date_search_preserves_the_current_workspace(self) -> None:
         first, second = self._add_paths("first.jpg", "second.jpg")
         FakePhotoIndex.search_results = {second}
@@ -1979,6 +2003,7 @@ class FakeFilePaneActions:
 class FakePhotoIndex:
     search_results: set[str] = set()
     search_queries: list[str] = []
+    search_roots: list[str] = []
     refresh_stale = False
     refresh_error: Exception | None = None
     refresh_calls: list[str] = []
@@ -1993,6 +2018,7 @@ class FakePhotoIndex:
     def reset(cls) -> None:
         cls.search_results = set()
         cls.search_queries = []
+        cls.search_roots = []
         cls.refresh_stale = False
         cls.refresh_error = None
         cls.refresh_calls = []
@@ -2003,8 +2029,8 @@ class FakePhotoIndex:
         cls.known_tags = set()
         cls.known_tag_reads = 0
 
-    def __init__(self, _root: str) -> None:
-        pass
+    def __init__(self, root: str) -> None:
+        self.root = root
 
     def is_initialized(self) -> bool:
         return True
@@ -2051,6 +2077,7 @@ class FakePhotoIndex:
 
     def search_photos(self, query: str) -> set[str]:
         type(self).search_queries.append(query)
+        type(self).search_roots.append(self.root)
         return self.search_results
 
 

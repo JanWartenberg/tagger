@@ -25,6 +25,83 @@ class FakeExifTool:
         return {path: KeywordState(["indexed"], ["indexed"]) for path in paths}
 
 
+class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):
+    def test_index_projects_only_normalized_iptc_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            photo = root / "photo.jpg"
+            photo.touch()
+            path = normalize_path(photo)
+            index = PhotoIndex(root)
+
+            index.update_states(
+                {
+                    path: KeywordState(
+                        ["  cafe\u0301 ", "Café", "IPTC only"],
+                        ["XMP only", "Café"],
+                    )
+                }
+            )
+
+            self.assertEqual(index.load_tags_for_photo(path), ["café", "IPTC only"])
+            self.assertEqual(index.load_known_tags(), {"café", "IPTC only"})
+            self.assertEqual(index.search_photos("tag:XMP only"), [])
+            self.assertEqual(index.search_photos("tag:café"), [path])
+
+    def test_legacy_merged_facts_are_cleared_then_rebuilt_from_iptc(self) -> None:
+        class CanonicalExifTool:
+            def __init__(self) -> None:
+                self.read_batches: list[list[str]] = []
+
+            def read_keywords_many(self, paths: list[str]) -> dict[str, KeywordState]:
+                self.read_batches.append(paths)
+                return {
+                    path: KeywordState(["IPTC fact"], ["legacy XMP fact"])
+                    for path in paths
+                }
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            photo = root / "photo.jpg"
+            photo.touch()
+            path = normalize_path(photo)
+            seeded = PhotoIndex(root)
+            seeded.update_states({path: KeywordState(["old"], ["old"])})
+            with seeded._connection() as conn:
+                conn.execute("DELETE FROM photo_tags")
+                conn.execute("DELETE FROM tags")
+                conn.execute("INSERT INTO tags(tag) VALUES (?)", ("legacy XMP fact",))
+                tag_id = conn.execute(
+                    "SELECT id FROM tags WHERE tag = ?", ("legacy XMP fact",)
+                ).fetchone()[0]
+                conn.execute(
+                    "INSERT INTO photo_tags(photo_path, tag_id) VALUES (?, ?)",
+                    (path, tag_id),
+                )
+                conn.execute(
+                    "DELETE FROM meta WHERE key = ?", ("keyword_index_version",)
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("initialized", "1"),
+                )
+
+            index = PhotoIndex(root)
+
+            self.assertTrue(index.needs_keyword_index_rebuild())
+            self.assertFalse(index.is_initialized())
+            self.assertEqual(index.search_photos("tag:legacy XMP fact"), [])
+
+            exif = CanonicalExifTool()
+            index.sync_paths(exif, [path])
+
+            self.assertEqual(exif.read_batches, [[path]])
+            self.assertFalse(index.needs_keyword_index_rebuild())
+            self.assertTrue(index.is_initialized())
+            self.assertEqual(index.search_photos("tag:legacy XMP fact"), [])
+            self.assertEqual(index.search_photos("tag:IPTC fact"), [path])
+
+
 class PhotoIndexConnectionLifecycleTests(unittest.TestCase):
     def test_connection_context_commits_and_closes_on_success(self) -> None:
         index = PhotoIndex("/photos")

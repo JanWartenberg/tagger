@@ -21,6 +21,8 @@ class IndexAdapter(Protocol):
 
     def is_initialized(self, root: str) -> bool: ...
 
+    def needs_keyword_index_rebuild(self, root: str) -> bool: ...
+
     def is_refresh_stale(self, root: str) -> bool: ...
 
     def sync(self, root: str, paths: Sequence[str]) -> object: ...
@@ -389,6 +391,7 @@ class BackgroundCoordinator:
                 for operation in queue.pending
                 if operation.kind
                 not in {
+                    IndexOperationKind.ENSURE,
                     IndexOperationKind.REFRESH_IF_STALE,
                     IndexOperationKind.FULL_REINDEX,
                 }
@@ -652,6 +655,7 @@ class BackgroundCoordinator:
             cancel_refresh = (
                 operation.kind
                 in {
+                    IndexOperationKind.ENSURE,
                     IndexOperationKind.REFRESH_IF_STALE,
                     IndexOperationKind.FULL_REINDEX,
                 }
@@ -668,11 +672,12 @@ class BackgroundCoordinator:
             return
         try:
             if operation.kind is IndexOperationKind.ENSURE:
-                result = (
-                    None
-                    if self._index.is_initialized(root)
-                    else self._index.sync(root, operation.paths)
-                )
+                if self._index.is_initialized(root):
+                    result = None
+                elif self._index.needs_keyword_index_rebuild(root):
+                    result = self._index.refresh(root)
+                else:
+                    result = self._index.sync(root, operation.paths)
                 event: IndexEvent = IndexEnsureCompleted(root, result)
             elif operation.kind in {
                 IndexOperationKind.REFRESH_IF_STALE,
@@ -742,7 +747,12 @@ class BackgroundCoordinator:
                 self._stale_result_repair_roots.discard(root)
             queue = self._index_queues[root]
             queue.running = False
-            if isinstance(event, IndexRefreshProgress) and not queue.cancel_requested:
+            incomplete_refresh = isinstance(event, IndexRefreshProgress) or (
+                isinstance(event, IndexEnsureCompleted)
+                and event.result is not None
+                and getattr(event.result, "complete", True) is False
+            )
+            if incomplete_refresh and not queue.cancel_requested:
                 # Append after pending writes so confirmed mutations are committed
                 # before the next older refresh chunk can overwrite their index row.
                 queue.pending.append(

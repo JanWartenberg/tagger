@@ -1,6 +1,6 @@
 # 02 — Migrate the Photo Index to Canonical IPTC Facts
 
-Status: ready-for-agent
+Status: completed
 Category: enhancement
 Priority: high
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
@@ -40,3 +40,13 @@ Make `IPTC:Keywords` the sole keyword fact represented by the SQLite photo index
 
 - Run the focused indexing and coordinator tests, then the full test suite.
 - Confirm an existing on-disk index is rebuilt without blocking the UI.
+
+## Completion
+
+Implemented canonical IPTC-only index projection, legacy merged-index invalidation, and resumable background rebuild scheduling.
+
+Validation:
+
+- `ruff format` and `ruff check` passed for modified Python files.
+- `python3 -m unittest tests.test_indexing tests.test_background_coordinator` passed (39 tests).
+- The Qt offscreen suite was run. Its one failure, `test_non_missing_search_metadata_error_stays_an_ordinary_error`, also fails unchanged at baseline commit `f3bb586`; it is unrelated to this ticket.

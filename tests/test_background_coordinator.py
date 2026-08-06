@@ -58,6 +58,7 @@ class FakeIndex:
     def __init__(self) -> None:
         self.initialized: set[str] = set()
         self.stale: set[str] = set()
+        self.keyword_rebuilds: set[str] = set()
         self.calls: list[tuple[str, str, object]] = []
         self.fail_next: set[tuple[str, str]] = set()
         self.search_results: dict[tuple[str, str], list[str]] = {}
@@ -67,6 +68,10 @@ class FakeIndex:
     def is_initialized(self, root: str) -> bool:
         self.calls.append(("initialized", root, None))
         return root in self.initialized
+
+    def needs_keyword_index_rebuild(self, root: str) -> bool:
+        self.calls.append(("keyword_rebuild", root, None))
+        return root in self.keyword_rebuilds
 
     def is_refresh_stale(self, root: str) -> bool:
         self.calls.append(("stale", root, None))
@@ -86,9 +91,17 @@ class FakeIndex:
             self.fail_next.remove(("refresh", root))
             raise RuntimeError("refresh failed")
         self.stale.discard(root)
-        return (
+        result = (
             self.refresh_results.pop(0) if self.refresh_results else {"refreshed": root}
         )
+        if getattr(result, "complete", True):
+            self.keyword_rebuilds.discard(root)
+            self.initialized.add(root)
+        return result
+
+    def cancel_refresh(self, root: str) -> bool:
+        self.calls.append(("cancel", root, None))
+        return True
 
     def remove_photo(self, root: str, path: str) -> bool:
         self.calls.append(("remove", root, path))
@@ -351,7 +364,11 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
 
         self.assertEqual(
             self.index.calls,
-            [("initialized", root, None), ("sync", root, (photo,))],
+            [
+                ("initialized", root, None),
+                ("keyword_rebuild", root, None),
+                ("sync", root, (photo,)),
+            ],
         )
         self.assertEqual(self.discovery.requests, [])
         self.assertEqual(
@@ -374,6 +391,58 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         normalize.assert_called_once_with(root)
         self.runner.run()
         self.assertIn(("sync", root, tuple(paths)), self.index.calls)
+
+    def test_keyword_index_rebuild_continues_as_resumable_ensure_work(self) -> None:
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.keyword_rebuilds.add(root)
+        self.index.refresh_results = [IncompleteRefresh(), {"rebuilt": root}]
+
+        self.coordinator.ensure_index(root, [photo])
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls],
+            ["initialized", "keyword_rebuild", "refresh"],
+        )
+        self.assertEqual(len(self.runner.scheduled), 1)
+        self.assertIsInstance(self.events[0], IndexEnsureCompleted)
+        self.assertIsInstance(self.events[0].result, IncompleteRefresh)
+
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls],
+            [
+                "initialized",
+                "keyword_rebuild",
+                "refresh",
+                "initialized",
+                "keyword_rebuild",
+                "refresh",
+            ],
+        )
+        self.assertEqual(
+            self.events[-1], IndexEnsureCompleted(root=root, result={"rebuilt": root})
+        )
+
+    def test_cancel_removes_queued_keyword_index_rebuild_continuation(self) -> None:
+        root = fixture_path("/photos")
+        photo = fixture_path("/photos/one.jpg")
+        self.index.keyword_rebuilds.add(root)
+        self.index.refresh_results = [IncompleteRefresh()]
+
+        self.coordinator.ensure_index(root, [photo])
+        self.runner.run()
+        self.coordinator.cancel_refresh(root)
+        self.runner.run()
+        self.runner.run()
+
+        self.assertEqual(
+            [call[0] for call in self.index.calls],
+            ["initialized", "keyword_rebuild", "refresh", "cancel"],
+        )
+        self.assertEqual(self.runner.scheduled, [])
 
     def test_read_runs_without_waiting_for_a_root_write(self) -> None:
         root = fixture_path("/photos")
@@ -463,7 +532,7 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
 
         self.assertEqual(
             [call[0] for call in self.index.calls],
-            ["initialized", "sync", "update"],
+            ["initialized", "keyword_rebuild", "sync", "update"],
         )
 
     def test_stale_index_refreshes_in_the_serial_root_queue(self) -> None:

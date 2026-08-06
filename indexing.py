@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import sqlite3
 import time
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
@@ -21,6 +22,9 @@ _INDEX_REFRESH_MAX_AGE_SECONDS = 24 * 60 * 60
 _REFRESH_RESUME_MAX_AGE_SECONDS = 60 * 60
 _REFRESH_PATH_BATCH_SIZE = 1_000
 _REFRESH_EXIF_SUBGROUP_SIZE = 200
+_KEYWORD_INDEX_VERSION = "canonical-iptc-v1"
+_KEYWORD_INDEX_VERSION_REBUILDING = f"{_KEYWORD_INDEX_VERSION}-rebuilding"
+_KEYWORD_INDEX_VERSION_META_KEY = "keyword_index_version"
 
 
 def _normalize_root(root: str | Path) -> Path:
@@ -277,13 +281,62 @@ class PhotoIndex:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_photo_tags_photo_path ON photo_tags(photo_path)"
         )
+        self._ensure_keyword_index_version(conn)
+
+    def _keyword_index_version(self, conn: sqlite3.Connection) -> str | None:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?", (_KEYWORD_INDEX_VERSION_META_KEY,)
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def _ensure_keyword_index_version(self, conn: sqlite3.Connection) -> None:
+        """Invalidate legacy merged-keyword facts exactly once per index root."""
+        version = self._keyword_index_version(conn)
+        if version in {_KEYWORD_INDEX_VERSION, _KEYWORD_INDEX_VERSION_REBUILDING}:
+            return
+        has_legacy_facts = any(
+            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is not None
+            for table in ("photos", "tags", "photo_tags")
+        )
+        if not has_legacy_facts:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                (_KEYWORD_INDEX_VERSION_META_KEY, _KEYWORD_INDEX_VERSION),
+            )
+            return
+
+        # A merged row cannot be projected to IPTC without rereading the file.
+        # Keep photo rows for their paths and date data, but make all tag reads
+        # empty until a full-root background rebuild supplies canonical facts.
+        conn.execute("DELETE FROM photo_tags")
+        conn.execute("DELETE FROM tags")
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            (_KEYWORD_INDEX_VERSION_META_KEY, _KEYWORD_INDEX_VERSION_REBUILDING),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+            ("initialized", "0"),
+        )
+        conn.execute("DELETE FROM meta WHERE key = ?", ("last_index_scan",))
+
+    def _keyword_index_rebuild_pending(self, conn: sqlite3.Connection) -> bool:
+        return self._keyword_index_version(conn) == _KEYWORD_INDEX_VERSION_REBUILDING
+
+    def needs_keyword_index_rebuild(self) -> bool:
+        with self._connection() as conn:
+            return self._keyword_index_rebuild_pending(conn)
 
     def is_initialized(self) -> bool:
         with self._connection() as conn:
-            row = conn.execute(
+            initialized = conn.execute(
                 "SELECT value FROM meta WHERE key = ?", ("initialized",)
             ).fetchone()
-            return bool(row and str(row[0]) == "1")
+            return bool(
+                initialized
+                and str(initialized[0]) == "1"
+                and self._keyword_index_version(conn) == _KEYWORD_INDEX_VERSION
+            )
 
     def last_index_refresh(self) -> int | None:
         """Return the Unix timestamp of the latest successful root synchronization."""
@@ -504,13 +557,19 @@ class PhotoIndex:
             ),
         )
         conn.execute("DELETE FROM photo_tags WHERE photo_path = ?", (photo_path,))
-        tags = dedupe_casefold(state.merged)
+        tags = self._canonical_iptc_tags(state)
         for tag in tags:
             tag_id = self._tag_id(conn, tag)
             conn.execute(
                 "INSERT OR IGNORE INTO photo_tags(photo_path, tag_id) VALUES (?, ?)",
                 (photo_path, tag_id),
             )
+
+    def _canonical_iptc_tags(self, state: KeywordState) -> list[str]:
+        """Project one metadata state to the index's canonical keyword facts."""
+        return dedupe_casefold(
+            [unicodedata.normalize("NFC", tag.strip()) for tag in state.iptc]
+        )
 
     def update_states(self, updated_states: dict[str, KeywordState]) -> None:
         if not updated_states:
@@ -647,7 +706,13 @@ class PhotoIndex:
             for path in self.root.rglob("*")
             if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
         ]
-        reconciled = self._sync_paths(exif, paths, force=False, deletion_directory=None)
+        reconciled = self._sync_paths(
+            exif,
+            paths,
+            force=False,
+            deletion_directory=None,
+            force_migration=False,
+        )
         with self._connection() as conn:
             checkpoint = conn.execute(
                 "SELECT * FROM refresh_checkpoint WHERE singleton = 1"
@@ -808,6 +873,7 @@ class PhotoIndex:
         *,
         force: bool,
         deletion_directory: Path | None,
+        force_migration: bool = True,
     ) -> IndexSyncResult:
         current_paths = [
             normalize_path(path)
@@ -818,6 +884,10 @@ class PhotoIndex:
         updated_count = 0
 
         with self._connection() as conn:
+            migration_pending = self._keyword_index_rebuild_pending(conn)
+            effective_force = force or (
+                force_migration and migration_pending and deletion_directory is None
+            )
             existing = self._photo_rows(conn, current_paths)
             changed: list[str] = []
             for photo_path in current_paths:
@@ -827,7 +897,7 @@ class PhotoIndex:
                     continue
                 row = existing.get(photo_path)
                 if (
-                    force
+                    effective_force
                     or row is None
                     or int(row["mtime"]) != int(stat.st_mtime)
                     or int(row["size"]) != int(stat.st_size)
@@ -865,10 +935,15 @@ class PhotoIndex:
                     "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                     ("last_index_scan", str(int(time.time()))),
                 )
-            conn.execute(
-                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                ("initialized", "1"),
-            )
+                if migration_pending:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                        (_KEYWORD_INDEX_VERSION_META_KEY, _KEYWORD_INDEX_VERSION),
+                    )
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("initialized", "1"),
+                )
 
         return IndexSyncResult(
             root=str(self.root),
