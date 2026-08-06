@@ -4,7 +4,7 @@ Status: needs-triage
 Category: feature
 Priority: medium
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
-Blocked by: None
+Blocked by: 02 — [Canonical IPTC Index Facts](../../iptc-xmp-keyword-mismatch-handling/issues/02-canonical-iptc-index-facts.md)
 
 ## Goal
 
@@ -21,14 +21,14 @@ Make IPTC-empty filtering fast from the index while preserving a trustworthy, us
 ## Established Context
 
 - This ticket synchronizes SQLite's cached IPTC-empty facts with `IPTC:Keywords` in photo files. SQLite is not a competing tag authority.
-- `IPTC:Keywords` is TAGGER's canonical tag field. The separate IPTC/XMP mismatch-policy ticket owns how the XMP compatibility mirror is handled.
+- `IPTC:Keywords` is TAGGER's canonical tag field. [03 — Resolve IPTC/XMP Mismatches Per Photo](../../iptc-xmp-keyword-mismatch-handling/issues/03-resolve-iptc-xmp-mismatches.md) implements the approved XMP compatibility-mirror policy.
 - The SQLite result must use an IPTC-specific fact; it must not derive IPTC emptiness from merged tags.
-- A follow-on to the IPTC/XMP mismatch-policy ticket owns the canonical-IPTC schema/data migration from merged-only rows. This ticket consumes that fact and owns only the crosscheck, result application, cache repair, and `:resync` workflow.
+- [02 — Canonical IPTC Index Facts](../../iptc-xmp-keyword-mismatch-handling/issues/02-canonical-iptc-index-facts.md) owns the canonical-IPTC schema/data migration from merged-only rows. This ticket consumes that fact and owns only the crosscheck, result application, cache repair, and `:resync` workflow.
 
 ## Required Triage Before Implementation
 
 - When is an SQLite-derived IPTC-empty result eligible: only with a fully initialized/current index, or may it be shown from a stale or incomplete index?
-- What exact field-specific index fact defines IPTC-empty, including missing or unreadable metadata? The IPTC/XMP mismatch-policy follow-on owns migration of existing merged-only rows to that fact.
+- How should this workflow treat missing or unreadable IPTC metadata when deciding crosscheck eligibility, discrepancy reporting, and `:resync` results? Ticket 02 owns storing canonical IPTC facts, not this workflow decision.
 - Is verification always a full active-root scan, or is it limited to a defined source or candidate set?
 - What batching, progress cadence, persistent feedback, and cancellation behavior does verification have?
 - Which differences count as discrepancies: changed IPTC emptiness, missing/deleted files, newly discovered files, unreadable files, or all of them?
@@ -39,7 +39,7 @@ Make IPTC-empty filtering fast from the index while preserving a trustworthy, us
 
 ## Implementation Prerequisite
 
-Do not implement this ticket until the canonical-IPTC index-fact migration owned by the IPTC/XMP mismatch-policy follow-on is available. This does not block completing this ticket's workflow triage.
+Do not implement this ticket until [02 — Canonical IPTC Index Facts](../../iptc-xmp-keyword-mismatch-handling/issues/02-canonical-iptc-index-facts.md) is completed. This does not block completing this ticket's workflow triage.
 
 ## Comments
 

@@ -21,7 +21,7 @@ Show the SQLite-derived IPTC-empty Photo Workspace view immediately, then verify
 - Treat successful tag mutations made after filter activation as intentional changes, not crosscheck discrepancies.
 - Retain the SQLite-derived view and report verification failure when the crosscheck fails.
 
-The IPTC/XMP mismatch-policy follow-on owns the schema/data migration that creates canonical IPTC index facts from existing merged-only rows. This feature consumes that fact; it owns neither XMP policy nor the migration.
+[02 — Canonical IPTC Index Facts](../iptc-xmp-keyword-mismatch-handling/issues/02-canonical-iptc-index-facts.md) owns the schema/data migration that creates canonical IPTC index facts from existing merged-only rows. This feature consumes that fact; it owns neither XMP policy nor the migration.
 
 ## Open Triage Decisions
 
@@ -32,7 +32,7 @@ The IPTC/XMP mismatch-policy follow-on owns the schema/data migration that creat
 
 ## Implementation Prerequisite
 
-Do not implement this feature until the canonical-IPTC index-fact migration from the IPTC/XMP mismatch-policy follow-on is available. Its workflow triage may proceed independently.
+Do not implement this feature until [02 — Canonical IPTC Index Facts](../iptc-xmp-keyword-mismatch-handling/issues/02-canonical-iptc-index-facts.md) is completed. Its workflow triage may proceed independently.
 
 ## Constraints
 

@@ -2,7 +2,7 @@
 
 # 01 — Define IPTC/XMP Keyword Mismatch Policy
 
-Status: ready-for-agent
+Status: completed
 Category: enhancement
 Priority: high
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
@@ -79,9 +79,9 @@ TAGGER currently shows the union of both fields and warns when their non-empty t
 ## Agent Handoff
 
 - Integrate and test the existing pending/failed tag-mutation coordinator for one two-field Resolve operation, including three total attempts and consistent UI state after a partial write failure.
-- Add canonical IPTC index facts and migrate merged-only rows without changing IPTC-empty semantics. Do not index XMP values. This follow-on work owns the schema/data migration only; the separate SQLite crosscheck ticket owns cache verification, result application, and `:resync`.
+- [02 — Canonical IPTC Index Facts](02-canonical-iptc-index-facts.md) migrates merged-only rows without changing IPTC-empty semantics. It does not index XMP values; the separate SQLite crosscheck ticket owns cache verification, result application, and `:resync`.
 - Define tests for selection-time modal presentation, S3's deliberately silent state, copy/delete outcomes, cancellation, write retries, and failed writes.
-- Split this approved policy into concrete implementation ticket(s), keeping the SQLite IPTC-empty crosscheck work separate.
+- Implementation is split into [02 — Canonical IPTC Index Facts](02-canonical-iptc-index-facts.md) and [03 — Resolve IPTC/XMP Mismatches Per Photo](03-resolve-iptc-xmp-mismatches.md). The SQLite IPTC-empty crosscheck remains separate.
 
 ## Comments
 
@@ -89,4 +89,4 @@ TAGGER currently shows the union of both fields and warns when their non-empty t
 
 Created as a high-priority follow-up during IPTC-empty SQLite crosscheck triage.
 
-Tracker cleanup: policy triage is complete. The remaining task is to create the separately scoped implementation tickets described above; it is ready for an agent, not awaiting another product decision.
+Tracker cleanup: policy triage and its ticket-splitting scope are complete. Implementation now proceeds through tickets 02 and 03; this policy ticket has no remaining delivery work.

@@ -1,6 +1,6 @@
 # IPTC/XMP Keyword Mismatch Handling
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Problem Statement
@@ -16,7 +16,7 @@ Define the meaning of each IPTC/XMP keyword state and a durable policy for detec
 - Define keyword-field states and their user-visible meaning.
 - Define mismatch detection, display, and resolution policy, including whether any automatic resolution is safe.
 - Define the relationship between field-specific metadata facts and index-derived features.
-- Create separately scoped implementation tickets from the agreed policy.
+- Track implementation through [02 — Canonical IPTC Index Facts](issues/02-canonical-iptc-index-facts.md) and [03 — Resolve IPTC/XMP Mismatches Per Photo](issues/03-resolve-iptc-xmp-mismatches.md).
 
 ## Out of Scope
 
