@@ -664,6 +664,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertFalse(item.icon().isNull())
         self.assertIn("Saving", self.window.mutationStatusLabel.text())
+        initial_spinner_frame = item.icon().pixmap(16, 16).cacheKey()
+        self._wait_until(
+            lambda: item.icon().pixmap(16, 16).cacheKey() != initial_spinner_frame
+        )
         self.assertEqual(
             [
                 self.window.keywordsList.item(i).text()

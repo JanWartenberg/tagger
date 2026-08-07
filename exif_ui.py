@@ -77,6 +77,38 @@ _MISSING_FILE_ERROR = re.compile(
 )
 
 
+def _paint_loading_spinner(
+    painter: QtGui.QPainter, rect: QtCore.QRectF, angle: int
+) -> None:
+    """Paint the shared blue indeterminate-spinner treatment."""
+    size = min(rect.width(), rect.height())
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+    pen = QtGui.QPen(QtGui.QColor("#0099e5"))
+    pen.setWidthF(size * 0.10)
+    pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
+    painter.setPen(pen)
+    painter.translate(rect.center())
+    painter.rotate(angle)
+    radius = size * 0.35
+    painter.drawArc(
+        QtCore.QRectF(-radius, -radius, radius * 2, radius * 2),
+        20 * 16,
+        270 * 16,
+    )
+    painter.restore()
+
+
+def _loading_spinner_icon(size: int, angle: int) -> QtGui.QIcon:
+    """Render one file-pane spinner frame without creating a row widget."""
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    _paint_loading_spinner(painter, QtCore.QRectF(pixmap.rect()), angle)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
 class LoadingSpinner(QtWidgets.QWidget):
     """Small indeterminate spinner painted without an external image asset."""
 
@@ -103,19 +135,7 @@ class LoadingSpinner(QtWidgets.QWidget):
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         del event
         painter = QtGui.QPainter(self)
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        pen = QtGui.QPen(QtGui.QColor("#0099e5"))
-        pen.setWidthF(self.width() * 0.10)
-        pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
-        painter.setPen(pen)
-        painter.translate(self.width() / 2, self.height() / 2)
-        painter.rotate(self._angle)
-        radius = self.width() * 0.35
-        painter.drawArc(
-            QtCore.QRectF(-radius, -radius, radius * 2, radius * 2),
-            20 * 16,
-            270 * 16,
-        )
+        _paint_loading_spinner(painter, QtCore.QRectF(self.rect()), self._angle)
         painter.end()
 
 
@@ -743,6 +763,13 @@ class MainWindow(QtWidgets.QMainWindow):
             "Focus: f / Alt+1 / Ctrl+W H · Navigate: j/k, gg/G · "
             "Tags: Ctrl+C / Space y, Ctrl+V / Space p · "
             "Files: Space O/G/C/R"
+        )
+        self._pending_mutation_spinner_items: dict[str, QtWidgets.QListWidgetItem] = {}
+        self._pending_mutation_spinner_angle = 0
+        self._pending_mutation_spinner_timer = QtCore.QTimer(self)
+        self._pending_mutation_spinner_timer.setInterval(16)
+        self._pending_mutation_spinner_timer.timeout.connect(
+            self._advance_pending_mutation_spinners
         )
         self.filesPaneMessage = QtWidgets.QLabel(self.files.viewport())
         self.filesPaneMessage.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
@@ -2824,6 +2851,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.onlyUntagged.setChecked(
                 snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
             )
+            self._clear_pending_mutation_spinner_items()
             self.files.clear()
             visible_paths = set(snapshot.visible_paths)
             selected_paths = set(snapshot.selected_paths)
@@ -2859,6 +2887,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.onlyUntagged.blockSignals(False)
         self.files.blockSignals(True)
         try:
+            self._clear_pending_mutation_spinner_items()
             self.files.clear()
         finally:
             self.files.blockSignals(False)
@@ -2904,18 +2933,42 @@ class MainWindow(QtWidgets.QMainWindow):
 
         QtCore.QTimer.singleShot(0, render_next_batch)
 
+    def _clear_pending_mutation_spinner_items(self) -> None:
+        self._pending_mutation_spinner_items.clear()
+        self._pending_mutation_spinner_timer.stop()
+
+    def _sync_pending_mutation_spinner_timer(self) -> None:
+        if self._pending_mutation_spinner_items:
+            if not self._pending_mutation_spinner_timer.isActive():
+                self._pending_mutation_spinner_timer.start()
+        else:
+            self._pending_mutation_spinner_timer.stop()
+
+    def _advance_pending_mutation_spinners(self) -> None:
+        self._pending_mutation_spinner_angle = (
+            self._pending_mutation_spinner_angle + 6
+        ) % 360
+        icon = _loading_spinner_icon(16, self._pending_mutation_spinner_angle)
+        for path, item in tuple(self._pending_mutation_spinner_items.items()):
+            if item.listWidget() is self.files:
+                item.setIcon(icon)
+            else:
+                self._pending_mutation_spinner_items.pop(path, None)
+        self._sync_pending_mutation_spinner_timer()
+
     def _set_file_mutation_indicator(
         self, item: QtWidgets.QListWidgetItem, path: str
     ) -> None:
-        status = self._tag_mutation_coordinator.status_for(path)
+        normalized_path = normalize_path(path)
+        status = self._tag_mutation_coordinator.status_for(normalized_path)
         if status is MutationStatus.PENDING:
+            self._pending_mutation_spinner_items[normalized_path] = item
             item.setIcon(
-                self.style().standardIcon(
-                    QtWidgets.QStyle.StandardPixmap.SP_BrowserReload
-                )
+                _loading_spinner_icon(16, self._pending_mutation_spinner_angle)
             )
             item.setToolTip("Saving tag changes")
         elif status is MutationStatus.FAILED:
+            self._pending_mutation_spinner_items.pop(normalized_path, None)
             item.setIcon(
                 self.style().standardIcon(
                     QtWidgets.QStyle.StandardPixmap.SP_MessageBoxInformation
@@ -2923,8 +2976,10 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             item.setToolTip("Tag changes need attention; retry with :retry")
         else:
+            self._pending_mutation_spinner_items.pop(normalized_path, None)
             item.setIcon(QtGui.QIcon())
             item.setToolTip("")
+        self._sync_pending_mutation_spinner_timer()
 
     def _refresh_file_mutation_indicators(self, paths: list[str]) -> None:
         for path in paths:
