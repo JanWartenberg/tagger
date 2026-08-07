@@ -1,10 +1,10 @@
 # 03 — Resolve IPTC/XMP Keyword Mismatches Per Photo
 
-Status: ready-for-agent
+Status: completed
 Category: enhancement
 Priority: high
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
-Blocked by: 02
+Blocked by: None
 
 ## Goal
 
@@ -46,3 +46,13 @@ Introduce one reconciliation module behind a small interface that accepts the tw
 
 - Run focused reconciliation, mutation-coordinator, indexing, and MainWindow tests, then the full test suite.
 - Run the Windows offscreen acceptance suite before completion.
+
+## Completion
+
+Implemented the active-photo Resolve dialog, canonical IPTC-only tag display, explicit two-field ExifTool writes, and bounded Resolve retries through the tag-mutation coordinator. The dialog supports field-local copy/deletion controls, whole-list copy, and keyboard navigation.
+
+Validation:
+
+- `ruff check` passed for modified Python files.
+- Focused reconciliation, ExifTool, mutation-coordinator, and offscreen MainWindow tests passed.
+- Windows offscreen acceptance suite passed: 164 tests, `OK`.

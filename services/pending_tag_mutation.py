@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 
 from exif_tool import KeywordState
@@ -13,14 +13,17 @@ class MutationStatus(str, Enum):
 class TagIntentKind(str, Enum):
     ADD = "add"
     REMOVE = "remove"
+    REPLACE_FIELDS = "replace-fields"
 
 
 @dataclass(frozen=True)
 class TagIntent:
-    """One requested change to a case-insensitive tag identity."""
+    """One requested canonical-tag change or explicit keyword-field replacement."""
 
     kind: TagIntentKind
-    tag: str
+    tag: str = ""
+    target_state: KeywordState | None = None
+    attempts: int = 0
 
     @classmethod
     def add(cls, tag: str) -> "TagIntent":
@@ -30,9 +33,19 @@ class TagIntent:
     def remove(cls, tag: str) -> "TagIntent":
         return cls(TagIntentKind.REMOVE, tag.strip())
 
+    @classmethod
+    def replace_fields(cls, target_state: KeywordState) -> "TagIntent":
+        return cls(TagIntentKind.REPLACE_FIELDS, target_state=target_state)
+
     @property
     def identity(self) -> str:
+        if self.kind is TagIntentKind.REPLACE_FIELDS:
+            return "__keyword-fields__"
         return self.tag.casefold()
+
+    @property
+    def retryable(self) -> bool:
+        return self.kind is not TagIntentKind.REPLACE_FIELDS or self.attempts < 3
 
 
 @dataclass(frozen=True)
@@ -93,7 +106,10 @@ class PendingTagMutationCoordinator:
             self._recompute_display(path)
 
     def fail(
-        self, mutation: PendingTagMutation, paths: list[str] | None = None
+        self,
+        mutation: PendingTagMutation,
+        paths: list[str] | None = None,
+        attempts_by_path: dict[str, int] | None = None,
     ) -> dict[str, KeywordState]:
         displayed: dict[str, KeywordState] = {}
         affected_paths = paths if paths is not None else list(mutation.intents_by_path)
@@ -101,6 +117,14 @@ class PendingTagMutationCoordinator:
             for record in self._records_by_path.get(path, []):
                 if record.mutation == mutation:
                     record.status = MutationStatus.FAILED
+                    attempts = (attempts_by_path or {}).get(path, 0)
+                    if attempts:
+                        record.intents = tuple(
+                            replace(intent, attempts=intent.attempts + attempts)
+                            if intent.kind is TagIntentKind.REPLACE_FIELDS
+                            else intent
+                            for intent in record.intents
+                        )
                     break
             self._recompute_display(path)
             state = self._displayed_states.get(path)
@@ -129,23 +153,31 @@ class PendingTagMutationCoordinator:
     def retry_failed(self, paths: list[str]) -> PendingTagMutation | None:
         intents_by_path: dict[str, list[TagIntent]] = {}
         for path in paths:
-            failed = [
-                record
-                for record in self._records_by_path.get(path, [])
+            records = self._records_by_path.get(path, [])
+            retryable = [
+                intent
+                for record in records
                 if record.status is MutationStatus.FAILED
+                for intent in record.intents
+                if intent.retryable
             ]
-            if not failed:
+            if not retryable:
                 continue
-            intents_by_path[path] = [
-                intent for record in failed for intent in record.intents
-            ]
-            self._records_by_path[path] = [
-                record
-                for record in self._records_by_path[path]
-                if record.status is not MutationStatus.FAILED
-            ]
-            if not self._records_by_path[path]:
-                self._records_by_path.pop(path)
+            intents_by_path[path] = retryable
+            retained: list[_MutationRecord] = []
+            for record in records:
+                if record.status is not MutationStatus.FAILED:
+                    retained.append(record)
+                    continue
+                record.intents = tuple(
+                    intent for intent in record.intents if not intent.retryable
+                )
+                if record.intents:
+                    retained.append(record)
+            if retained:
+                self._records_by_path[path] = retained
+            else:
+                self._records_by_path.pop(path, None)
             self._recompute_display(path)
 
         return self._begin_intents(intents_by_path, supersede_failed=False)
@@ -191,7 +223,7 @@ class PendingTagMutationCoordinator:
     def _normalize_intents(self, intents: list[TagIntent]) -> tuple[TagIntent, ...]:
         latest_by_identity: dict[str, TagIntent] = {}
         for intent in intents:
-            if intent.tag:
+            if intent.kind is TagIntentKind.REPLACE_FIELDS or intent.tag:
                 latest_by_identity[intent.identity] = intent
         return tuple(latest_by_identity.values())
 
@@ -235,21 +267,34 @@ class PendingTagMutationCoordinator:
 def apply_tag_intents(
     state: KeywordState, intents: tuple[TagIntent, ...]
 ) -> KeywordState:
-    """Replay TAGGER's addressed tag intent while retaining unrelated metadata."""
-    keywords = state.merged
+    """Replay requested canonical-tag intent while retaining field-specific facts."""
+    current = state
+    preserve_empty_xmp = not current.xmp
     for intent in intents:
+        if intent.kind is TagIntentKind.REPLACE_FIELDS:
+            if intent.target_state is None:
+                continue
+            current = intent.target_state
+            preserve_empty_xmp = not current.xmp
+            continue
+        keywords = list(current.iptc)
         if intent.kind is TagIntentKind.ADD:
             if intent.identity not in {tag.casefold() for tag in keywords}:
                 keywords.append(intent.tag)
         else:
             keywords = [tag for tag in keywords if tag.casefold() != intent.identity]
-    keywords = dedupe_casefold(keywords)
-    keywords.sort(key=str.casefold)
-    return KeywordState(
-        keywords,
-        keywords,
-        state.date_original,
-        state.date_create,
-        state.date_xmp_create,
-        state.date_digitized,
-    )
+        keywords = dedupe_casefold(keywords)
+        keywords.sort(key=str.casefold)
+        # An intentionally empty XMP field remains empty during routine edits.
+        xmp = [] if preserve_empty_xmp else keywords
+        current = KeywordState(
+            keywords,
+            xmp,
+            current.date_original,
+            current.date_create,
+            current.date_xmp_create,
+            current.date_digitized,
+            current.iptc_readable,
+            current.xmp_readable,
+        )
+    return current

@@ -29,7 +29,7 @@ else:
 
 if PYQT_AVAILABLE:
     from exif_tool import KeywordState
-    from exif_ui import MainWindow
+    from exif_ui import MainWindow, ResolveKeywordsDialog
     from indexing import IndexRefreshProgress as IndexRefreshStep
     from services.background_coordinator import (
         IndexEnsureCompleted,
@@ -489,6 +489,158 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
     def test_backups_are_disabled_by_default(self) -> None:
         self.assertFalse(self.window.keepBackup.isChecked())
+
+    def test_resolve_dialog_aligns_keyword_rows_and_disables_empty_side_actions(
+        self,
+    ) -> None:
+        dialog = ResolveKeywordsDialog(
+            KeywordState(["foo", "bar"], ["bar", "baz"]), self.window
+        )
+        labels = [label.text() for label in dialog.findChildren(QtWidgets.QLabel)]
+        copy_from_xmp = [
+            button
+            for button in dialog.findChildren(QtWidgets.QToolButton)
+            if button.text() == "←"
+        ]
+
+        self.assertIn("IPTC:Keywords · canonical", labels)
+        self.assertIn("XMP-dc:Subject (compatibility)", labels)
+        self.assertEqual(sum(button.isEnabled() for button in copy_from_xmp), 2)
+        disabled = [button for button in copy_from_xmp if not button.isEnabled()]
+        self.assertEqual(len(disabled), 1)
+        self.assertEqual(disabled[0].toolTip(), "")
+        self.assertIn("#6b7280", disabled[0].styleSheet())
+        dialog.close()
+
+    def test_resolve_dialog_apply_and_cancel_keyboard_shortcuts(self) -> None:
+        apply_dialog = ResolveKeywordsDialog(
+            KeywordState(["foo"], ["bar"]), self.window
+        )
+        apply_button = apply_dialog.buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+        )
+        assert apply_button is not None
+        QtTest.QTest.mouseClick(apply_button, QtCore.Qt.MouseButton.LeftButton)
+        self.assertEqual(apply_dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+
+        shortcut_apply_dialog = ResolveKeywordsDialog(
+            KeywordState(["foo"], ["bar"]), self.window
+        )
+        QtTest.QTest.keyClick(
+            shortcut_apply_dialog,
+            QtCore.Qt.Key.Key_A,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(
+            shortcut_apply_dialog.result(), QtWidgets.QDialog.DialogCode.Accepted
+        )
+
+        cancel_dialog = ResolveKeywordsDialog(
+            KeywordState(["foo"], ["bar"]), self.window
+        )
+        QtTest.QTest.keyClick(
+            cancel_dialog,
+            QtCore.Qt.Key.Key_C,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(cancel_dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+
+        escape_dialog = ResolveKeywordsDialog(
+            KeywordState(["foo"], ["bar"]), self.window
+        )
+        QtTest.QTest.keyClick(escape_dialog, QtCore.Qt.Key.Key_Escape)
+        self.assertEqual(escape_dialog.result(), QtWidgets.QDialog.DialogCode.Rejected)
+
+    def test_resolve_dialog_vim_keys_copy_navigate_and_delete_a_row(self) -> None:
+        dialog = ResolveKeywordsDialog(
+            KeywordState(["foo", "bar"], ["bar", "baz"]), self.window
+        )
+
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_L)
+        self.assertEqual(dialog.chosen_state().xmp, ["bar", "baz", "foo"])
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_J)
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_J)
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_H)
+        self.assertIn("baz", dialog.chosen_state().iptc)
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_D)
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_D)
+        self.assertNotIn("baz", dialog.chosen_state().iptc)
+        self.assertNotIn("baz", dialog.chosen_state().xmp)
+        dialog.close()
+
+    def test_resolve_dialog_vim_global_copy_operators(self) -> None:
+        dialog = ResolveKeywordsDialog(
+            KeywordState(["foo", "bar"], ["bar", "baz"]), self.window
+        )
+
+        def press(key, text, modifiers=QtCore.Qt.KeyboardModifier.NoModifier) -> None:
+            QtWidgets.QApplication.sendEvent(
+                dialog,
+                QtGui.QKeyEvent(QtCore.QEvent.Type.KeyPress, key, modifiers, text),
+            )
+
+        press(QtCore.Qt.Key.Key_Greater, ">", QtCore.Qt.KeyboardModifier.ShiftModifier)
+        press(QtCore.Qt.Key.Key_Greater, ">", QtCore.Qt.KeyboardModifier.ShiftModifier)
+        self.assertIn("foo", dialog.chosen_state().xmp)
+        press(QtCore.Qt.Key.Key_Less, "<", QtCore.Qt.KeyboardModifier.ShiftModifier)
+        press(QtCore.Qt.Key.Key_Less, "<", QtCore.Qt.KeyboardModifier.ShiftModifier)
+        self.assertIn("baz", dialog.chosen_state().iptc)
+        dialog.close()
+
+    def test_s3_xmp_empty_state_shows_only_canonical_iptc_tags_without_resolve(
+        self,
+    ) -> None:
+        path = normalize_path(str(Path("C:/photos") / "one.jpg"))
+        FakeExifTool.states_by_path[path] = KeywordState(["iptc"], [])
+        self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+
+        self.assertEqual(self.window.keywordsList.item(0).text(), "iptc")
+        self.assertEqual(self.window.mismatchLabel.text(), "")
+        self.assertFalse(self.window.resolveBtn.isEnabled())
+
+    def test_resolve_uses_one_active_photo_and_writes_explicit_field_choices(
+        self,
+    ) -> None:
+        path = normalize_path(str(Path("C:/photos") / "one.jpg"))
+        FakeExifTool.states_by_path[path] = KeywordState([], ["xmp-only"])
+        self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.resolveBtn.isEnabled())
+
+        chosen = KeywordState(["xmp-only"], [])
+        with patch("exif_ui.ResolveKeywordsDialog") as dialog:
+            dialog.return_value.exec.return_value = (
+                QtWidgets.QDialog.DialogCode.Accepted
+            )
+            dialog.return_value.chosen_state.return_value = chosen
+            self.window.resolve_mismatch()
+
+        self._wait_until(lambda: len(FakeExifTool.field_write_calls) == 1)
+        self._wait_until(lambda: self.window.mutationStatusLabel.text() == "")
+        self.assertEqual(
+            FakeExifTool.field_write_calls,
+            [(path, ["xmp-only"], [])],
+        )
+        self.assertEqual(FakePhotoIndex.states_by_path[path], chosen)
+
+    def test_resolve_retries_the_field_write_up_to_three_times(self) -> None:
+        path = normalize_path(str(Path("C:/photos") / "one.jpg"))
+        FakeExifTool.states_by_path[path] = KeywordState([], ["xmp-only"])
+        FakeExifTool.write_failures = [True, True, False]
+        self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.resolveBtn.isEnabled())
+
+        chosen = KeywordState(["xmp-only"], ["xmp-only"])
+        with patch("exif_ui.ResolveKeywordsDialog") as dialog:
+            dialog.return_value.exec.return_value = (
+                QtWidgets.QDialog.DialogCode.Accepted
+            )
+            dialog.return_value.chosen_state.return_value = chosen
+            self.window.resolve_mismatch()
+
+        self._wait_until(lambda: len(FakeExifTool.field_write_calls) == 3)
+        self._wait_until(lambda: self.window.mutationStatusLabel.text() == "")
+        self.assertEqual(FakePhotoIndex.states_by_path[path], chosen)
 
     def test_failed_single_photo_tag_write_restores_confirmed_tags_and_marks_the_photo(
         self,
@@ -1914,6 +2066,7 @@ class FakeExifTool:
     scan_error: Exception | None = None
     write_failures: list[bool] = []
     write_calls: list[tuple[str, list[str]]] = []
+    field_write_calls: list[tuple[str, list[str], list[str]]] = []
     states_by_path: dict[str, KeywordState] = {}
     metadata_read_started = threading.Event()
     write_started = threading.Event()
@@ -1927,6 +2080,7 @@ class FakeExifTool:
         cls.scan_error = None
         cls.write_failures = []
         cls.write_calls = []
+        cls.field_write_calls = []
         cls.states_by_path = {}
         cls.metadata_read_started = threading.Event()
         cls.write_started = threading.Event()
@@ -1963,9 +2117,19 @@ class FakeExifTool:
     def write_keywords(
         self, paths: list[str], keywords: list[str], keep_backup: bool
     ) -> None:
+        self.write_keyword_fields(paths, keywords, keywords, keep_backup)
+
+    def write_keyword_fields(
+        self,
+        paths: list[str],
+        iptc: list[str],
+        xmp: list[str],
+        keep_backup: bool,
+    ) -> None:
         del keep_backup
         path = normalize_path(paths[0])
-        type(self).write_calls.append((path, list(keywords)))
+        type(self).write_calls.append((path, list(iptc)))
+        type(self).field_write_calls.append((path, list(iptc), list(xmp)))
         type(self).write_started.set()
         type(self)._allow_writes.wait(timeout=2)
         failed = type(self).fail_writes or (
@@ -1973,7 +2137,7 @@ class FakeExifTool:
         )
         if failed:
             raise RuntimeError("simulated write failure")
-        type(self).states_by_path[path] = KeywordState(list(keywords), list(keywords))
+        type(self).states_by_path[path] = KeywordState(list(iptc), list(xmp))
 
 
 class FakeFilePaneActions:

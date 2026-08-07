@@ -7,10 +7,9 @@ Features (MVP)
 - Add folder button (includes subfolders)
 - Image preview for selected file
 - Capture date display (EXIF DateTimeOriginal)
-- Shows keywords (reads both `IPTC:Keywords` and `XMP-dc:Subject`)
-- Writes keywords to both fields (keeps them in sync)
-- Shows a mismatch warning if IPTC and XMP differ
-- "Resolve" button to merge+sync both fields when they differ
+- Shows canonical `IPTC:Keywords`; reads `XMP-dc:Subject` as a compatibility field
+- Routine tag writes preserve an intentionally empty XMP field
+- Offers a single-photo Resolve dialog for IPTC/XMP disagreements, with explicit copy and deletion choices for each field
 - "Known tags": recent (last 100) + tags found in the same folder
 - Recursive scan toggle for known tags (default OFF)
 - Filter: show only files with empty IPTC keywords; after tagging, the image remains available for one step back so its tags can be copied

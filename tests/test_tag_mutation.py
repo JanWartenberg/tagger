@@ -7,6 +7,47 @@ from services.tag_mutation import TagMutationService
 
 
 class TagMutationServiceTests(unittest.TestCase):
+    def test_ordinary_mutation_preserves_an_empty_xmp_field(self) -> None:
+        path = "C:/photos/one.jpg"
+        exif = FakeExifTool({path: KeywordState(["before"], [])}, failed_paths=set())
+
+        result = TagMutationService(exif).add_tag(
+            [path], "added", keep_backup=False, load_state=exif.read_keywords
+        )
+
+        self.assertEqual(
+            result.updated_states[path], KeywordState(["added", "before"], [])
+        )
+        self.assertEqual(
+            exif.states_by_path[path], KeywordState(["added", "before"], [])
+        )
+
+    def test_resolve_writes_field_specific_choices_in_one_operation(self) -> None:
+        path = "C:/photos/one.jpg"
+        exif = FakeExifTool({path: KeywordState(["iptc"], ["xmp"])}, failed_paths=set())
+        chosen = KeywordState(["iptc", "xmp"], ["xmp"])
+
+        result = TagMutationService(exif).resolve_keyword_fields(
+            [path], {path: chosen}, keep_backup=False, load_state=exif.read_keywords
+        )
+
+        self.assertEqual(result.updated_states[path], chosen)
+        self.assertEqual(exif.write_calls, [(path, ["iptc", "xmp"], ["xmp"])])
+
+    def test_resolve_retries_a_failed_field_pair_at_most_three_times(self) -> None:
+        path = "C:/photos/one.jpg"
+        exif = FakeExifTool(
+            {path: KeywordState(["iptc"], ["xmp"])}, failed_paths={path}
+        )
+        chosen = KeywordState(["iptc"], ["iptc"])
+
+        result = TagMutationService(exif).resolve_keyword_fields(
+            [path], {path: chosen}, keep_backup=False, load_state=exif.read_keywords
+        )
+
+        self.assertEqual(result.failed_paths, {path: "simulated write failure"})
+        self.assertEqual(len(exif.write_calls), 3)
+
     def test_partial_write_failure_returns_confirmed_and_failed_paths(self) -> None:
         first = "C:/photos/one.jpg"
         second = "C:/photos/two.jpg"
@@ -38,18 +79,24 @@ class FakeExifTool:
     ) -> None:
         self.states_by_path = states_by_path
         self.failed_paths = failed_paths
+        self.write_calls: list[tuple[str, list[str], list[str]]] = []
 
     def read_keywords(self, path: str) -> KeywordState:
         return self.states_by_path[path]
 
-    def write_keywords(
-        self, paths: list[str], keywords: list[str], keep_backup: bool
+    def write_keyword_fields(
+        self,
+        paths: list[str],
+        iptc: list[str],
+        xmp: list[str],
+        keep_backup: bool,
     ) -> None:
         del keep_backup
         path = paths[0]
+        self.write_calls.append((path, list(iptc), list(xmp)))
         if path in self.failed_paths:
             raise RuntimeError("simulated write failure")
-        self.states_by_path[path] = KeywordState(keywords, keywords)
+        self.states_by_path[path] = KeywordState(iptc, xmp)
 
 
 if __name__ == "__main__":

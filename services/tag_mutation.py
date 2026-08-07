@@ -2,11 +2,12 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from exif_tool import ExifTool, KeywordState
-from utils import dedupe_casefold
+from services.keyword_reconciliation import normalize_keywords
 
 
 StateLoader = Callable[[str], KeywordState]
 KeywordTransform = Callable[[str, KeywordState], list[str]]
+StateTransform = Callable[[str, KeywordState], KeywordState]
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,7 @@ class TagMutationResult:
     processed_count: int
     changed_count: int
     failed_paths: dict[str, str] = field(default_factory=dict)
+    attempts_by_path: dict[str, int] = field(default_factory=dict)
 
 
 class TagMutationService:
@@ -33,7 +35,7 @@ class TagMutationService:
             file_paths,
             keep_backup,
             load_state,
-            lambda _path, state: state.merged + [tag],
+            lambda _path, state: state.iptc + [tag],
         )
 
     def add_tags(
@@ -47,7 +49,7 @@ class TagMutationService:
             file_paths,
             keep_backup,
             load_state,
-            lambda _path, state: state.merged + tags,
+            lambda _path, state: state.iptc + tags,
         )
 
     def remove_tags(
@@ -62,7 +64,9 @@ class TagMutationService:
             file_paths,
             keep_backup,
             load_state,
-            lambda _path, state: [tag for tag in state.merged if tag.casefold() not in remove_casefold],
+            lambda _path, state: [
+                tag for tag in state.iptc if tag.casefold() not in remove_casefold
+            ],
         )
 
     def replace_keywords(
@@ -72,6 +76,23 @@ class TagMutationService:
         load_state: StateLoader,
         transform: KeywordTransform,
     ) -> TagMutationResult:
+        """Apply canonical-tag intent while preserving an intentionally empty XMP field."""
+        return self.replace_keyword_states(
+            file_paths,
+            keep_backup,
+            load_state,
+            lambda path, state: self._ordinary_mutation_state(
+                state, transform(path, state)
+            ),
+        )
+
+    def replace_keyword_states(
+        self,
+        file_paths: list[str],
+        keep_backup: bool,
+        load_state: StateLoader,
+        transform: StateTransform,
+    ) -> TagMutationResult:
         updated_states: dict[str, KeywordState] = {}
         emptiness_by_path: dict[str, bool] = {}
         failed_paths: dict[str, str] = {}
@@ -79,14 +100,15 @@ class TagMutationService:
         for path in file_paths:
             try:
                 current = load_state(path)
-                keywords = self._normalize_keywords(transform(path, current))
-                self.exif.write_keywords([path], keywords, keep_backup=keep_backup)
+                target = self._normalized_state(transform(path, current), current)
+                self.exif.write_keyword_fields(
+                    [path], target.iptc, target.xmp, keep_backup=keep_backup
+                )
             except Exception as error:
                 failed_paths[path] = str(error)
                 continue
-            updated_state = self._state_with_keywords(current, keywords)
-            updated_states[path] = updated_state
-            emptiness_by_path[path] = len(keywords) == 0
+            updated_states[path] = target
+            emptiness_by_path[path] = not target.iptc
 
         return TagMutationResult(
             updated_states=updated_states,
@@ -96,43 +118,94 @@ class TagMutationService:
             failed_paths=failed_paths,
         )
 
-    def resolve_mismatches(
+    def resolve_keyword_fields(
         self,
         file_paths: list[str],
+        chosen_states: dict[str, KeywordState],
         keep_backup: bool,
+        load_state: StateLoader,
     ) -> TagMutationResult:
+        """Write Resolve-dialog choices, retrying a field pair at most three times."""
         updated_states: dict[str, KeywordState] = {}
         emptiness_by_path: dict[str, bool] = {}
-        changed_count = 0
+        failed_paths: dict[str, str] = {}
+        attempts_by_path: dict[str, int] = {}
 
         for path in file_paths:
-            current = self.exif.read_keywords(path)
-            keywords = self._normalize_keywords(current.merged)
-            if current.mismatch:
-                self.exif.write_keywords([path], keywords, keep_backup=keep_backup)
-                changed_count += 1
-            updated_state = self._state_with_keywords(current, keywords)
-            updated_states[path] = updated_state
-            emptiness_by_path[path] = len(keywords) == 0
+            chosen = chosen_states[path]
+            target = self._normalized_state(chosen, chosen)
+            attempts = 0
+            try:
+                # This fresh read intentionally does not merge external changes into
+                # the dialog's explicit choices. If it fails, apply those choices.
+                try:
+                    load_state(path)
+                except Exception:
+                    pass
+                for attempt in range(3):
+                    attempts += 1
+                    try:
+                        self.exif.write_keyword_fields(
+                            [path], target.iptc, target.xmp, keep_backup=keep_backup
+                        )
+                        break
+                    except Exception:
+                        if attempt == 2:
+                            raise
+                else:  # pragma: no cover - the loop always breaks or raises
+                    raise RuntimeError("Resolve write did not run")
+            except Exception as error:
+                failed_paths[path] = str(error)
+                attempts_by_path[path] = attempts
+                continue
+            updated_states[path] = target
+            emptiness_by_path[path] = not target.iptc
 
         return TagMutationResult(
             updated_states=updated_states,
             emptiness_by_path=emptiness_by_path,
             processed_count=len(file_paths),
-            changed_count=changed_count,
+            changed_count=len(updated_states),
+            failed_paths=failed_paths,
+            attempts_by_path=attempts_by_path,
         )
 
-    def _normalize_keywords(self, keywords: list[str]) -> list[str]:
-        normalized = dedupe_casefold([keyword.strip() for keyword in keywords if keyword.strip()])
-        normalized.sort(key=lambda value: value.casefold())
-        return normalized
+    @staticmethod
+    def _ordinary_mutation_state(
+        current: KeywordState, keywords: list[str]
+    ) -> KeywordState:
+        iptc = sorted(normalize_keywords(keywords), key=str.casefold)
+        # S3 is deliberately silent: routine tag edits keep XMP empty rather
+        # than recreating it as a mirror. Non-empty XMP remains a mirror.
+        xmp = iptc if current.xmp else []
+        return TagMutationService._state(current, iptc, xmp)
 
-    def _state_with_keywords(self, current: KeywordState, keywords: list[str]) -> KeywordState:
+    @staticmethod
+    def _normalized_state(target: KeywordState, fallback: KeywordState) -> KeywordState:
+        return TagMutationService._state(
+            fallback,
+            list(normalize_keywords(target.iptc)),
+            list(normalize_keywords(target.xmp)),
+            iptc_readable=target.iptc_readable,
+            xmp_readable=target.xmp_readable,
+        )
+
+    @staticmethod
+    def _state(
+        source: KeywordState,
+        iptc: list[str],
+        xmp: list[str],
+        *,
+        iptc_readable: bool | None = None,
+        xmp_readable: bool | None = None,
+    ) -> KeywordState:
         return KeywordState(
-            keywords,
-            keywords,
-            current.date_original,
-            current.date_create,
-            current.date_xmp_create,
-            current.date_digitized,
+            iptc,
+            xmp,
+            source.date_original,
+            source.date_create,
+            source.date_xmp_create,
+            source.date_digitized,
+            source.iptc_readable if iptc_readable is None else iptc_readable,
+            source.xmp_readable if xmp_readable is None else xmp_readable,
         )

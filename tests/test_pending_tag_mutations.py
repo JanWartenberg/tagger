@@ -32,6 +32,17 @@ class PendingTagMutationCoordinatorTests(unittest.TestCase):
         self.assertIsNone(self.coordinator.status_for(self.path))
         self.assertEqual(self.coordinator.confirmed_for(self.path), self.requested)
 
+    def test_field_resolution_is_not_retryable_after_three_attempts(self) -> None:
+        target = KeywordState(["after"], ["after"])
+        mutation = self.coordinator.begin_intents(
+            {self.path: [TagIntent.replace_fields(target)]}
+        )
+
+        self.coordinator.fail(mutation, attempts_by_path={self.path: 3})
+
+        self.assertIsNone(self.coordinator.retry_failed([self.path]))
+        self.assertEqual(self.coordinator.status_for(self.path), MutationStatus.FAILED)
+
     def test_later_pending_mutation_is_recomputed_after_an_earlier_failure(
         self,
     ) -> None:

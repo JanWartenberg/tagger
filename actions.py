@@ -109,7 +109,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="resolve",
-            description="Resolve IPTC/XMP mismatch",
+            description="Resolve IPTC/XMP keywords for the active photo",
             handler_name="resolve_mismatch",
             command=CommandBinding("resolve"),
             shortcuts=(ShortcutBinding("Ctrl+R"),),

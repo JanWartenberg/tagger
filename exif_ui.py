@@ -54,6 +54,7 @@ from services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
     FileSystemPhotoDiscovery,
 )
+from services.keyword_reconciliation import aligned_keyword_rows, reconcile_keywords
 from services.pending_tag_mutation import MutationStatus, PendingTagMutation, TagIntent
 from services.tag_mutation import TagMutationResult, TagMutationService
 from services.tag_mutation_coordinator import (
@@ -147,6 +148,377 @@ class FileListWidget(QtWidgets.QListWidget):
             event.acceptProposedAction()
         else:
             super().dropEvent(event)
+
+
+class ResolveKeywordsDialog(QtWidgets.QDialog):
+    """Qt adapter for one photo's explicit IPTC/XMP reconciliation choices."""
+
+    _DELETE_STYLE = "color: #dc2626; font-weight: 700;"
+    _COPY_STYLE = "color: palette(link); font-weight: 700;"
+    _DISABLED_STYLE = "color: #6b7280; font-weight: 700;"
+
+    def __init__(self, state: KeywordState, parent: QtWidgets.QWidget) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Resolve IPTC/XMP keywords")
+        self.setModal(True)
+        self._source = state
+        self._reconciliation = reconcile_keywords(state)
+        self._iptc = list(self._reconciliation.iptc)
+        self._xmp = list(self._reconciliation.xmp)
+        self._iptc_readable = state.iptc_readable
+        self._xmp_readable = state.xmp_readable
+        self._row_values: tuple[tuple[str | None, str | None], ...] = ()
+        self._row_frames: list[QtWidgets.QFrame] = []
+        self._selected_row = 0
+        self._pending_vim_operator: str | None = None
+        self._shortcuts: list[QtGui.QShortcut] = []
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.addWidget(
+            QtWidgets.QLabel(
+                "IPTC is TAGGER's canonical tag field. Choose each field's final "
+                "values; Apply writes both fields once."
+            )
+        )
+        self._rows = QtWidgets.QGridLayout()
+        self._rows.setColumnStretch(0, 1)
+        self._rows.setColumnStretch(5, 1)
+        table = QtWidgets.QWidget()
+        table.setLayout(self._rows)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(table)
+        layout.addWidget(scroll, 1)
+
+        controls = QtWidgets.QGridLayout()
+        controls.setColumnStretch(0, 1)
+        controls.setColumnStretch(1, 1)
+        if self._reconciliation.can_copy:
+            controls.addWidget(
+                self._button(
+                    ">>", "Copy all IPTC keywords to XMP", self._copy_all_iptc
+                ),
+                0,
+                0,
+            )
+            controls.addWidget(
+                self._button("<<", "Copy all XMP keywords to IPTC", self._copy_all_xmp),
+                0,
+                1,
+            )
+            controls.addWidget(
+                self._button("× IPTC", "Delete all IPTC keywords", self._clear_iptc),
+                1,
+                0,
+            )
+            controls.addWidget(
+                self._button("XMP ×", "Delete all XMP keywords", self._clear_xmp),
+                1,
+                1,
+            )
+        else:
+            unreadable = []
+            if not self._iptc_readable:
+                unreadable.append("IPTC:Keywords")
+            if not self._xmp_readable:
+                unreadable.append("XMP-dc:Subject")
+            controls.addWidget(
+                QtWidgets.QLabel(
+                    f"{' and '.join(unreadable)} could not be read. "
+                    "Only delete the unreadable field or cancel."
+                ),
+                0,
+                0,
+                1,
+                2,
+            )
+            if not self._iptc_readable:
+                controls.addWidget(
+                    self._button(
+                        "× IPTC", "Delete unreadable IPTC field", self._clear_iptc
+                    ),
+                    1,
+                    0,
+                )
+            if not self._xmp_readable:
+                controls.addWidget(
+                    self._button(
+                        "XMP ×", "Delete unreadable XMP field", self._clear_xmp
+                    ),
+                    1,
+                    1,
+                )
+        layout.addLayout(controls)
+
+        self.buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Apply
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+        )
+        self.buttons.clicked.connect(self._handle_dialog_button)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+        self._install_shortcuts()
+        self._render_rows()
+        self._update_apply_enabled()
+
+    def _button(
+        self, text: str, tooltip: str, callback: Callable[[], None]
+    ) -> QtWidgets.QToolButton:
+        button = QtWidgets.QToolButton()
+        button.setText(text)
+        button.setToolTip(tooltip)
+        button.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed,
+        )
+        if "×" in text:
+            button.setStyleSheet(self._DELETE_STYLE)
+        elif ">" in text or "<" in text or "→" in text or "←" in text:
+            button.setStyleSheet(self._COPY_STYLE)
+        button.clicked.connect(callback)
+        return button
+
+    def _install_shortcuts(self) -> None:
+        bindings = (
+            ("Alt+A", self._accept_if_allowed),
+            ("Alt+C", self.reject),
+            ("Escape", self.reject),
+            ("j", lambda: self._move_selection(1)),
+            ("k", lambda: self._move_selection(-1)),
+            ("h", lambda: self._copy_selected(False)),
+            ("l", lambda: self._copy_selected(True)),
+        )
+        for sequence, callback in bindings:
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(sequence), self)
+            shortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(callback)
+            self._shortcuts.append(shortcut)
+
+    def _handle_dialog_button(self, button: QtWidgets.QAbstractButton) -> None:
+        if (
+            self.buttons.standardButton(button)
+            is QtWidgets.QDialogButtonBox.StandardButton.Apply
+        ):
+            self._accept_if_allowed()
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
+        modifiers = event.modifiers()
+        if modifiers == QtCore.Qt.KeyboardModifier.AltModifier:
+            if event.key() == QtCore.Qt.Key.Key_A:
+                self._accept_if_allowed()
+                event.accept()
+                return
+            if event.key() == QtCore.Qt.Key.Key_C:
+                self.reject()
+                event.accept()
+                return
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            self.reject()
+            event.accept()
+            return
+        text = event.text()
+        if self._pending_vim_operator is not None:
+            operator = self._pending_vim_operator
+            self._pending_vim_operator = None
+            if operator == "d" and text == "d":
+                self._delete_selected()
+            elif operator == ">" and text == ">":
+                self._copy_all_iptc()
+            elif operator == "<" and text == "<":
+                self._copy_all_xmp()
+            event.accept()
+            return
+        if modifiers == QtCore.Qt.KeyboardModifier.NoModifier:
+            key_actions = {
+                QtCore.Qt.Key.Key_J: lambda: self._move_selection(1),
+                QtCore.Qt.Key.Key_K: lambda: self._move_selection(-1),
+                QtCore.Qt.Key.Key_H: lambda: self._copy_selected(False),
+                QtCore.Qt.Key.Key_L: lambda: self._copy_selected(True),
+            }
+            action = key_actions.get(event.key())
+            if action is not None:
+                action()
+                event.accept()
+                return
+        if text in {"d", ">", "<"}:
+            self._pending_vim_operator = text
+            QtCore.QTimer.singleShot(600, self._clear_pending_vim_operator)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _clear_pending_vim_operator(self) -> None:
+        self._pending_vim_operator = None
+
+    def _render_rows(self) -> None:
+        self._row_values = aligned_keyword_rows(tuple(self._iptc), tuple(self._xmp))
+        self._selected_row = min(self._selected_row, max(0, len(self._row_values) - 1))
+        self._row_frames = []
+        while self._rows.count():
+            item = self._rows.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        iptc_heading = QtWidgets.QLabel("IPTC:Keywords · canonical")
+        iptc_heading.setStyleSheet("font-weight: 700;")
+        xmp_heading = QtWidgets.QLabel("XMP-dc:Subject (compatibility)")
+        xmp_heading.setStyleSheet("color: #64748b;")
+        self._rows.addWidget(iptc_heading, 0, 0, 1, 3)
+        self._rows.addWidget(xmp_heading, 0, 3, 1, 3)
+        for row, (iptc, xmp) in enumerate(self._row_values, start=1):
+            self._add_row(row, iptc, xmp)
+        self._update_selected_row()
+
+    def _add_row(self, row: int, iptc: str | None, xmp: str | None) -> None:
+        frame = QtWidgets.QFrame()
+        frame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        row_layout = QtWidgets.QGridLayout(frame)
+        row_layout.setContentsMargins(3, 1, 3, 1)
+        row_layout.setColumnStretch(0, 1)
+        row_layout.setColumnStretch(5, 1)
+        iptc_label = QtWidgets.QLabel(iptc or "")
+        iptc_label.setStyleSheet(
+            "font-weight: 700; border-left: 3px solid palette(highlight); padding: 3px;"
+        )
+        xmp_label = QtWidgets.QLabel(xmp or "")
+        xmp_label.setStyleSheet("color: #64748b; background: #f8fafc; padding: 3px;")
+        delete_iptc = self._button(
+            "×", "Delete this IPTC keyword", lambda: self._delete(iptc, True)
+        )
+        copy_to_xmp = self._button(
+            "→", "Copy this IPTC keyword to XMP", lambda: self._copy(iptc, True)
+        )
+        copy_to_iptc = self._button(
+            "←", "Copy this XMP keyword to IPTC", lambda: self._copy(xmp, False)
+        )
+        delete_xmp = self._button(
+            "×", "Delete this XMP keyword", lambda: self._delete(xmp, False)
+        )
+        for button in (delete_iptc, delete_xmp):
+            button.setStyleSheet(self._DELETE_STYLE)
+        for button in (copy_to_xmp, copy_to_iptc):
+            button.setStyleSheet(self._COPY_STYLE)
+        self._set_available(delete_iptc, iptc is not None)
+        self._set_available(
+            copy_to_xmp, iptc is not None and self._reconciliation.can_copy
+        )
+        self._set_available(
+            copy_to_iptc, xmp is not None and self._reconciliation.can_copy
+        )
+        self._set_available(delete_xmp, xmp is not None)
+        row_layout.addWidget(iptc_label, 0, 0)
+        row_layout.addWidget(delete_iptc, 0, 1)
+        row_layout.addWidget(copy_to_xmp, 0, 2)
+        row_layout.addWidget(copy_to_iptc, 0, 3)
+        row_layout.addWidget(delete_xmp, 0, 4)
+        row_layout.addWidget(xmp_label, 0, 5)
+        self._row_frames.append(frame)
+        self._rows.addWidget(frame, row, 0, 1, 6)
+
+    def _update_selected_row(self) -> None:
+        for index, frame in enumerate(self._row_frames):
+            if index == self._selected_row:
+                frame.setStyleSheet(
+                    "QFrame { border: 1px solid palette(highlight); border-radius: 3px; }"
+                )
+            else:
+                frame.setStyleSheet("QFrame { border: 1px solid transparent; }")
+
+    def _move_selection(self, offset: int) -> None:
+        if not self._row_values:
+            return
+        self._selected_row = (self._selected_row + offset) % len(self._row_values)
+        self._update_selected_row()
+
+    def _copy_selected(self, iptc_to_xmp: bool) -> None:
+        if not self._row_values:
+            return
+        iptc, xmp = self._row_values[self._selected_row]
+        self._copy(iptc if iptc_to_xmp else xmp, iptc_to_xmp)
+
+    def _delete_selected(self) -> None:
+        if not self._row_values:
+            return
+        iptc, xmp = self._row_values[self._selected_row]
+        for value, values in ((iptc, self._iptc), (xmp, self._xmp)):
+            if value is not None:
+                values[:] = [
+                    candidate
+                    for candidate in values
+                    if candidate.casefold() != value.casefold()
+                ]
+        self._render_rows()
+
+    def _set_available(self, button: QtWidgets.QToolButton, available: bool) -> None:
+        button.setEnabled(available)
+        if not available:
+            button.setToolTip("")
+            button.setStyleSheet(self._DISABLED_STYLE)
+
+    @staticmethod
+    def _add_missing(destination: list[str], value: str) -> None:
+        if value.casefold() not in {candidate.casefold() for candidate in destination}:
+            destination.append(value)
+
+    def _copy(self, value: str | None, iptc_to_xmp: bool) -> None:
+        if value is None:
+            return
+        destination = self._xmp if iptc_to_xmp else self._iptc
+        self._add_missing(destination, value)
+        self._render_rows()
+
+    def _copy_all_iptc(self) -> None:
+        for keyword in self._iptc:
+            self._add_missing(self._xmp, keyword)
+        self._render_rows()
+
+    def _copy_all_xmp(self) -> None:
+        for keyword in self._xmp:
+            self._add_missing(self._iptc, keyword)
+        self._render_rows()
+
+    def _delete(self, value: str | None, iptc: bool) -> None:
+        if value is None:
+            return
+        values = self._iptc if iptc else self._xmp
+        values[:] = [
+            candidate
+            for candidate in values
+            if candidate.casefold() != value.casefold()
+        ]
+        self._render_rows()
+
+    def _clear_iptc(self) -> None:
+        self._iptc = []
+        self._iptc_readable = True
+        self._render_rows()
+        self._update_apply_enabled()
+
+    def _clear_xmp(self) -> None:
+        self._xmp = []
+        self._xmp_readable = True
+        self._render_rows()
+        self._update_apply_enabled()
+
+    def _update_apply_enabled(self) -> None:
+        self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Apply).setEnabled(
+            self._iptc_readable and self._xmp_readable
+        )
+
+    def _accept_if_allowed(self) -> None:
+        if self._iptc_readable and self._xmp_readable:
+            self.accept()
+
+    def chosen_state(self) -> KeywordState:
+        return KeywordState(
+            self._iptc,
+            self._xmp,
+            self._source.date_original,
+            self._source.date_create,
+            self._source.date_xmp_create,
+            self._source.date_digitized,
+            self._iptc_readable,
+            self._xmp_readable,
+        )
 
 
 class WorkerSignals(QtCore.QObject):
@@ -425,7 +797,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.mutationStatusLabel.setStyleSheet("color: #1d4ed8;")
         self.mismatchLabel = QtWidgets.QLabel("")
         self.mismatchLabel.setStyleSheet("color: #b45309;")
-        self.resolveBtn = QtWidgets.QPushButton("Resolve (sync both)")
+        self.resolveBtn = QtWidgets.QPushButton("Resolve IPTC/XMP")
         self.resolveBtn.setEnabled(False)
         self.resolveBtn.clicked.connect(self.resolve_mismatch)
         self.resolveBtn.setToolTip("Resolve IPTC/XMP mismatch (Ctrl+R)")
@@ -1744,7 +2116,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if state is None:
             self.statusBar().showMessage("Tags are still loading")
             return
-        self._yanked_tags = state.merged
+        self._yanked_tags = state.iptc
         if not self._yanked_tags:
             self.statusBar().showMessage("Current file has no tags")
             return
@@ -2095,9 +2467,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 self.statusBar().showMessage(label)
             return
-        self.indexRepairStatusLabel.setText("Index refresh complete")
+        # A fresh automatic check has no refresh result and must not replace
+        # ordinary feedback or look like a completed user-visible operation.
         if event.result is None:
             return
+        self.indexRepairStatusLabel.setText("Index refresh complete")
         self.force_refresh_known_tags()
         if self._has_active_search_for(request.root):
             return
@@ -2753,13 +3127,14 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
         self.keywordsList.clear()
-        for kw in st.merged:
-            self.keywordsList.addItem(kw)
+        reconciliation = reconcile_keywords(st)
+        for keyword in reconciliation.current_tags:
+            self.keywordsList.addItem(keyword)
         if self.keywordsList.count() > 0:
             self._set_single_list_selection(self.keywordsList, 0)
-        if st.mismatch:
+        if reconciliation.requires_resolution:
             self.mismatchLabel.setText(
-                "Warning: IPTC:Keywords and XMP-dc:Subject differ (showing merged view)"
+                "IPTC:Keywords and XMP-dc:Subject need resolution"
             )
             self.resolveBtn.setEnabled(True)
         else:
@@ -3236,11 +3611,11 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._enqueue_tag_mutation(
             retry_paths,
-            lambda paths: self.tag_mutations.replace_keywords(
+            lambda paths: self.tag_mutations.replace_keyword_states(
                 paths,
                 keep_backup=self.keepBackup.isChecked(),
                 load_state=self.exif.read_keywords,
-                transform=lambda path, state: retry.apply(path, state).merged,
+                transform=lambda path, state: retry.apply(path, state),
             ),
             retry,
             f"Retried tag changes for {len(retry_paths)} photo(s)",
@@ -3348,43 +3723,37 @@ class MainWindow(QtWidgets.QMainWindow):
         QtWidgets.QMessageBox.critical(self, "Error", msg)
 
     def resolve_mismatch(self) -> None:
-        files = self.selected_file_paths()
-        if not files:
-            self.statusBar().showMessage("No files selected")
+        path = self.active_file_path()
+        if path is None:
+            self.statusBar().showMessage("No active photo")
+            return
+        state = self._keywords_cache.get(path)
+        if state is None:
+            self.statusBar().showMessage("Keywords are still loading")
+            return
+        if not reconcile_keywords(state).requires_resolution:
+            self.statusBar().showMessage("No IPTC/XMP resolution is needed")
             return
 
-        self.resolveBtn.setEnabled(False)
-        self.statusBar().showMessage("Resolving (merge & sync)...")
-
-        keep_backup = self.keepBackup.isChecked()
-
-        def _work(paths: list[str]) -> TagMutationResult:
-            return self.tag_mutations.resolve_mismatches(paths, keep_backup=keep_backup)
-
-        token = self._selection_token
-        worker = Worker(_work, files)
-
-        def _ok(res: TagMutationResult) -> None:
-            if token == self._selection_token:
-                self._keywords_cache.update(res.updated_states)
-                self._update_index_states(res.updated_states)
-                self._apply_filter_visibility_changes(res.emptiness_by_path)
-                self.statusBar().showMessage(f"Resolved {res.changed_count} file(s)")
-                self.on_selection_changed()
-
-        def _err(msg: str) -> None:
-            if token == self._selection_token:
-                self.statusBar().showMessage("Error")
-                self._show_error(msg, source="Resolve IPTC/XMP mismatch")
-                # Re-enable if still mismatched.
-                active_path = self.active_file_path()
-                if active_path:
-                    st = self._keywords_cache.get(active_path)
-                    self.resolveBtn.setEnabled(bool(st and st.mismatch))
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        dialog = ResolveKeywordsDialog(state, self)
+        if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
+            return
+        chosen = dialog.chosen_state()
+        pending_mutation = self._begin_pending_tag_mutation(
+            [path], [TagIntent.replace_fields(chosen)]
+        )
+        self.statusBar().showMessage("Saving IPTC/XMP resolution…")
+        self._enqueue_tag_mutation(
+            [path],
+            lambda paths: self.tag_mutations.resolve_keyword_fields(
+                paths,
+                {path: chosen},
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self.exif.read_keywords,
+            ),
+            pending_mutation,
+            "Resolved IPTC/XMP keywords",
+        )
 
     def copy_exif_date_to_xmp(self) -> None:
         files = self.selected_file_paths()

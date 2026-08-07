@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 from exif_tool import ExifTool
 
@@ -18,6 +19,26 @@ class ExifToolDateParsingTests(unittest.TestCase):
         self.assertEqual(state.date_original, "2006:10:01 08:44:39")
         self.assertEqual(state.date_create, "2006:10:01 08:44:39")
         self.assertEqual(state.date_display, "2006:10:01 08:44:39")
+
+    def test_writes_each_keyword_field_explicitly_in_one_operation(self) -> None:
+        exif = ExifTool()
+        with patch.object(exif, "_run") as run:
+            exif.write_keyword_fields(
+                ["photo.jpg"], [" IPTC "], ["XMP"], keep_backup=False
+            )
+
+        self.assertEqual(
+            run.call_args.args[0],
+            [
+                "-overwrite_original",
+                "-P",
+                "-IPTC:Keywords=",
+                "-XMP-dc:Subject=",
+                "-IPTC:Keywords=IPTC",
+                "-XMP-dc:Subject=XMP",
+                "photo.jpg",
+            ],
+        )
 
 
 if __name__ == "__main__":

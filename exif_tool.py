@@ -1,6 +1,7 @@
 import json
 import shutil
 import subprocess
+import unicodedata
 from dataclasses import dataclass
 
 from utils import dedupe_casefold, normalize_path
@@ -14,6 +15,8 @@ class KeywordState:
     date_create: str | None = None
     date_xmp_create: str | None = None
     date_digitized: str | None = None
+    iptc_readable: bool = True
+    xmp_readable: bool = True
 
     @property
     def iptc_set(self) -> set[str]:
@@ -182,19 +185,39 @@ class ExifTool:
 
         return out
 
-    def write_keywords(self, file_paths: list[str], keywords: list[str], keep_backup: bool) -> None:
-        kws = dedupe_casefold([k.strip() for k in keywords if k.strip()])
-        kws.sort(key=lambda s: s.casefold())
-        # Clear both lists, then set explicit values (avoid duplicates).
+    def write_keywords(
+        self, file_paths: list[str], keywords: list[str], keep_backup: bool
+    ) -> None:
+        """Write the same keyword list to both fields for legacy callers."""
+        self.write_keyword_fields(file_paths, keywords, keywords, keep_backup)
+
+    def write_keyword_fields(
+        self,
+        file_paths: list[str],
+        iptc_keywords: list[str],
+        xmp_keywords: list[str],
+        keep_backup: bool,
+    ) -> None:
+        """Replace both keyword fields explicitly in one ExifTool operation."""
+        iptc = self._normalize_keywords(iptc_keywords)
+        xmp = self._normalize_keywords(xmp_keywords)
         args: list[str] = []
         if not keep_backup:
             args.append("-overwrite_original")
         args += ["-P", "-IPTC:Keywords=", "-XMP-dc:Subject="]
-        for kw in kws:
-            args.append(f"-IPTC:Keywords={kw}")
-            args.append(f"-XMP-dc:Subject={kw}")
+        args += [f"-IPTC:Keywords={keyword}" for keyword in iptc]
+        args += [f"-XMP-dc:Subject={keyword}" for keyword in xmp]
         args += file_paths
         self._run(args)
+
+    @staticmethod
+    def _normalize_keywords(keywords: list[str]) -> list[str]:
+        normalized = [
+            unicodedata.normalize("NFC", keyword).strip() for keyword in keywords
+        ]
+        values = dedupe_casefold([keyword for keyword in normalized if keyword])
+        values.sort(key=str.casefold)
+        return values
 
     def scan_folder_tags(self, folder: str, recursive: bool) -> set[str]:
         out = self._run(

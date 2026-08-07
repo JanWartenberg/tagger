@@ -201,7 +201,9 @@ class TagMutationCoordinator:
         else:
             self._pending.succeed(queued.pending_mutation, result.updated_states)
             restored = self._pending.fail(
-                queued.pending_mutation, list(result.failed_paths)
+                queued.pending_mutation,
+                list(result.failed_paths),
+                result.attempts_by_path,
             )
         render_workspace = queued.workspace_generation == self._workspace_generation
         self._event_sink(
