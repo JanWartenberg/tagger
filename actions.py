@@ -84,6 +84,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("reindex"),
         ),
         ActionSpec(
+            id="refreshiptc",
+            description="Apply updated IPTC-empty index results",
+            handler_name="refresh_iptc_empty_view",
+            command=CommandBinding("refreshiptc"),
+        ),
+        ActionSpec(
             id="cancel",
             description="Cancel the active full-index refresh",
             handler_name="cancel_active_refresh",

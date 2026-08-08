@@ -20,6 +20,20 @@ class ExifToolDateParsingTests(unittest.TestCase):
         self.assertEqual(state.date_create, "2006:10:01 08:44:39")
         self.assertEqual(state.date_display, "2006:10:01 08:44:39")
 
+    def test_marks_a_field_error_as_unreadable_without_confusing_missing_tags(
+        self,
+    ) -> None:
+        _source, state = ExifTool()._parse_keyword_record(
+            {
+                "SourceFile": "photo.jpg",
+                "IPTC:Keywords": [],
+                "Error": "IPTC:Keywords could not be read",
+            }
+        )
+
+        self.assertFalse(state.iptc_readable)
+        self.assertTrue(state.xmp_readable)
+
     def test_writes_each_keyword_field_explicitly_in_one_operation(self) -> None:
         exif = ExifTool()
         with patch.object(exif, "_run") as run:

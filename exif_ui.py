@@ -15,6 +15,7 @@ from indexing import (
     DateQueryError,
     IndexRefreshProgress as IndexRefreshStep,
     IndexSyncResult,
+    IptcEmptyIndexResult,
     PhotoIndex,
     resolve_index_root,
     validate_search_query,
@@ -36,6 +37,7 @@ from services.background_coordinator import (
     DiscoveryRequest,
     IndexAdapter,
     IndexEnsureCompleted,
+    IptcEmptyIndexCompleted,
     IndexReadFailed,
     IndexRefreshCompleted,
     IndexRefreshProgress,
@@ -105,6 +107,21 @@ def _loading_spinner_icon(size: int, angle: int) -> QtGui.QIcon:
     pixmap.fill(QtCore.Qt.GlobalColor.transparent)
     painter = QtGui.QPainter(pixmap)
     _paint_loading_spinner(painter, QtCore.QRectF(pixmap.rect()), angle)
+    painter.end()
+    return QtGui.QIcon(pixmap)
+
+
+def _unverified_iptc_icon(size: int = 16) -> QtGui.QIcon:
+    """Render the compact marker for an unreadable IPTC-empty candidate."""
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    painter.setPen(QtGui.QColor("#b45309"))
+    font = painter.font()
+    font.setBold(True)
+    font.setPixelSize(round(size * 0.8))
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, "?")
     painter.end()
     return QtGui.QIcon(pixmap)
 
@@ -675,6 +692,9 @@ class PhotoIndexAdapter:
     def search(self, root: str, query: str) -> Sequence[str]:
         return PhotoIndex(root).search_photos(query)
 
+    def load_iptc_empty(self, root: str) -> IptcEmptyIndexResult:
+        return PhotoIndex(root).load_iptc_empty_photos()
+
     def load_known_tags(self, root: str) -> set[str]:
         return PhotoIndex(root).load_tags_for_root()
 
@@ -715,6 +735,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._displayed_search_generation: int | None = None
         self._displayed_search_query: str | None = None
         self._active_index_refresh_request: IndexRefreshRequest | None = None
+        self._iptc_empty_filter_request: IndexReadRequest | None = None
+        self._iptc_empty_refresh_check_request: IndexReadRequest | None = None
+        self._iptc_empty_refresh_apply_request: IndexReadRequest | None = None
+        self._iptc_empty_filter_operation_id: int | None = None
+        self._iptc_empty_root: str | None = None
+        self._iptc_empty_membership: frozenset[str] | None = None
+        self._iptc_empty_unknown_paths: set[str] = set()
+        self._iptc_empty_refresh_available = False
         self._last_refresh_status_at = 0.0
         self._refresh_discovery_progress: IndexRefreshStep | None = None
         self._refresh_discovery_hidden_letter_index = 0
@@ -1036,6 +1064,19 @@ class MainWindow(QtWidgets.QMainWindow):
         leftSplitter.setMinimumWidth(250)
 
         self.setCentralWidget(splitter)
+        self.iptcEmptyRefreshOffer = QtWidgets.QWidget()
+        self.iptcEmptyRefreshOffer.setObjectName("iptcEmptyRefreshOffer")
+        refresh_offer_layout = QtWidgets.QHBoxLayout(self.iptcEmptyRefreshOffer)
+        refresh_offer_layout.setContentsMargins(0, 0, 0, 0)
+        self.iptcEmptyRefreshLabel = QtWidgets.QLabel(
+            "Index updated — IPTC-empty results changed."
+        )
+        self.iptcEmptyRefreshButton = QtWidgets.QPushButton("Refresh now")
+        self.iptcEmptyRefreshButton.clicked.connect(self.refresh_iptc_empty_view)
+        refresh_offer_layout.addWidget(self.iptcEmptyRefreshLabel)
+        refresh_offer_layout.addWidget(self.iptcEmptyRefreshButton)
+        self.iptcEmptyRefreshOffer.hide()
+        self.statusBar().addPermanentWidget(self.iptcEmptyRefreshOffer)
         self.indexRepairStatusLabel = QtWidgets.QLabel()
         self.indexRepairStatusLabel.setObjectName("indexRepairStatus")
         self.statusBar().addPermanentWidget(self.indexRepairStatusLabel)
@@ -1182,6 +1223,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "add_folder_dialog": self.add_folder_dialog,
             "force_refresh_known_tags": self.force_refresh_known_tags,
             "reindex_active_root": self.reindex_active_root,
+            "refresh_iptc_empty_view": self.refresh_iptc_empty_view,
             "cancel_active_refresh": self.cancel_active_refresh,
             "show_error_history": self.show_error_history,
             "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
@@ -2301,7 +2343,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._displayed_search_query = None
         self._active_known_tags_request = None
         self._active_index_refresh_request = None
+        self._clear_iptc_empty_refresh_state()
         self._background_coordinator.invalidate_search()
+        self._background_coordinator.invalidate_iptc_empty()
         self._background_coordinator.invalidate_known_tags()
         if invalidate_discoveries:
             self._active_replacement_discovery = None
@@ -2391,6 +2435,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 IndexRefreshFailed,
                 IndexStaleResultEvicted,
                 IndexSearchCompleted,
+                IptcEmptyIndexCompleted,
                 KnownTagsCompleted,
                 IndexReadFailed,
             ),
@@ -2410,12 +2455,19 @@ class MainWindow(QtWidgets.QMainWindow):
             | IndexRefreshFailed
             | IndexStaleResultEvicted
             | IndexSearchCompleted
+            | IptcEmptyIndexCompleted
             | KnownTagsCompleted
             | IndexReadFailed
         ),
     ) -> None:
         if isinstance(
-            event, (IndexSearchCompleted, KnownTagsCompleted, IndexReadFailed)
+            event,
+            (
+                IndexSearchCompleted,
+                IptcEmptyIndexCompleted,
+                KnownTagsCompleted,
+                IndexReadFailed,
+            ),
         ):
             self._handle_index_read_event(event)
             return
@@ -2438,6 +2490,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"{event.result.deleted_count} removed"
                     )
                 self.force_refresh_known_tags()
+                self._check_iptc_empty_results_after_index_update(event.root)
             elif event.result is None:
                 self._active_index_refresh_request = self._background_coordinator.refresh_if_stale(
                     event.root,
@@ -2464,6 +2517,112 @@ class MainWindow(QtWidgets.QMainWindow):
         request = self._active_search_request
         return request is not None and request.root == root
 
+    def _clear_iptc_empty_refresh_state(self) -> None:
+        self._iptc_empty_filter_request = None
+        self._iptc_empty_refresh_check_request = None
+        self._iptc_empty_refresh_apply_request = None
+        self._iptc_empty_filter_operation_id = None
+        self._iptc_empty_root = None
+        self._iptc_empty_membership = None
+        self._iptc_empty_unknown_paths.clear()
+        self._iptc_empty_refresh_available = False
+        if hasattr(self, "iptcEmptyRefreshOffer"):
+            self.iptcEmptyRefreshOffer.hide()
+
+    def _has_current_iptc_empty_view(self, root: str) -> bool:
+        snapshot = self.photo_workspace.snapshot()
+        return (
+            self._iptc_empty_root == root
+            and self._iptc_empty_membership is not None
+            and root == self._index_root
+            and snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            and snapshot.filter_operation_id is None
+        )
+
+    def _check_iptc_empty_results_after_index_update(self, root: str) -> None:
+        """Compare a completed normal index update without changing the view."""
+        if not self._has_current_iptc_empty_view(root):
+            return
+        self._iptc_empty_refresh_available = False
+        self.iptcEmptyRefreshOffer.hide()
+        self._iptc_empty_refresh_check_request = self._background_coordinator.load_iptc_empty(
+            root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+
+    def _handle_iptc_empty_index_event(
+        self, event: IptcEmptyIndexCompleted | IndexReadFailed
+    ) -> None:
+        request = event.request
+        if (
+            request.workspace_generation
+            != self._tag_mutation_coordinator.workspace_generation
+        ):
+            return
+        if request == self._iptc_empty_filter_request:
+            self._iptc_empty_filter_request = None
+            if isinstance(event, IndexReadFailed):
+                before = self.selected_file_paths()
+                snapshot = self.photo_workspace.clear_iptc_empty_filter()
+                self._clear_iptc_empty_refresh_state()
+                self._render_photo_workspace_snapshot(
+                    snapshot, before, scroll_active_to_top=True
+                )
+                self._record_session_error("IPTC-empty index query", event.error)
+                self.statusBar().showMessage("Filtering IPTC-empty failed")
+                return
+            if not isinstance(event.result, IptcEmptyIndexResult):
+                return
+            operation_id = self._iptc_empty_filter_operation_id
+            if operation_id is None or request.root != self._iptc_empty_root:
+                return
+            before = self.selected_file_paths()
+            snapshot = self.photo_workspace.accept_indexed_iptc_empty_filter(
+                operation_id, event.result.paths
+            )
+            if snapshot.view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
+                return
+            self._iptc_empty_membership = frozenset(snapshot.visible_paths)
+            self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
+                snapshot.visible_paths
+            )
+            self._render_photo_workspace_snapshot(snapshot, before)
+            self.statusBar().showMessage("IPTC-empty results ready")
+            return
+
+        if request == self._iptc_empty_refresh_check_request:
+            self._iptc_empty_refresh_check_request = None
+            if (
+                isinstance(event, IndexReadFailed)
+                or not isinstance(event.result, IptcEmptyIndexResult)
+                or not self._has_current_iptc_empty_view(request.root)
+            ):
+                return
+            if frozenset(event.result.paths) != self._iptc_empty_membership:
+                self._iptc_empty_refresh_available = True
+                self.iptcEmptyRefreshOffer.show()
+            return
+
+        if request != self._iptc_empty_refresh_apply_request:
+            return
+        self._iptc_empty_refresh_apply_request = None
+        if (
+            isinstance(event, IndexReadFailed)
+            or not isinstance(event.result, IptcEmptyIndexResult)
+            or not self._has_current_iptc_empty_view(request.root)
+        ):
+            return
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.refresh_indexed_iptc_empty_filter(
+            event.result.paths
+        )
+        self._iptc_empty_membership = frozenset(snapshot.visible_paths)
+        self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
+            snapshot.visible_paths
+        )
+        self._render_photo_workspace_snapshot(snapshot, before)
+        self.statusBar().showMessage("IPTC-empty results refreshed")
+
     def _handle_index_refresh_event(
         self, event: IndexRefreshCompleted | IndexRefreshProgress | IndexRefreshFailed
     ) -> None:
@@ -2484,6 +2643,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_index_refresh_request = None
         self._stop_refresh_discovery_animation()
         if isinstance(event, IndexRefreshFailed):
+            self._iptc_empty_refresh_available = False
+            self._iptc_empty_refresh_check_request = None
+            self.iptcEmptyRefreshOffer.hide()
             self._record_session_error("Index refresh", event.error)
             self.indexRepairStatusLabel.setText("Index refresh failed")
             if not self._has_active_search_for(request.root):
@@ -2500,6 +2662,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self.indexRepairStatusLabel.setText("Index refresh complete")
         self.force_refresh_known_tags()
+        self._check_iptc_empty_results_after_index_update(request.root)
         if self._has_active_search_for(request.root):
             return
         if isinstance(event.result, IndexSyncResult):
@@ -2624,9 +2787,16 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _handle_index_read_event(
-        self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
+        self,
+        event: IptcEmptyIndexCompleted
+        | IndexSearchCompleted
+        | KnownTagsCompleted
+        | IndexReadFailed,
     ) -> None:
         request = event.request
+        if request.kind is IndexReadKind.IPTC_EMPTY:
+            self._handle_iptc_empty_index_event(event)
+            return
         if request.kind is IndexReadKind.SEARCH:
             if (
                 request != self._active_search_request
@@ -2975,6 +3145,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             )
             item.setToolTip("Tag changes need attention; retry with :retry")
+        elif normalized_path in self._iptc_empty_unknown_paths:
+            self._pending_mutation_spinner_items.pop(normalized_path, None)
+            item.setIcon(_unverified_iptc_icon())
+            item.setToolTip("IPTC keywords could not be verified")
         else:
             self._pending_mutation_spinner_items.pop(normalized_path, None)
             item.setIcon(QtGui.QIcon())
@@ -3244,11 +3418,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 sb.setValue(sb.value() + top_offset)
 
     def apply_iptc_filter_async(self) -> None:
-        """Ask the workspace for IPTC-empty work and schedule its next batch."""
+        """Apply the immediate SQLite IPTC-empty view without a metadata scan."""
         before = self.selected_file_paths()
         if not self.onlyUntagged.isChecked():
             prior_snapshot = self.photo_workspace.snapshot()
             snapshot = self.photo_workspace.clear_iptc_empty_filter()
+            self._clear_iptc_empty_refresh_state()
+            self._background_coordinator.invalidate_iptc_empty()
             self._render_photo_workspace_snapshot(
                 snapshot,
                 before,
@@ -3259,61 +3435,31 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             return
 
-        row_h = self.files.sizeHintForRow(0) or self.files.fontMetrics().height() + 4
-        visible_rows = max(10, int(self.files.viewport().height() / max(1, row_h)))
-        snapshot = self.photo_workspace.start_iptc_empty_filter(
-            first_size=max(20, visible_rows * 2), batch_size=80
+        workspace_snapshot = self.photo_workspace.snapshot()
+        root = (
+            self._index_root
+            if workspace_snapshot.view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH
+            else self._index_root_for_paths(self.all_file_paths())
         )
+        if not root:
+            self.onlyUntagged.blockSignals(True)
+            self.onlyUntagged.setChecked(False)
+            self.onlyUntagged.blockSignals(False)
+            self.statusBar().showMessage("No index root available")
+            return
+        root = normalize_path(root)
+        self._index_root = root
+        self._clear_iptc_empty_refresh_state()
+        self._background_coordinator.invalidate_iptc_empty()
+        snapshot = self.photo_workspace.start_indexed_iptc_empty_filter()
+        self._iptc_empty_root = root
+        self._iptc_empty_filter_operation_id = snapshot.filter_operation_id
         self._render_photo_workspace_snapshot(snapshot, before)
-        if not snapshot.paths:
-            return
-        self.statusBar().showMessage("Filtering IPTC-empty...")
-        self._process_next_filter_chunk()
-
-    def _process_next_filter_chunk(self) -> None:
-        batch = self.photo_workspace.next_iptc_empty_filter_batch()
-        if batch is None:
-            self.statusBar().showMessage("Ready")
-            return
-
-        worker = Worker(self.exif.scan_iptc_empty, list(batch.paths))
-
-        def _ok(empty: set[str]) -> None:
-            was_current = self.photo_workspace.accepts_iptc_empty_filter_result(
-                batch.operation_id
-            )
-            before = self.selected_file_paths()
-            snapshot = self.photo_workspace.accept_iptc_empty_filter_batch(
-                batch.operation_id, (normalize_path(path) for path in empty)
-            )
-            if not was_current:
-                return
-            self._render_photo_workspace_snapshot(snapshot, before)
-            self.statusBar().showMessage(
-                f"Filtering IPTC-empty... "
-                f"{snapshot.filter_processed}/{snapshot.filter_total}"
-            )
-            QtCore.QTimer.singleShot(0, self._process_next_filter_chunk)
-
-        def _err(msg: str) -> None:
-            was_current = self.photo_workspace.accepts_iptc_empty_filter_result(
-                batch.operation_id
-            )
-            before = self.selected_file_paths()
-            snapshot = self.photo_workspace.fail_iptc_empty_filter_batch(
-                batch.operation_id
-            )
-            if not was_current:
-                return
-            self._render_photo_workspace_snapshot(
-                snapshot, before, scroll_active_to_top=True
-            )
-            self._record_session_error("IPTC-empty filter", msg)
-            self.statusBar().showMessage(f"Filtering IPTC-empty failed: {msg}")
-
-        worker.signals.finished.connect(_ok)
-        worker.signals.error.connect(_err)
-        self.pool.start(worker)
+        self._iptc_empty_filter_request = self._background_coordinator.load_iptc_empty(
+            root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+        self.statusBar().showMessage("Filtering IPTC-empty…")
 
     def _render_photo_workspace_snapshot(
         self,
@@ -3410,6 +3556,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
             confirmed_states = dict(event.confirmed_states)
             restored_states = dict(event.restored_states)
+            self._iptc_empty_unknown_paths.difference_update(
+                normalize_path(path)
+                for path, state in confirmed_states.items()
+                if state.iptc_readable
+            )
             self._update_index_states(confirmed_states)
             if not event.render_workspace:
                 return
@@ -3554,6 +3705,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
         before = self.selected_file_paths()
+        self._clear_iptc_empty_refresh_state()
+        self._background_coordinator.invalidate_iptc_empty()
         first_search = not self.photo_workspace.has_database_search
         if first_search:
             self._search_restore_scroll = self._capture_files_scroll_anchor()
@@ -3683,6 +3836,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._background_coordinator.cancel_refresh(root)
         self._active_index_refresh_request = None
+        self._iptc_empty_refresh_available = False
+        self._iptc_empty_refresh_check_request = None
+        self.iptcEmptyRefreshOffer.hide()
         self.indexRepairStatusLabel.setText("Cancelling index refresh…")
 
     def reindex_active_root(self) -> None:
@@ -3696,10 +3852,35 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.statusBar().showMessage("Reindexing photos…")
 
+    def refresh_iptc_empty_view(self) -> None:
+        """Explicitly apply a post-update SQLite IPTC-empty result when offered."""
+        root = self._iptc_empty_root
+        if (
+            root is None
+            or not self._iptc_empty_refresh_available
+            or not self._has_current_iptc_empty_view(root)
+        ):
+            self.statusBar().showMessage("No IPTC-empty results to refresh")
+            return
+        self._iptc_empty_refresh_available = False
+        self.iptcEmptyRefreshOffer.hide()
+        self._iptc_empty_refresh_apply_request = self._background_coordinator.load_iptc_empty(
+            root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+        self.statusBar().showMessage("Refreshing IPTC-empty results…")
+
     def force_refresh_known_tags(self) -> None:
         self._render_known_tags()
+        snapshot = self.photo_workspace.snapshot()
         paths = self.selected_file_paths() or self.all_file_paths()
-        root = self._index_root_for_paths(paths) if paths else None
+        root = (
+            self._iptc_empty_root
+            if snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+            else self._index_root_for_paths(paths)
+            if paths
+            else None
+        )
         if not root:
             return
         self._index_root = root

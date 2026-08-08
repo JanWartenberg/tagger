@@ -16,6 +16,7 @@ from services.background_coordinator import (
     IndexRefreshProgress,
     IndexRefreshFailed,
     IndexRefreshKind,
+    IptcEmptyIndexCompleted,
     IndexSearchCompleted,
     KnownTagsCompleted,
     IndexWriteCompleted,
@@ -62,6 +63,7 @@ class FakeIndex:
         self.calls: list[tuple[str, str, object]] = []
         self.fail_next: set[tuple[str, str]] = set()
         self.search_results: dict[tuple[str, str], list[str]] = {}
+        self.iptc_empty_results: dict[str, object] = {}
         self.known_tags: dict[str, set[str]] = {}
         self.refresh_results: list[object] = []
 
@@ -130,6 +132,10 @@ class FakeIndex:
     def search(self, root: str, query: str) -> list[str]:
         self.calls.append(("search", root, query))
         return self.search_results.get((root, query), [])
+
+    def load_iptc_empty(self, root: str) -> object:
+        self.calls.append(("iptc_empty", root, None))
+        return self.iptc_empty_results.get(root, ())
 
     def load_known_tags(self, root: str) -> set[str]:
         self.calls.append(("known", root, None))
@@ -475,6 +481,18 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         self.assertEqual(
             self.events,
             [IndexSearchCompleted(request=current, paths=(second_photo,))],
+        )
+
+    def test_iptc_empty_read_runs_without_waiting_for_a_root_write(self) -> None:
+        root = fixture_path("/photos")
+        result = object()
+        self.index.iptc_empty_results[root] = result
+
+        request = self.coordinator.load_iptc_empty(root, workspace_generation=4)
+        self.runner.run()
+
+        self.assertEqual(
+            self.events, [IptcEmptyIndexCompleted(request=request, result=result)]
         )
 
     def test_superseded_known_tag_refresh_does_not_emit_a_result(self) -> None:

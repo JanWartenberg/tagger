@@ -43,6 +43,8 @@ class IndexAdapter(Protocol):
 
     def search(self, root: str, query: str) -> Sequence[str]: ...
 
+    def load_iptc_empty(self, root: str) -> object: ...
+
     def load_known_tags(self, root: str) -> set[str]: ...
 
 
@@ -74,6 +76,7 @@ class IndexRefreshKind(Enum):
 
 class IndexReadKind(Enum):
     SEARCH = "search"
+    IPTC_EMPTY = "iptc_empty"
     KNOWN_TAGS = "known_tags"
 
 
@@ -198,6 +201,12 @@ class IndexSearchCompleted:
 
 
 @dataclass(frozen=True)
+class IptcEmptyIndexCompleted:
+    request: IndexReadRequest
+    result: object
+
+
+@dataclass(frozen=True)
 class KnownTagsCompleted:
     request: IndexReadRequest
     tags: frozenset[str]
@@ -219,6 +228,7 @@ IndexEvent: TypeAlias = (
     | IndexRefreshFailed
     | IndexStaleResultEvicted
     | IndexSearchCompleted
+    | IptcEmptyIndexCompleted
     | KnownTagsCompleted
     | IndexReadFailed
 )
@@ -282,6 +292,7 @@ class BackgroundCoordinator:
         self._stale_result_repair_roots: set[str] = set()
         self._next_index_read_request_id = 0
         self._current_search_request_id: int | None = None
+        self._current_iptc_empty_request_id: int | None = None
         self._current_known_tags_request_id: int | None = None
 
     def replace_workspace_from_folder(self, root: str | Path) -> DiscoveryRequest:
@@ -476,6 +487,22 @@ class BackgroundCoordinator:
         self._runner.submit(read)
         return request
 
+    def load_iptc_empty(
+        self, root: str | Path, *, workspace_generation: int
+    ) -> IndexReadRequest:
+        """Read SQLite IPTC-empty candidates, superseding older such reads."""
+        request = self._new_index_read_request(
+            IndexReadKind.IPTC_EMPTY, root, workspace_generation
+        )
+        with self._lock:
+            self._current_iptc_empty_request_id = request.request_id
+
+        def read() -> None:
+            self._run_index_read(request)
+
+        self._runner.submit(read)
+        return request
+
     def load_known_tags(
         self, root: str | Path, *, workspace_generation: int
     ) -> IndexReadRequest:
@@ -496,6 +523,11 @@ class BackgroundCoordinator:
         """Prevent an already-running search completion from being UI-eligible."""
         with self._lock:
             self._current_search_request_id = None
+
+    def invalidate_iptc_empty(self) -> None:
+        """Prevent an already-running IPTC-empty read from being UI-eligible."""
+        with self._lock:
+            self._current_iptc_empty_request_id = None
 
     def invalidate_known_tags(self) -> None:
         """Prevent an already-running known-tag completion from being UI-eligible."""
@@ -611,6 +643,10 @@ class BackgroundCoordinator:
             if request.kind is IndexReadKind.SEARCH:
                 paths = self._index.search(request.root, request.query or "")
                 event: IndexEvent = IndexSearchCompleted(request, tuple(paths))
+            elif request.kind is IndexReadKind.IPTC_EMPTY:
+                event = IptcEmptyIndexCompleted(
+                    request, self._index.load_iptc_empty(request.root)
+                )
             else:
                 event = KnownTagsCompleted(
                     request, frozenset(self._index.load_known_tags(request.root))
@@ -620,15 +656,19 @@ class BackgroundCoordinator:
         self._accept_index_read(event)
 
     def _accept_index_read(
-        self, event: IndexSearchCompleted | KnownTagsCompleted | IndexReadFailed
+        self,
+        event: IptcEmptyIndexCompleted
+        | IndexSearchCompleted
+        | KnownTagsCompleted
+        | IndexReadFailed,
     ) -> None:
         request = event.request
         with self._lock:
-            current_id = (
-                self._current_search_request_id
-                if request.kind is IndexReadKind.SEARCH
-                else self._current_known_tags_request_id
-            )
+            current_id = {
+                IndexReadKind.SEARCH: self._current_search_request_id,
+                IndexReadKind.IPTC_EMPTY: self._current_iptc_empty_request_id,
+                IndexReadKind.KNOWN_TAGS: self._current_known_tags_request_id,
+            }[request.kind]
             if request.request_id != current_id:
                 return
         self._event_sink(event)

@@ -154,6 +154,14 @@ class IndexSyncResult:
 
 
 @dataclass(frozen=True)
+class IptcEmptyIndexResult:
+    """SQLite-derived IPTC-empty candidates and their readability state."""
+
+    paths: tuple[str, ...]
+    unknown_paths: frozenset[str]
+
+
+@dataclass(frozen=True)
 class IndexRefreshProgress:
     """A committed, resumable refresh checkpoint between index chunks."""
 
@@ -202,7 +210,8 @@ class PhotoIndex:
               mtime INTEGER NOT NULL,
               size INTEGER NOT NULL,
               date_taken TEXT,
-              capture_date TEXT
+              capture_date TEXT,
+              iptc_readable INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS tags(
@@ -267,6 +276,12 @@ class PhotoIndex:
                     "UPDATE photos SET capture_date = ? WHERE path = ?",
                     (_normalize_capture_date(row["date_taken"]), row["path"]),
                 )
+        if "iptc_readable" not in photo_columns:
+            # Existing rows cannot establish whether an absent tag is readable.
+            # A later index update replaces this conservative unknown state.
+            conn.execute(
+                "ALTER TABLE photos ADD COLUMN iptc_readable INTEGER NOT NULL DEFAULT 0"
+            )
 
         conn.execute("CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag)")
         conn.execute(
@@ -449,6 +464,34 @@ class PhotoIndex:
             ).fetchall()
             return [str(row[0]) for row in rows]
 
+    def load_iptc_empty_photos(self) -> IptcEmptyIndexResult:
+        """Return empty canonical-IPTC rows, retaining unreadable candidates."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT p.path, p.iptc_readable
+                FROM photos p
+                WHERE NOT EXISTS (
+                  SELECT 1 FROM photo_tags pt WHERE pt.photo_path = p.path
+                )
+                ORDER BY p.path
+                """
+            ).fetchall()
+        existing_rows = []
+        for row in rows:
+            try:
+                if Path(str(row["path"])).is_file():
+                    existing_rows.append(row)
+            except OSError:
+                continue
+        paths = tuple(str(row["path"]) for row in existing_rows)
+        return IptcEmptyIndexResult(
+            paths,
+            frozenset(
+                str(row["path"]) for row in existing_rows if not row["iptc_readable"]
+            ),
+        )
+
     def load_photos_for_tag(self, tag: str) -> list[str]:
         tag = tag.strip()
         if not tag:
@@ -540,13 +583,15 @@ class PhotoIndex:
         stat = Path(photo_path).stat()
         conn.execute(
             """
-            INSERT INTO photos(path, mtime, size, date_taken, capture_date)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO photos(
+              path, mtime, size, date_taken, capture_date, iptc_readable
+            ) VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(path) DO UPDATE SET
               mtime=excluded.mtime,
               size=excluded.size,
               date_taken=excluded.date_taken,
-              capture_date=excluded.capture_date
+              capture_date=excluded.capture_date,
+              iptc_readable=excluded.iptc_readable
             """,
             (
                 photo_path,
@@ -554,6 +599,7 @@ class PhotoIndex:
                 int(stat.st_size),
                 _date_taken_from_state(state),
                 _capture_date_from_state(state),
+                int(state.iptc_readable),
             ),
         )
         conn.execute("DELETE FROM photo_tags WHERE photo_path = ?", (photo_path,))
@@ -566,7 +612,9 @@ class PhotoIndex:
             )
 
     def _canonical_iptc_tags(self, state: KeywordState) -> list[str]:
-        """Project one metadata state to the index's canonical keyword facts."""
+        """Project one readable metadata state to canonical keyword facts."""
+        if not state.iptc_readable:
+            return []
         return dedupe_casefold(
             [unicodedata.normalize("NFC", tag.strip()) for tag in state.iptc]
         )
@@ -792,6 +840,28 @@ class PhotoIndex:
         # Discovery count records every path that becomes ready for indexing once.
         return paths, discovered
 
+    def _read_keyword_states_with_retries(
+        self, exif: ExifTool, paths: list[str]
+    ) -> dict[str, KeywordState]:
+        """Read one batch, degrading extant unreadable files after retries."""
+        for attempt in range(3):
+            try:
+                return exif.read_keywords_many(paths)
+            except Exception:
+                if attempt == 2:
+                    return {}
+                time.sleep(0.1 * (attempt + 1))
+        raise AssertionError("retry loop must return")
+
+    @staticmethod
+    def _unreadable_state(path: str) -> KeywordState | None:
+        try:
+            if Path(path).exists():
+                return KeywordState([], [], iptc_readable=False, xmp_readable=False)
+        except OSError:
+            pass
+        return None
+
     def _index_refresh_paths(
         self, conn: sqlite3.Connection, exif: ExifTool, paths: list[str]
     ) -> tuple[int, int, int]:
@@ -800,14 +870,7 @@ class PhotoIndex:
         processed: list[str] = []
         for offset in range(0, len(paths), _REFRESH_EXIF_SUBGROUP_SIZE):
             subgroup = paths[offset : offset + _REFRESH_EXIF_SUBGROUP_SIZE]
-            for attempt in range(3):
-                try:
-                    states.update(exif.read_keywords_many(subgroup))
-                    break
-                except Exception:
-                    if attempt == 2:
-                        raise
-                    time.sleep(0.1 * (attempt + 1))
+            states.update(self._read_keyword_states_with_retries(exif, subgroup))
             processed.extend(subgroup)
             # The time boundary is intentionally checked only between ExifTool
             # subgroups; no subprocess is interrupted mid-request.
@@ -822,7 +885,7 @@ class PhotoIndex:
         updated = 0
         deleted = 0
         for path in processed:
-            state = states.get(path)
+            state = states.get(path) or self._unreadable_state(path)
             if state is None:
                 conn.execute("DELETE FROM photos WHERE path = ?", (path,))
                 deleted += 1
@@ -905,9 +968,9 @@ class PhotoIndex:
                     changed.append(photo_path)
 
             if changed:
-                states = exif.read_keywords_many(changed)
+                states = self._read_keyword_states_with_retries(exif, changed)
                 for photo_path in changed:
-                    state = states.get(photo_path)
+                    state = states.get(photo_path) or self._unreadable_state(photo_path)
                     if state is None:
                         continue
                     self.upsert_state(conn, photo_path, state)

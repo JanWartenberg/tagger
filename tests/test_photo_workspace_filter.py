@@ -147,6 +147,21 @@ class IptcEmptyFilterTests(unittest.TestCase):
         self.assertEqual(snapshot.paths, ("four.jpg",))
         self.assertEqual(snapshot.filter_processed, 0)
 
+    def test_indexed_refresh_stays_within_a_database_search_source_view(self) -> None:
+        self.workspace.apply_database_search_matches(["two.jpg"])
+        started = self.workspace.start_indexed_iptc_empty_filter()
+
+        completed = self.workspace.accept_indexed_iptc_empty_filter(
+            started.filter_operation_id or -1, ["one.jpg", "two.jpg"]
+        )
+        refreshed = self.workspace.refresh_indexed_iptc_empty_filter(["one.jpg"])
+        restored = self.workspace.clear_iptc_empty_filter()
+
+        self.assertEqual(completed.visible_paths, ("two.jpg",))
+        self.assertEqual(refreshed.visible_paths, ())
+        self.assertEqual(restored.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
+        self.assertEqual(restored.visible_paths, ("two.jpg",))
+
     def test_confirmed_tags_do_not_change_an_active_filter_view_until_user_restarts_it(
         self,
     ) -> None:

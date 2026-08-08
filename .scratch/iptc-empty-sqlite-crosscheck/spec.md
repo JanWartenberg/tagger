@@ -1,6 +1,6 @@
 # Refresh IPTC-Empty View After Background Index Update
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -49,3 +49,13 @@ The index/update seam must distinguish readable empty IPTC, unreadable IPTC for 
 
 - Changing the IPTC-empty definition for readable files.
 - Automatic application of verified results.
+
+## Completion
+
+Implemented with SQLite candidate reads through `BackgroundCoordinator`, an explicit status-bar refresh offer and `:refreshiptc`, and atomic `PhotoWorkspace` application. Indexed unreadable IPTC candidates remain visible with a `?` marker; missing paths are omitted until the normal index update removes them.
+
+Validation:
+
+- `ruff check actions.py exif_tool.py exif_ui.py indexing.py photo_workspace.py services tests`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (176 tests)
+- `git diff --check`

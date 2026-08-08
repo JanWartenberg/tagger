@@ -48,6 +48,31 @@ class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):
             self.assertEqual(index.search_photos("tag:XMP only"), [])
             self.assertEqual(index.search_photos("tag:café"), [path])
 
+    def test_iptc_empty_query_includes_unreadable_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                name: normalize_path(root / name)
+                for name in ("empty.jpg", "unknown.jpg", "tagged.jpg")
+            }
+            for path in paths.values():
+                Path(path).touch()
+            index = PhotoIndex(root)
+            index.update_states(
+                {
+                    paths["empty.jpg"]: KeywordState([], []),
+                    paths["unknown.jpg"]: KeywordState(
+                        [], [], iptc_readable=False, xmp_readable=False
+                    ),
+                    paths["tagged.jpg"]: KeywordState(["bird"], ["bird"]),
+                }
+            )
+
+            result = index.load_iptc_empty_photos()
+
+            self.assertEqual(result.paths, (paths["empty.jpg"], paths["unknown.jpg"]))
+            self.assertEqual(result.unknown_paths, {paths["unknown.jpg"]})
+
     def test_legacy_merged_facts_are_cleared_then_rebuilt_from_iptc(self) -> None:
         class CanonicalExifTool:
             def __init__(self) -> None:
@@ -261,7 +286,7 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
             self.assertFalse(index.is_refresh_stale())
             self.assertFalse(index.cancel_refresh())
 
-    def test_third_subgroup_failure_discards_recovery_state(self) -> None:
+    def test_third_subgroup_failure_keeps_existing_photo_as_unknown(self) -> None:
         class FailingExifTool:
             calls = 0
 
@@ -271,15 +296,17 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "photo.jpg").touch()
+            photo = root / "photo.jpg"
+            photo.touch()
             index = PhotoIndex(root)
             exif = FailingExifTool()
 
-            with self.assertRaisesRegex(RuntimeError, "ExifTool failed"):
-                index.refresh_step(exif)
+            self.assertIsInstance(index.refresh_step(exif), IndexRefreshProgress)
 
             self.assertEqual(exif.calls, 3)
-            self.assertFalse(index.cancel_refresh())
+            self.assertEqual(
+                index.load_iptc_empty_photos().unknown_paths, {normalize_path(photo)}
+            )
 
     def test_cancel_discards_durable_recovery_state(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

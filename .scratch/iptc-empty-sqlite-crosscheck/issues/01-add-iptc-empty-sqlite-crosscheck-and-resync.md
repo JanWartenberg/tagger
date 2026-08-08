@@ -1,6 +1,6 @@
 # 01 — Refresh an IPTC-Empty View After Background Index Update
 
-Status: ready-for-agent
+Status: completed
 Category: feature
 Priority: medium
 Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
@@ -48,3 +48,15 @@ The implementation must distinguish readable empty IPTC, unreadable IPTC for an 
 Created from the product backlog. The existing IPTC-empty filter remains authoritative until this ticket is fully triaged.
 
 Tracker cleanup: schema/data migration and XMP policy are explicitly outside this ticket. The former standalone crosscheck and `:resync` proposal was replaced by an explicit refresh offer after the existing background index update.
+
+## Completion
+
+Implemented the SQLite-backed provisional IPTC-empty view, unreadable-candidate marker, post-update refresh offer, and `:refreshiptc` command. SQLite reads remain coordinator work and refresh application stays atomic in `PhotoWorkspace`.
+
+Validation:
+
+- `ruff check actions.py exif_tool.py exif_ui.py indexing.py photo_workspace.py services tests`
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` (176 tests)
+- `git diff --check`
+
+Manual acceptance confirmed: IPTC-empty refresh workflow tested successfully.

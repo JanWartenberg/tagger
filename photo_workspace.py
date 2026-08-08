@@ -209,6 +209,52 @@ class PhotoWorkspace:
             self._finish_iptc_empty_filter()
         return self.snapshot()
 
+    def start_indexed_iptc_empty_filter(self) -> PhotoWorkspaceSnapshot:
+        """Start a SQLite-backed IPTC-empty operation without changing the view."""
+        self._operation += 1
+        self._filter_restore_state = _FilterRestoreState(
+            self._view_mode,
+            frozenset(self._visible),
+            frozenset(self._selected),
+            self._active_path,
+        )
+        self._filter_running = True
+        self._batches = []
+        self._inflight = None
+        self._processed = 0
+        self._matches = set()
+        self._switched = False
+        return self.snapshot()
+
+    def accept_indexed_iptc_empty_filter(
+        self, operation_id: int, empty_paths: Iterable[str]
+    ) -> PhotoWorkspaceSnapshot:
+        """Atomically apply a current SQLite IPTC-empty result."""
+        if (
+            not self._filter_running
+            or self._inflight is not None
+            or operation_id != self._operation
+        ):
+            return self.snapshot()
+        self._matches = set(empty_paths) & set(self._paths)
+        self._processed = len(self._paths)
+        self._finish_iptc_empty_filter()
+        return self.snapshot()
+
+    def refresh_indexed_iptc_empty_filter(
+        self, empty_paths: Iterable[str]
+    ) -> PhotoWorkspaceSnapshot:
+        """Explicitly replace the visible members of the current filter view."""
+        if (
+            self._filter_running
+            or self._view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY
+        ):
+            return self.snapshot()
+        self._visible = set(empty_paths) & set(self._paths)
+        self._selected = set()
+        self._repair_selection()
+        return self.snapshot()
+
     def clear_iptc_empty_filter(self) -> PhotoWorkspaceSnapshot:
         """Restore the source view and invalidate every outstanding batch result."""
         self._operation += 1

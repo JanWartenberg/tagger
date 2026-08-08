@@ -30,7 +30,10 @@ else:
 if PYQT_AVAILABLE:
     from exif_tool import KeywordState
     from exif_ui import MainWindow, ResolveKeywordsDialog
-    from indexing import IndexRefreshProgress as IndexRefreshStep
+    from indexing import (
+        IndexRefreshProgress as IndexRefreshStep,
+        IptcEmptyIndexResult,
+    )
     from services.background_coordinator import (
         IndexEnsureCompleted,
         IndexRefreshCompleted,
@@ -1294,6 +1297,52 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [first, second])
         self.assertEqual(self.window.active_file_path(), second)
 
+    def test_unreadable_iptc_empty_candidate_has_an_unverified_marker(self) -> None:
+        (path,) = self._add_paths("unknown.jpg")
+        FakePhotoIndex.iptc_empty_results = {path}
+        FakePhotoIndex.iptc_empty_unknown_paths = {path}
+
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(lambda: self.window.selected_file_paths() == [path])
+
+        self.assertEqual(
+            self.window.files.item(0).toolTip(), "IPTC keywords could not be verified"
+        )
+        self.assertFalse(self.window.files.item(0).icon().isNull())
+
+    def test_indexed_iptc_empty_refresh_is_offered_and_applied_explicitly(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.iptc_empty_results = {first}
+
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(lambda: self.window.selected_file_paths() == [first])
+
+        FakePhotoIndex.iptc_empty_results = {second}
+        self.window._dispatch_command("reindex", [])
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self._wait_until(self.window.iptcEmptyRefreshOffer.isVisible)
+
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual(
+            self.window.iptcEmptyRefreshLabel.text(),
+            "Index updated — IPTC-empty results changed.",
+        )
+
+        self.window._dispatch_command("refreshiptc", [])
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertFalse(self.window.iptcEmptyRefreshOffer.isVisible())
+
+    def test_refreshiptc_requires_an_available_update(self) -> None:
+        self.window._dispatch_command("refreshiptc", [])
+
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "No IPTC-empty results to refresh"
+        )
+
     def test_reindex_command_refreshes_the_active_root_with_non_modal_feedback(
         self,
     ) -> None:
@@ -1382,19 +1431,18 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     ) -> None:
         self._add_paths("one.jpg")
         self.window._dispatch_command("not-a-command", [])
-        FakeExifTool.scan_error = RuntimeError("simulated filter failure")
+        FakePhotoIndex.iptc_empty_error = RuntimeError("simulated filter failure")
         self.window.onlyUntagged.setChecked(True)
         self._wait_until(
-            lambda: self.window.statusBar()
-            .currentMessage()
-            .startswith("Filtering IPTC-empty failed:")
+            lambda: self.window.statusBar().currentMessage()
+            == "Filtering IPTC-empty failed"
         )
 
         with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("errors", [])
 
         message = information.call_args.args[2]
-        self.assertIn("IPTC-empty filter: simulated filter failure", message)
+        self.assertIn("IPTC-empty index query: simulated filter failure", message)
         self.assertNotIn("not-a-command", message)
 
     def test_cancel_command_stops_an_unstarted_full_refresh(self) -> None:
@@ -1696,14 +1744,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
         )
         self.app.processEvents()
-        FakeExifTool.scan_error = RuntimeError("simulated filter failure")
+        FakePhotoIndex.iptc_empty_error = RuntimeError("simulated filter failure")
 
         with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
             self.window.onlyUntagged.setChecked(True)
             self._wait_until(
-                lambda: self.window.statusBar()
-                .currentMessage()
-                .startswith("Filtering IPTC-empty failed:")
+                lambda: self.window.statusBar().currentMessage()
+                == "Filtering IPTC-empty failed"
             )
 
         self.assertFalse(self.window.onlyUntagged.isChecked())
@@ -2170,6 +2217,9 @@ class FakeFilePaneActions:
 
 class FakePhotoIndex:
     search_results: set[str] = set()
+    iptc_empty_results: set[str] = set()
+    iptc_empty_unknown_paths: set[str] = set()
+    iptc_empty_error: Exception | None = None
     search_queries: list[str] = []
     search_roots: list[str] = []
     refresh_stale = False
@@ -2185,6 +2235,9 @@ class FakePhotoIndex:
     @classmethod
     def reset(cls) -> None:
         cls.search_results = set()
+        cls.iptc_empty_results = set()
+        cls.iptc_empty_unknown_paths = set()
+        cls.iptc_empty_error = None
         cls.search_queries = []
         cls.search_roots = []
         cls.refresh_stale = False
@@ -2247,6 +2300,14 @@ class FakePhotoIndex:
         type(self).search_queries.append(query)
         type(self).search_roots.append(self.root)
         return self.search_results
+
+    def load_iptc_empty_photos(self) -> IptcEmptyIndexResult:
+        if type(self).iptc_empty_error is not None:
+            raise type(self).iptc_empty_error
+        return IptcEmptyIndexResult(
+            tuple(sorted(type(self).iptc_empty_results)),
+            frozenset(type(self).iptc_empty_unknown_paths),
+        )
 
 
 if __name__ == "__main__":

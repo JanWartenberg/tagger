@@ -116,32 +116,58 @@ class ExifTool:
                         return v0.strip()
             return None
 
+        error = rec.get("Error")
+        error_text = (
+            " ".join(str(part) for part in error)
+            if isinstance(error, list)
+            else str(error or "")
+        )
+        iptc_readable = not error_text or "IPTC:Keywords" not in error_text
+        xmp_readable = not error_text or "XMP-dc:Subject" not in error_text
+        if (
+            error_text
+            and "IPTC:Keywords" not in error_text
+            and "XMP-dc:Subject" not in error_text
+        ):
+            iptc_readable = False
+            xmp_readable = False
+
         state = KeywordState(
             _clean(iptc),
             _clean(xmp),
-            _first_str([
-                "EXIF:DateTimeOriginal",
-                "ExifIFD:DateTimeOriginal",
-                "DateTimeOriginal",
-                "Composite:SubSecDateTimeOriginal",
-                "SubSecDateTimeOriginal",
-            ]),
-            _first_str([
-                "EXIF:CreateDate",
-                "ExifIFD:CreateDate",
-                "CreateDate",
-                "Composite:SubSecCreateDate",
-                "SubSecCreateDate",
-            ]),
-            _first_str([
-                "XMP-xmp:CreateDate",
-                "XMP:CreateDate",
-                "CreateDate",
-            ]),
-            _first_str([
-                "EXIF:DateTimeDigitized",
-                "DateTimeDigitized",
-            ]),
+            _first_str(
+                [
+                    "EXIF:DateTimeOriginal",
+                    "ExifIFD:DateTimeOriginal",
+                    "DateTimeOriginal",
+                    "Composite:SubSecDateTimeOriginal",
+                    "SubSecDateTimeOriginal",
+                ]
+            ),
+            _first_str(
+                [
+                    "EXIF:CreateDate",
+                    "ExifIFD:CreateDate",
+                    "CreateDate",
+                    "Composite:SubSecCreateDate",
+                    "SubSecCreateDate",
+                ]
+            ),
+            _first_str(
+                [
+                    "XMP-xmp:CreateDate",
+                    "XMP:CreateDate",
+                    "CreateDate",
+                ]
+            ),
+            _first_str(
+                [
+                    "EXIF:DateTimeDigitized",
+                    "DateTimeDigitized",
+                ]
+            ),
+            iptc_readable=iptc_readable,
+            xmp_readable=xmp_readable,
         )
         return src, state
 
