@@ -1,6 +1,6 @@
 # Keyword Length Limits
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
