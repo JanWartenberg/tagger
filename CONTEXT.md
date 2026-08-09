@@ -5,11 +5,17 @@ TAGGER supports viewing, finding, and editing photo metadata while preserving a 
 ## Language
 
 **Photo Workspace**:
-The current collection of photos being worked on, including its active photo, active view mode, filter, selection, and restorable prior view state. It is the source of what the photo-files pane presents.
+The current collection of photos being worked on, including its active photo, base view mode, active filter conditions, selection, and restorable prior view state. It is the source of what the photo-files pane presents.
 _Avoid_: File list, photo list, files pane model
 
 **Active photo**:
 The selected Photo Workspace photo that drives the detail pane, preview, and active-only file actions. It may differ from the first photo in display-ordered multi-selection.
+
+**Photo Workspace filter condition**:
+A user-visible predicate that narrows the current Photo Workspace. Active conditions combine with logical AND. The current filename and IPTC-empty conditions are independent; future composition may add conditions, but OR/NOT semantics are not yet defined.
+
+**Filename filter**:
+A live, workspace-local Photo Workspace filter condition based only on a photo's normalized basename, including its extension. It never searches directories, full paths, or photos outside the current Photo Workspace. It applies after the complete current indexed-search or IPTC-empty source is determined and remains active when those conditions change.
 
 **IPTC-empty filter view**:
 The photo set produced by a user-triggered IPTC-empty filter run. Tagging photos afterward must not remove them from this filtered list. The set remains stable after metadata mutations; the user explicitly reactivates the filter to compute a new view from current file metadata.
@@ -32,7 +38,7 @@ A tag or date search against the SQLite cache for the current index root rather 
 An indexed search result whose cached image-file path no longer exists when TAGGER tries to read metadata from that image file.
 
 **Stale-result index repair**:
-A background scan of an index root started after TAGGER encounters a stale result. It reconciles the SQLite cache with photo files currently found below that root: removing records for missing files and indexing independently discovered files with their current metadata. It does not identify filesystem renames and is distinct from the IPTC-empty filter's future `:resync` command.
+A background scan of an index root started after TAGGER encounters a stale result. It reconciles the SQLite cache with photo files currently found below that root: removing records for missing files and indexing independently discovered files with their current metadata. It does not identify filesystem renames and is distinct from the IPTC-empty filter's explicit post-index-update refresh workflow.
 
 ### Tag mutations
 
