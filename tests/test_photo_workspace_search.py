@@ -72,7 +72,7 @@ class DatabaseSearchTests(unittest.TestCase):
         self.assertEqual(restored.paths, ("one.jpg", "two.jpg", "three.jpg"))
         self.assertEqual(restored.selected_paths, ("three.jpg",))
 
-    def test_search_invalidates_inflight_iptc_filter_work(self) -> None:
+    def test_search_keeps_inflight_iptc_filter_work(self) -> None:
         self.workspace.start_iptc_empty_filter(1, 1)
         batch = self.workspace.next_iptc_empty_filter_batch()
         search_snapshot = self.workspace.apply_database_search_matches(["outside.jpg"])
@@ -81,9 +81,12 @@ class DatabaseSearchTests(unittest.TestCase):
             batch.operation_id, ["one.jpg"]
         )
 
-        self.assertEqual(snapshot, search_snapshot)
         self.assertEqual(snapshot.visible_paths, ("outside.jpg",))
         self.assertEqual(snapshot.view_mode, PhotoWorkspaceViewMode.DATABASE_SEARCH)
+        self.assertEqual(
+            snapshot.filter_operation_id, search_snapshot.filter_operation_id
+        )
+        self.assertEqual(snapshot.filter_processed, 1)
 
     def test_starting_iptc_filter_keeps_database_search_visible_while_scanning(
         self,

@@ -797,6 +797,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
+        self._filename_filter_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self._files_render_token = 0
         self._pending_metadata_read: tuple[int, str] | None = None
@@ -966,8 +967,22 @@ class MainWindow(QtWidgets.QMainWindow):
         self.dbSearchClearBtn = QtWidgets.QPushButton("Clear")
         self.dbSearchClearBtn.clicked.connect(self.clear_db_search)
         self.dbSearchClearBtn.setToolTip("Clear photo-tag search (Ctrl+Shift+X)")
+        self.filenameFilterEdit = QtWidgets.QLineEdit()
+        self.filenameFilterEdit.setPlaceholderText("Filter filenames")
+        self.filenameFilterEdit.setToolTip(
+            "Literal filename substring · Focus: Ctrl+Shift+L"
+        )
+        self.filenameFilterEdit.textChanged.connect(self.apply_filename_filter)
+        self.filenameFilterEdit.returnPressed.connect(self._focus_first_visible_file)
+        self.filenameCaseSensitiveBtn = QtWidgets.QPushButton("Aa")
+        self.filenameCaseSensitiveBtn.setCheckable(True)
+        self.filenameCaseSensitiveBtn.setToolTip("Match filename case exactly")
+        self.filenameCaseSensitiveBtn.toggled.connect(self.apply_filename_filter)
         self.filterInfoLabel = QtWidgets.QLabel("")
-        self.filterInfoLabel.setToolTip("Filter result count")
+        self.filterInfoLabel.setWordWrap(True)
+        self.filterInfoLabel.setToolTip(
+            "Active Photo Workspace conditions and result count"
+        )
         self.filesRenderProgressIcon = LoadingSpinner(16)
         self.filesRenderProgressIcon.setObjectName("filesRenderProgressIcon")
         self.filesRenderProgressIcon.setToolTip("Loading discovered photo paths")
@@ -1080,21 +1095,27 @@ class MainWindow(QtWidgets.QMainWindow):
         filesSearchRow.addWidget(self.dbSearchBtn)
         filesSearchRow.addWidget(self.dbSearchClearBtn)
         filesLayout.addWidget(filesSearchRowW)
+        filenameFilterRowW = QtWidgets.QWidget()
+        filenameFilterRow = QtWidgets.QHBoxLayout(filenameFilterRowW)
+        filenameFilterRow.setContentsMargins(0, 0, 0, 0)
+        filenameFilterRow.addWidget(self.filenameFilterEdit, 1)
+        filenameFilterRow.addWidget(self.filenameCaseSensitiveBtn)
+        filesLayout.addWidget(filenameFilterRowW)
         filesTopRow = QtWidgets.QHBoxLayout()
         filesTopRow.setContentsMargins(0, 0, 0, 0)
         filesTopRow.addWidget(self.onlyUntagged)
-        filesTopRow.addWidget(self.filterInfoLabel)
         filesTopRow.addWidget(self.filesRenderProgress)
         filesTopRow.addWidget(self.addFolderBtn)
         filesTopRow.addStretch(1)
         filesLayout.addLayout(filesTopRow)
+        filesLayout.addWidget(self.filterInfoLabel)
         filesLayout.addWidget(self.files, 1)
 
         leftSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         leftSplitter.addWidget(filesPanel)
         leftSplitter.addWidget(self.repoBox)
-        leftSplitter.setStretchFactor(0, 3)
-        leftSplitter.setStretchFactor(1, 2)
+        leftSplitter.setStretchFactor(0, 8)
+        leftSplitter.setStretchFactor(1, 5)
         leftSplitter.setChildrenCollapsible(False)
         leftSplitter.setMinimumWidth(250)
 
@@ -1218,6 +1239,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "knownList": self.knownList,
             "addEdit": self.addEdit,
             "knownFilter": self.knownFilter,
+            "filenameFilterEdit": self.filenameFilterEdit,
             "cmdLine": self.cmdLine,
         }
 
@@ -1276,7 +1298,10 @@ class MainWindow(QtWidgets.QMainWindow):
             "remove_selected_keywords": self.remove_selected_keywords,
             "_focus_known_filter_select_all": self._focus_known_filter_select_all,
             "_focus_db_search_select_all": self._focus_db_search_select_all,
+            "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
             "clear_db_search": self.clear_db_search,
+            "clear_filename_filter": self.clear_filename_filter,
+            "clear_all_filters": self.clear_all_filters,
             "_focus_add_edit_select_all": self._focus_add_edit_select_all,
             "_focus_pane_files": self._focus_pane_files,
             "_focus_pane_known": self._focus_pane_known,
@@ -1311,7 +1336,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_command_argument_handlers(
         self,
     ) -> dict[str, Callable[[list[str]], None]]:
-        return {"_command_search": self._command_search}
+        return {
+            "_command_search": self._command_search,
+            "_command_filter_files": self._command_filter_files,
+        }
 
     def _install_shortcuts_from_actions(self) -> None:
         self._shortcuts = []
@@ -1988,6 +2016,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _cmd_quit(self, _args: list[str] | None = None) -> None:
         self.close()
 
+    def _focus_first_visible_file(self) -> None:
+        self._go_list_edge(self.files, to_end=False)
+        self.files.setFocus()
+
     def _focus_pane_files(self) -> None:
         self._focus_pane(self.files)
 
@@ -2405,6 +2437,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache = {}
         self._index_root = None
         self._search_restore_scroll = None
+        self._filename_filter_restore_scroll = None
+        self.filenameFilterEdit.blockSignals(True)
+        self.filenameCaseSensitiveBtn.blockSignals(True)
+        try:
+            self.filenameFilterEdit.clear()
+            self.filenameCaseSensitiveBtn.setChecked(False)
+        finally:
+            self.filenameFilterEdit.blockSignals(False)
+            self.filenameCaseSensitiveBtn.blockSignals(False)
 
         snapshot = self.photo_workspace.reload_paths(normalized_paths)
         self._files_render_token += 1
@@ -2629,9 +2670,12 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             if snapshot.view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY:
                 return
-            self._iptc_empty_membership = frozenset(snapshot.visible_paths)
+            membership = self.photo_workspace.iptc_empty_membership
+            if membership is None:
+                return
+            self._iptc_empty_membership = membership
             self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
-                snapshot.visible_paths
+                membership
             )
             self._render_photo_workspace_snapshot(snapshot, before)
             self.statusBar().showMessage("IPTC-empty results ready")
@@ -2639,13 +2683,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
         if request == self._iptc_empty_refresh_check_request:
             self._iptc_empty_refresh_check_request = None
+            snapshot = self.photo_workspace.snapshot()
             if (
                 isinstance(event, IndexReadFailed)
                 or not isinstance(event.result, IptcEmptyIndexResult)
                 or not self._has_current_iptc_empty_view(request.root)
             ):
                 return
-            if frozenset(event.result.paths) != self._iptc_empty_membership:
+            if (
+                frozenset(event.result.paths) & frozenset(snapshot.paths)
+                != self._iptc_empty_membership
+            ):
                 self._iptc_empty_refresh_available = True
                 self.iptcEmptyRefreshOffer.show()
             return
@@ -2663,9 +2711,12 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.refresh_indexed_iptc_empty_filter(
             event.result.paths
         )
-        self._iptc_empty_membership = frozenset(snapshot.visible_paths)
+        membership = self.photo_workspace.iptc_empty_membership
+        if membership is None:
+            return
+        self._iptc_empty_membership = membership
         self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
-            snapshot.visible_paths
+            membership
         )
         self._render_photo_workspace_snapshot(snapshot, before)
         self.statusBar().showMessage("IPTC-empty results refreshed")
@@ -3085,6 +3136,7 @@ class MainWindow(QtWidgets.QMainWindow):
         finally:
             self.files.blockSignals(False)
             self.onlyUntagged.blockSignals(False)
+        self._update_files_pane_empty_state(snapshot)
 
     def _render_photo_workspace_in_batches(
         self,
@@ -3140,6 +3192,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.files.setEnabled(True)
             self._hide_files_render_progress()
+            self._update_files_pane_empty_state(snapshot)
             if snapshot.active_path is not None:
                 item = self._find_item_by_path(snapshot.active_path)
                 if item is not None:
@@ -3530,27 +3583,73 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_view_indicator(self, snapshot: PhotoWorkspaceSnapshot) -> None:
         """Render the persistent Photo Workspace scope above the files pane."""
+        filename_query = snapshot.filename_filter_query
+        if filename_query is None:
+            if self._active_search_request is not None:
+                self.filterInfoLabel.setText(
+                    f"Searching index · {self._active_search_request.query}"
+                )
+            elif snapshot.filter_operation_id is not None:
+                self.filterInfoLabel.setText(
+                    "Filtering IPTC-empty · "
+                    f"{snapshot.filter_processed}/{snapshot.filter_total}"
+                )
+            elif snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
+                if snapshot.has_database_search:
+                    self.filterInfoLabel.setText(
+                        "Filters: "
+                        f"search: {self._displayed_search_query or ''} · "
+                        f"IPTC-empty · {len(snapshot.visible_paths)} results"
+                    )
+                else:
+                    self.filterInfoLabel.setText(
+                        "IPTC-empty · "
+                        f"{len(snapshot.visible_paths)}/{snapshot.filter_total}"
+                    )
+            elif snapshot.view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH:
+                self.filterInfoLabel.setText(
+                    "Search: "
+                    f"{self._displayed_search_query or ''} · "
+                    f"{len(snapshot.visible_paths)} results"
+                )
+            else:
+                self.filterInfoLabel.setText(
+                    f"Folder view · {len(snapshot.paths)} photos"
+                )
+            return
+
+        conditions = [f"filename contains “{filename_query}”"]
         if self._active_search_request is not None:
-            self.filterInfoLabel.setText(
-                f"Searching index · {self._active_search_request.query}"
-            )
-        elif snapshot.filter_operation_id is not None:
-            self.filterInfoLabel.setText(
-                "Filtering IPTC-empty · "
+            conditions.append(f"searching index: {self._active_search_request.query}")
+        elif snapshot.has_database_search:
+            conditions.append(f"search: {self._displayed_search_query or ''}")
+        if snapshot.filter_operation_id is not None:
+            conditions.append(
+                "filtering IPTC-empty "
                 f"{snapshot.filter_processed}/{snapshot.filter_total}"
             )
         elif snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-            self.filterInfoLabel.setText(
-                f"IPTC-empty · {len(snapshot.visible_paths)}/{snapshot.filter_total}"
-            )
-        elif snapshot.view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH:
-            self.filterInfoLabel.setText(
-                "Search: "
-                f"{self._displayed_search_query or ''} · "
-                f"{len(snapshot.visible_paths)} results"
-            )
-        elif snapshot.view_mode is PhotoWorkspaceViewMode.NORMAL:
-            self.filterInfoLabel.setText(f"Folder view · {len(snapshot.paths)} photos")
+            conditions.append("IPTC-empty")
+        self.filterInfoLabel.setText(
+            f"Filters: {' · '.join(conditions)} · {len(snapshot.visible_paths)} results"
+        )
+
+    def _update_files_pane_empty_state(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        """Show an unambiguous empty state for completed active conditions."""
+        has_condition = (
+            snapshot.filename_filter_query is not None
+            or snapshot.view_mode is not PhotoWorkspaceViewMode.NORMAL
+        )
+        if (
+            has_condition
+            and not snapshot.visible_paths
+            and self._active_search_request is None
+            and snapshot.filter_operation_id is None
+        ):
+            self._show_files_pane_message("No photos match the active filters.")
+            return
+        if self.filesPaneMessage.text() == "No photos match the active filters.":
+            self._hide_files_pane_message()
 
     def _refresh_current_keywords_view_from_cache(self) -> None:
         current = self.active_file_path()
@@ -3663,6 +3762,59 @@ class MainWindow(QtWidgets.QMainWindow):
                 return it
         return None
 
+    def apply_filename_filter(self, _value: object = None) -> None:
+        """Apply the live filename condition without scheduling background work."""
+        before_snapshot = self.photo_workspace.snapshot()
+        before = list(before_snapshot.selected_paths)
+        if (
+            before_snapshot.filename_filter_query is None
+            and self.filenameFilterEdit.text().strip()
+        ):
+            self._filename_filter_restore_scroll = self._capture_files_scroll_anchor()
+        snapshot = self.photo_workspace.set_filename_filter(
+            self.filenameFilterEdit.text(),
+            case_sensitive=self.filenameCaseSensitiveBtn.isChecked(),
+        )
+        self._render_photo_workspace_snapshot(snapshot, before)
+        if (
+            before_snapshot.filename_filter_query is not None
+            and snapshot.filename_filter_query is None
+            and self._filename_filter_restore_scroll is not None
+        ):
+            self._restore_files_scroll_anchor(self._filename_filter_restore_scroll)
+            self._filename_filter_restore_scroll = None
+
+    def clear_filename_filter(self) -> None:
+        self.filenameFilterEdit.clear()
+        if self.photo_workspace.snapshot().filename_filter_query is not None:
+            self.apply_filename_filter()
+        self.statusBar().showMessage("Filename filter cleared")
+
+    def clear_all_filters(self) -> None:
+        self.dbSearchEdit.clear()
+        self.onlyUntagged.blockSignals(True)
+        self.onlyUntagged.setChecked(False)
+        self.onlyUntagged.blockSignals(False)
+        self.filenameFilterEdit.blockSignals(True)
+        self.filenameFilterEdit.clear()
+        self.filenameCaseSensitiveBtn.blockSignals(True)
+        self.filenameCaseSensitiveBtn.setChecked(False)
+        self.filenameCaseSensitiveBtn.blockSignals(False)
+        self.filenameFilterEdit.blockSignals(False)
+        self._active_search_request = None
+        self._displayed_search_request = None
+        self._displayed_search_generation = None
+        self._displayed_search_query = None
+        self._background_coordinator.invalidate_search()
+        self._background_coordinator.invalidate_iptc_empty()
+        self._clear_iptc_empty_refresh_state()
+        self._search_restore_scroll = None
+        self._filename_filter_restore_scroll = None
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.clear_all_filters()
+        self._render_photo_workspace_snapshot(snapshot, before)
+        self.statusBar().showMessage("All filters cleared")
+
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
         self._active_search_request = None
@@ -3682,6 +3834,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("DB search cleared")
         if not selection_changed:
             self.on_selection_changed()
+
+    def _command_filter_files(self, args: list[str]) -> None:
+        case_sensitive = bool(args and args[0] == "--case")
+        if case_sensitive:
+            args = args[1:]
+        self.filenameCaseSensitiveBtn.blockSignals(True)
+        self.filenameCaseSensitiveBtn.setChecked(case_sensitive)
+        self.filenameCaseSensitiveBtn.blockSignals(False)
+        self.filenameFilterEdit.blockSignals(True)
+        self.filenameFilterEdit.setText(" ".join(args))
+        self.filenameFilterEdit.blockSignals(False)
+        self.apply_filename_filter()
 
     def _command_search(self, args: list[str]) -> None:
         query = " ".join(args).strip()
@@ -3752,8 +3916,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _apply_db_search_result(self, matches: tuple[str, ...]) -> None:
         before = self.selected_file_paths()
-        self._clear_iptc_empty_refresh_state()
-        self._background_coordinator.invalidate_iptc_empty()
+        prior_snapshot = self.photo_workspace.snapshot()
+        iptc_empty_active = (
+            self._iptc_empty_filter_request is not None
+            or prior_snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+        )
+        if not iptc_empty_active:
+            self._clear_iptc_empty_refresh_state()
+            self._background_coordinator.invalidate_iptc_empty()
         first_search = not self.photo_workspace.has_database_search
         if first_search:
             self._search_restore_scroll = self._capture_files_scroll_anchor()
@@ -4005,6 +4175,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_db_search_select_all(self) -> None:
         self.dbSearchEdit.setFocus()
         self.dbSearchEdit.selectAll()
+
+    def _focus_filename_filter_select_all(self) -> None:
+        self.filenameFilterEdit.setFocus()
+        self.filenameFilterEdit.selectAll()
 
     def _focus_add_edit_select_all(self) -> None:
         self.addEdit.setFocus()

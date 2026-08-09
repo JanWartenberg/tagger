@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import os
 from typing import Iterable
+import unicodedata
 
 
 class PhotoWorkspaceViewMode(str, Enum):
@@ -28,6 +30,21 @@ class PhotoWorkspaceSnapshot:
     filter_processed: int = 0
     filter_total: int = 0
     filter_view_switched: bool = False
+    filename_filter_query: str | None = None
+    filename_filter_case_sensitive: bool = False
+    has_database_search: bool = False
+
+
+@dataclass(frozen=True)
+class _FilenameFilter:
+    query: str
+    case_sensitive: bool
+
+
+@dataclass(frozen=True)
+class _FilenameFilterRestoreState:
+    selected_paths: frozenset[str]
+    active_path: str | None
 
 
 @dataclass(frozen=True)
@@ -66,6 +83,8 @@ class PhotoWorkspace:
         self._selected: set[str] = set()
         self._active_path: str | None = None
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
+        self._filename_filter: _FilenameFilter | None = None
+        self._filename_filter_restore_state: _FilenameFilterRestoreState | None = None
 
         self._operation = 0
         self._filter_running = False
@@ -82,10 +101,23 @@ class PhotoWorkspace:
         """Return whether a temporary search result has a folder view to restore."""
         return self._search_restore_state is not None
 
+    @property
+    def iptc_empty_membership(self) -> frozenset[str] | None:
+        """Return unfiltered IPTC-empty membership for explicit refresh checks."""
+        if (
+            self._filter_running
+            or self._view_mode is not PhotoWorkspaceViewMode.IPTC_EMPTY
+        ):
+            return None
+        return frozenset(self._visible)
+
     def snapshot(self) -> PhotoWorkspaceSnapshot:
         """Return the immutable state used to render the workspace."""
-        visible = tuple(path for path in self._paths if path in self._visible)
+        visible = tuple(
+            path for path in self._paths if path in self._filtered_visible()
+        )
         selected = tuple(path for path in visible if path in self._selected)
+        filename_filter = self._filename_filter
         return PhotoWorkspaceSnapshot(
             paths=tuple(self._paths),
             visible_paths=visible,
@@ -96,6 +128,68 @@ class PhotoWorkspace:
             filter_processed=self._processed,
             filter_total=len(self._paths),
             filter_view_switched=self._switched,
+            filename_filter_query=filename_filter.query if filename_filter else None,
+            filename_filter_case_sensitive=(
+                filename_filter.case_sensitive if filename_filter else False
+            ),
+            has_database_search=self.has_database_search,
+        )
+
+    def set_filename_filter(
+        self, query: str, *, case_sensitive: bool = False
+    ) -> PhotoWorkspaceSnapshot:
+        """Live-filter current workspace membership by complete filename basename."""
+        query = query.strip()
+        if not query:
+            return self.clear_filename_filter()
+        if self._filename_filter is None:
+            self._filename_filter_restore_state = _FilenameFilterRestoreState(
+                frozenset(self._selected), self._active_path
+            )
+        self._filename_filter = _FilenameFilter(query, case_sensitive)
+        self._repair_selection()
+        return self.snapshot()
+
+    def clear_filename_filter(self) -> PhotoWorkspaceSnapshot:
+        """Remove the filename condition and restore its captured selection."""
+        self._filename_filter = None
+        state = self._filename_filter_restore_state
+        self._filename_filter_restore_state = None
+        if state is not None:
+            self._selected = set(state.selected_paths)
+            self._active_path = state.active_path
+        self._repair_selection()
+        return self.snapshot()
+
+    def clear_all_filters(self) -> PhotoWorkspaceSnapshot:
+        """Return to the folder view with no active filter conditions."""
+        self.clear_database_search()
+        self.clear_iptc_empty_filter()
+        return self.clear_filename_filter()
+
+    def _filtered_visible(self) -> set[str]:
+        filename_filter = self._filename_filter
+        if filename_filter is None:
+            return self._visible
+        query = unicodedata.normalize("NFC", filename_filter.query)
+        if not filename_filter.case_sensitive:
+            query = query.casefold()
+        return {
+            path
+            for path in self._visible
+            if query in self._comparison_basename(path, filename_filter.case_sensitive)
+        }
+
+    @staticmethod
+    def _comparison_basename(path: str, case_sensitive: bool) -> str:
+        basename = unicodedata.normalize(
+            "NFC", os.path.basename(path.replace("\\", "/"))
+        )
+        return basename if case_sensitive else basename.casefold()
+
+    def _has_active_iptc_filter(self) -> bool:
+        return (
+            self._filter_running or self._view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
         )
 
     def add_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
@@ -117,6 +211,8 @@ class PhotoWorkspace:
         self._selected = set()
         self._active_path = None
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
+        self._filename_filter = None
+        self._filename_filter_restore_state = None
         self._filter_running = False
         self._batches = []
         self._inflight = None
@@ -130,7 +226,7 @@ class PhotoWorkspace:
     def select_paths(self, paths: Iterable[str]) -> PhotoWorkspaceSnapshot:
         """Apply a user selection, with the first requested path as active."""
         requested_paths = tuple(paths)
-        self._selected = set(requested_paths) & self._visible
+        self._selected = set(requested_paths) & self._filtered_visible()
         self._active_path = next(
             (path for path in requested_paths if path in self._selected), None
         )
@@ -146,8 +242,7 @@ class PhotoWorkspace:
     def apply_database_search_matches(
         self, matching_paths: Iterable[str]
     ) -> PhotoWorkspaceSnapshot:
-        """Atomically show all indexed matches as a temporary workspace view."""
-        self.clear_iptc_empty_filter()
+        """Apply indexed matches while retaining an active IPTC-empty condition."""
         if self._search_restore_state is None:
             self._search_restore_state = _SearchRestoreState(
                 tuple(self._paths), frozenset(self._selected), self._active_path
@@ -159,24 +254,48 @@ class PhotoWorkspace:
             if path not in known:
                 known.add(path)
                 self._paths.append(path)
-        self._view_mode = PhotoWorkspaceViewMode.DATABASE_SEARCH
-        self._visible = set(self._paths)
+
+        iptc_active = self._has_active_iptc_filter()
+        if iptc_active and not self._filter_running:
+            self._visible = self._matches & set(self._paths)
+            self._view_mode = PhotoWorkspaceViewMode.IPTC_EMPTY
+        else:
+            self._visible = set(self._paths)
+            self._view_mode = PhotoWorkspaceViewMode.DATABASE_SEARCH
         self._repair_selection()
+        if iptc_active:
+            self._filter_restore_state = _FilterRestoreState(
+                PhotoWorkspaceViewMode.DATABASE_SEARCH,
+                frozenset(self._paths),
+                frozenset(self._selected),
+                self._active_path,
+            )
         return self.snapshot()
 
     def clear_database_search(self) -> PhotoWorkspaceSnapshot:
-        """Restore the captured folder view and invalidate search-adjacent filter work."""
-        self.clear_iptc_empty_filter()
+        """Clear indexed matches while retaining an active IPTC-empty condition."""
         state = self._search_restore_state
         if state is None:
             return self.snapshot()
         self._paths = list(state.paths)
-        self._visible = set(self._paths)
+        iptc_active = self._has_active_iptc_filter()
+        if iptc_active and not self._filter_running:
+            self._visible = self._matches & set(self._paths)
+            self._view_mode = PhotoWorkspaceViewMode.IPTC_EMPTY
+        else:
+            self._visible = set(self._paths)
+            self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._selected = set(state.selected_paths)
         self._active_path = state.active_path
-        self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._search_restore_state = None
         self._repair_selection()
+        if iptc_active:
+            self._filter_restore_state = _FilterRestoreState(
+                PhotoWorkspaceViewMode.NORMAL,
+                frozenset(self._paths),
+                frozenset(self._selected),
+                self._active_path,
+            )
         return self.snapshot()
 
     def start_iptc_empty_filter(
@@ -338,11 +457,10 @@ class PhotoWorkspace:
         self._filter_restore_state = None
 
     def _repair_selection(self) -> None:
-        self._selected &= self._visible
-        if not self._selected and self._visible:
-            self._selected.add(
-                next(path for path in self._paths if path in self._visible)
-            )
+        visible = self._filtered_visible()
+        self._selected &= visible
+        if not self._selected and visible:
+            self._selected.add(next(path for path in self._paths if path in visible))
         if self._active_path not in self._selected:
             self._active_path = next(
                 (path for path in self._paths if path in self._selected), None

@@ -130,6 +130,121 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
 
+    def test_filename_filter_updates_live_and_clears_independently(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+
+        self.window.filenameFilterEdit.setText("second")
+
+        self.assertEqual(self.window.selected_file_paths(), [second])
+        self.assertTrue(self.window.files.item(0).isHidden())
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Filters: filename contains “second” · 1 results",
+        )
+
+        self.window.filenameFilterEdit.clear()
+
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertFalse(self.window.files.item(0).isHidden())
+        self.assertFalse(self.window.files.item(1).isHidden())
+
+    def test_filename_filter_commands_focus_case_mode_and_empty_state(self) -> None:
+        first, second = self._add_paths("Report.JPG", "report.jpg")
+
+        self.window._dispatch_command("filterfiles", ["--case", "Report.JPG"])
+
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertTrue(self.window.filenameCaseSensitiveBtn.isChecked())
+        self.window._dispatch_command("focusfilenamefilter", [])
+        self.assertIs(self.window.focusWidget(), self.window.filenameFilterEdit)
+        QtTest.QTest.keyClick(self.window.filenameFilterEdit, QtCore.Qt.Key.Key_Escape)
+        self.assertIsNot(self.window.focusWidget(), self.window.filenameFilterEdit)
+        self.assertEqual(self.window.filenameFilterEdit.text(), "Report.JPG")
+        self.window._dispatch_command("focusfilenamefilter", [])
+        QtTest.QTest.keyClick(self.window.filenameFilterEdit, QtCore.Qt.Key.Key_Return)
+        self.assertIs(self.window.focusWidget(), self.window.files)
+
+        self.window._dispatch_command("filterfiles", ["missing"])
+
+        self.assertTrue(self.window.filesPaneMessage.isVisible())
+        self.assertEqual(
+            self.window.filesPaneMessage.text(), "No photos match the active filters."
+        )
+        self.window._dispatch_command("clearfilenamefilter", [])
+
+        self.assertFalse(self.window.filesPaneMessage.isVisible())
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertFalse(self.window.filenameCaseSensitiveBtn.isChecked())
+        self.assertEqual(self.window.all_file_paths(), [first, second])
+
+    def test_clearfilters_returns_to_the_folder_view(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        self.window.filenameFilterEdit.setText("second")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("tag:second")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.window._dispatch_command("clearfilters", [])
+
+        self.assertEqual(self.window.all_file_paths(), [first, second])
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
+        self.assertEqual(self.window.filenameFilterEdit.text(), "")
+        self.assertFalse(self.window.onlyUntagged.isChecked())
+        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+
+    def test_filename_filter_composes_with_indexed_search_and_iptc_empty(self) -> None:
+        _first, matching = self._add_paths("first.jpg", "matching.jpg")
+        self.window.filenameFilterEdit.setText("matching")
+        FakePhotoIndex.search_results = {matching}
+        self.window.dbSearchEdit.setText("tag:matching")
+
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Filters: filename contains “matching” · search: tag:matching · 1 results",
+        )
+        FakePhotoIndex.iptc_empty_results = {matching}
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: self.window.filterInfoLabel.text()
+            == "Filters: filename contains “matching” · search: tag:matching · IPTC-empty · 1 results"
+        )
+
+        self.window.onlyUntagged.setChecked(False)
+
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Filters: filename contains “matching” · search: tag:matching · 1 results",
+        )
+        self.assertEqual(self.window.selected_file_paths(), [matching])
+
+    def test_indexed_search_started_after_iptc_empty_keeps_both_conditions_active(
+        self,
+    ) -> None:
+        _first, matching = self._add_paths("first.jpg", "matching.jpg")
+        FakePhotoIndex.iptc_empty_results = {matching}
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(lambda: self.window.selected_file_paths() == [matching])
+        FakePhotoIndex.search_results = {matching}
+        self.window.dbSearchEdit.setText("tag:matching")
+
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.onlyUntagged.isChecked())
+        self.assertEqual(self.window.selected_file_paths(), [matching])
+        self.assertEqual(
+            self.window.filterInfoLabel.text(),
+            "Filters: search: tag:matching · IPTC-empty · 1 results",
+        )
+
     def test_view_indicator_describes_pending_and_completed_iptc_empty_filter(
         self,
     ) -> None:
@@ -1850,6 +1965,28 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.all_file_paths(), [first, second])
         self.assertEqual(self.window.selected_file_paths(), [first])
         self.assertEqual(self.window.dbSearchEdit.text(), "")
+
+    def test_clearing_filename_filter_restores_the_folder_scroll_anchor(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))
+        target = paths[40]
+        self.window.files.setCurrentItem(
+            self.window.files.item(40),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.scrollToItem(
+            self.window.files.item(40),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+
+        self.window.filenameFilterEdit.setText("photo-90")
+        self.window.filenameFilterEdit.clear()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [target])
+        self.assertLessEqual(
+            abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
+        )
 
     def test_back_restores_the_folder_scroll_anchor(self) -> None:
         paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))

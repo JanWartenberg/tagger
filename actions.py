@@ -157,6 +157,31 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
         ),
         ActionSpec(
+            id="focusfilenamefilter",
+            description="Focus filename filter",
+            handler_name="_focus_filename_filter_select_all",
+            command=CommandBinding("focusfilenamefilter"),
+            shortcuts=(ShortcutBinding("Ctrl+Shift+L"),),
+        ),
+        ActionSpec(
+            id="filterfiles",
+            description="Filter current workspace filenames",
+            handler_name="_command_filter_files",
+            command=CommandBinding("filterfiles", accepts_arguments=True),
+        ),
+        ActionSpec(
+            id="clearfilenamefilter",
+            description="Clear filename filter",
+            handler_name="clear_filename_filter",
+            command=CommandBinding("clearfilenamefilter"),
+        ),
+        ActionSpec(
+            id="clearfilters",
+            description="Clear all workspace filters",
+            handler_name="clear_all_filters",
+            command=CommandBinding("clearfilters"),
+        ),
+        ActionSpec(
             id="search",
             description="Search indexed photos",
             handler_name="_command_search",

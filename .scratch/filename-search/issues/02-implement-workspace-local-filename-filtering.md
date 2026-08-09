@@ -1,10 +1,10 @@
 # 02 — Implement Workspace-Local Filename Filtering
 
-Status: ready-for-agent
+Status: completed
 Category: enhancement
 Priority: medium
 Milestone: M4 — Faster photo-finding and tagging workflows
-Blocked by: 01
+Blocked by: None
 
 ## Goal
 
@@ -23,15 +23,19 @@ Deliver the approved workspace-local filename filter while preserving TAGGER's c
 
 ## Acceptance Criteria
 
-- [ ] Filename matching uses only the basename, includes extensions, trims outer whitespace, treats query punctuation literally, handles NFC equivalence, and is case-insensitive by default.
-- [ ] The `Aa` toggle and `--case` command option produce case-sensitive matching; both controls visibly reflect the active mode.
-- [ ] Filename, IPTC-empty, and indexed-search conditions combine as AND. Activating or clearing one recomputes from its complete natural source and retains every other condition.
-- [ ] An empty intersection has no selected or active photo and displays `No photos match the active filters.` centred in the files pane.
-- [ ] Starting/clearing a filename condition repairs selection and restores the captured source selection and scroll anchor according to the approved workflow; stale async indexed/IPTC completions cannot overwrite the current derived view.
-- [ ] New workspace paths are included only if they satisfy active conditions; a replaced workspace clears filename state and resets case mode.
-- [ ] Each individual clear affects only its named condition; `:clearfilters` atomically restores the folder view.
-- [ ] Keyboard focus, Enter, Escape, command routing, field/toggle state, and the multi-condition indicator are covered by offscreen tests.
-- [ ] Pure Photo Workspace tests cover composition, source changes, empty intersections, lifecycle, and restoration without Qt, SQLite, filesystem, or ExifTool dependencies.
+- [x] Filename matching uses only the basename, includes extensions, trims outer whitespace, treats query punctuation literally, handles NFC equivalence, and is case-insensitive by default.
+- [x] The `Aa` toggle and `--case` command option produce case-sensitive matching; both controls visibly reflect the active mode.
+- [x] Filename, IPTC-empty, and indexed-search conditions combine as AND. Activating or clearing one recomputes from its complete natural source and retains every other condition.
+- [x] An empty intersection has no selected or active photo and displays `No photos match the active filters.` centred in the files pane.
+- [x] Starting/clearing a filename condition repairs selection and restores the captured source selection and scroll anchor according to the approved workflow; stale async indexed/IPTC completions cannot overwrite the current derived view.
+- [x] New workspace paths are included only if they satisfy active conditions; a replaced workspace clears filename state and resets case mode.
+- [x] Each individual clear affects only its named condition; `:clearfilters` atomically restores the folder view.
+- [x] Keyboard focus, Enter, Escape, command routing, field/toggle state, and the multi-condition indicator are covered by offscreen tests.
+- [x] Pure Photo Workspace tests cover composition, source changes, empty intersections, lifecycle, and restoration without Qt, SQLite, filesystem, or ExifTool dependencies.
+
+## Completion
+
+Implemented with live workspace filtering, composable indexed-search/IPTC-empty conditions, commands, empty-state feedback, and pure/offscreen regression coverage.
 
 ## Constraints
 
