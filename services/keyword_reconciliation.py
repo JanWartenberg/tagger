@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import unicodedata
 
 from exif_tool import KeywordState
+from services.keyword_limits import normalize_keyword
 
 
 class MismatchKind(str, Enum):
@@ -40,7 +40,7 @@ def normalize_keywords(values: list[str]) -> tuple[str, ...]:
     result: list[str] = []
     identities: set[str] = set()
     for value in values:
-        normalized = unicodedata.normalize("NFC", value).strip()
+        normalized = normalize_keyword(value)
         if not normalized:
             continue
         identity = normalized.casefold()

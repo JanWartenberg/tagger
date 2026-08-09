@@ -590,6 +590,65 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("baz", dialog.chosen_state().iptc)
         dialog.close()
 
+    def test_resolve_refuses_over_limit_xmp_to_iptc_copies_and_invalid_apply(
+        self,
+    ) -> None:
+        long_tag = "x" * 65
+        dialog = ResolveKeywordsDialog(KeywordState([], [long_tag]), self.window)
+
+        dialog._copy(long_tag, iptc_to_xmp=False)
+
+        self.assertEqual(dialog.chosen_state().iptc, [])
+        self.assertEqual(dialog._selected_row, 0)
+        self.assertFalse(dialog.policyWarning.isHidden())
+
+        dialog._copy_all_xmp()
+
+        self.assertEqual(dialog.chosen_state().iptc, [])
+        self.assertEqual(dialog.chosen_state().xmp, [long_tag])
+        self.assertFalse(dialog.policyWarning.isHidden())
+        self.assertIn("65/64 UTF-8 bytes", dialog.policyWarning.text())
+
+        dialog._iptc = [long_tag]
+        dialog._accept_if_allowed()
+
+        self.assertNotEqual(dialog.result(), QtWidgets.QDialog.DialogCode.Accepted)
+        self.assertFalse(dialog.policyWarning.isHidden())
+        dialog.close()
+
+    def test_over_limit_manual_input_is_preserved_and_not_queued(self) -> None:
+        self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        long_tag = "x" * 65
+        self.window.addEdit.setText(long_tag)
+        self.window.addEdit.setFocus()
+        self.window.addEdit.setSelection(4, 5)
+
+        self.assertFalse(self.window.addBtn.isEnabled())
+        self.window.add_keyword_from_input()
+
+        self.assertEqual(self.window.addEdit.text(), long_tag)
+        self.assertIs(self.window.focusWidget(), self.window.addEdit)
+        self.assertEqual(self.window.addEdit.selectionStart(), 4)
+        self.assertEqual(self.window.addEdit.selectedText(), long_tag[4:9])
+        self.assertEqual(FakeExifTool.write_calls, [])
+        self.assertIn("65/64 UTF-8 bytes", self.window.statusBar().currentMessage())
+
+    def test_known_and_yanked_over_limit_tags_are_rejected_before_queueing(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        long_tag = "x" * 65
+        known_item = QtWidgets.QListWidgetItem(long_tag)
+
+        self.window.add_keyword_from_known(known_item)
+        self.window._yanked_tags = ["valid", long_tag]
+        self.window._paste_yanked_tags()
+
+        self.assertEqual(FakeExifTool.write_calls, [])
+        self.assertIn(repr(long_tag), self.window.statusBar().currentMessage())
+
     def test_s3_xmp_empty_state_shows_only_canonical_iptc_tags_without_resolve(
         self,
     ) -> None:

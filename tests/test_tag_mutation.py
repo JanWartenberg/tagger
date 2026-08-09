@@ -48,6 +48,33 @@ class TagMutationServiceTests(unittest.TestCase):
         self.assertEqual(result.failed_paths, {path: "simulated write failure"})
         self.assertEqual(len(exif.write_calls), 3)
 
+    def test_rejects_an_invalid_final_iptc_target_without_calling_exiftool(
+        self,
+    ) -> None:
+        path = "C:/photos/one.jpg"
+        exif = FakeExifTool({path: KeywordState(["before"], [])}, failed_paths=set())
+
+        result = TagMutationService(exif).add_tag(
+            [path], "x" * 65, keep_backup=False, load_state=exif.read_keywords
+        )
+
+        self.assertEqual(exif.write_calls, [])
+        self.assertIn("65/64 UTF-8 bytes", result.failed_paths[path])
+
+    def test_resolve_rejects_an_invalid_target_without_retries(self) -> None:
+        path = "C:/photos/one.jpg"
+        exif = FakeExifTool({path: KeywordState([], ["x" * 65])}, failed_paths=set())
+
+        result = TagMutationService(exif).resolve_keyword_fields(
+            [path],
+            {path: KeywordState(["x" * 65], ["x" * 65])},
+            keep_backup=False,
+            load_state=exif.read_keywords,
+        )
+
+        self.assertEqual(exif.write_calls, [])
+        self.assertEqual(result.attempts_by_path[path], 0)
+
     def test_partial_write_failure_returns_confirmed_and_failed_paths(self) -> None:
         first = "C:/photos/one.jpg"
         second = "C:/photos/two.jpg"

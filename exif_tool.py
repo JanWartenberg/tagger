@@ -1,9 +1,13 @@
 import json
 import shutil
 import subprocess
-import unicodedata
 from dataclasses import dataclass
 
+from services.keyword_limits import (
+    IptcKeywordLengthError,
+    iptc_keyword_list_violation,
+    normalize_keyword,
+)
 from utils import dedupe_casefold, normalize_path
 
 
@@ -77,7 +81,9 @@ class ExifTool:
             ) from e
         if p.returncode != 0:
             stderr = (p.stderr or "").strip()
-            raise ExifToolError(stderr or f"exiftool failed with exit code {p.returncode}")
+            raise ExifToolError(
+                stderr or f"exiftool failed with exit code {p.returncode}"
+            )
         return p.stdout
 
     def read_keywords(self, file_path: str) -> KeywordState:
@@ -226,6 +232,9 @@ class ExifTool:
     ) -> None:
         """Replace both keyword fields explicitly in one ExifTool operation."""
         iptc = self._normalize_keywords(iptc_keywords)
+        violation = iptc_keyword_list_violation(iptc)
+        if violation is not None:
+            raise IptcKeywordLengthError(violation)
         xmp = self._normalize_keywords(xmp_keywords)
         args: list[str] = []
         if not keep_backup:
@@ -238,9 +247,7 @@ class ExifTool:
 
     @staticmethod
     def _normalize_keywords(keywords: list[str]) -> list[str]:
-        normalized = [
-            unicodedata.normalize("NFC", keyword).strip() for keyword in keywords
-        ]
+        normalized = [normalize_keyword(keyword) for keyword in keywords]
         values = dedupe_casefold([keyword for keyword in normalized if keyword])
         values.sort(key=str.casefold)
         return values
@@ -252,7 +259,7 @@ class ExifTool:
                 "-q",
                 "-j",
                 "-G1",
-                *( ["-r"] if recursive else [] ),
+                *(["-r"] if recursive else []),
                 "-ext",
                 "jpg",
                 "-ext",

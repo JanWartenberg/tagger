@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from exif_tool import ExifTool
+from services.keyword_limits import IptcKeywordLengthError
 
 
 class ExifToolDateParsingTests(unittest.TestCase):
@@ -53,6 +54,24 @@ class ExifToolDateParsingTests(unittest.TestCase):
                 "photo.jpg",
             ],
         )
+
+    def test_rejects_an_over_limit_iptc_keyword_before_running_exiftool(self) -> None:
+        exif = ExifTool()
+        with patch.object(exif, "_run") as run:
+            with self.assertRaises(IptcKeywordLengthError) as error:
+                exif.write_keyword_fields(
+                    ["photo.jpg"], ["x" * 65], ["x" * 65], keep_backup=False
+                )
+
+        self.assertEqual(error.exception.violation.utf8_byte_count, 65)
+        run.assert_not_called()
+
+    def test_allows_an_over_limit_xmp_only_keyword(self) -> None:
+        exif = ExifTool()
+        with patch.object(exif, "_run") as run:
+            exif.write_keyword_fields(["photo.jpg"], [], ["x" * 65], keep_backup=False)
+
+        self.assertIn("-XMP-dc:Subject=" + "x" * 65, run.call_args.args[0])
 
 
 if __name__ == "__main__":

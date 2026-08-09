@@ -2,6 +2,10 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from exif_tool import ExifTool, KeywordState
+from services.keyword_limits import (
+    IptcKeywordLengthError,
+    iptc_keyword_list_violation,
+)
 from services.keyword_reconciliation import normalize_keywords
 
 
@@ -101,6 +105,9 @@ class TagMutationService:
             try:
                 current = load_state(path)
                 target = self._normalized_state(transform(path, current), current)
+                violation = iptc_keyword_list_violation(target.iptc)
+                if violation is not None:
+                    raise IptcKeywordLengthError(violation)
                 self.exif.write_keyword_fields(
                     [path], target.iptc, target.xmp, keep_backup=keep_backup
                 )
@@ -136,6 +143,9 @@ class TagMutationService:
             target = self._normalized_state(chosen, chosen)
             attempts = 0
             try:
+                violation = iptc_keyword_list_violation(target.iptc)
+                if violation is not None:
+                    raise IptcKeywordLengthError(violation)
                 # This fresh read intentionally does not merge external changes into
                 # the dialog's explicit choices. If it fails, apply those choices.
                 try:
@@ -149,6 +159,8 @@ class TagMutationService:
                             [path], target.iptc, target.xmp, keep_backup=keep_backup
                         )
                         break
+                    except IptcKeywordLengthError:
+                        raise
                     except Exception:
                         if attempt == 2:
                             raise

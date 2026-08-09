@@ -56,6 +56,11 @@ from services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
     FileSystemPhotoDiscovery,
 )
+from services.keyword_limits import (
+    iptc_keyword_list_violation,
+    keyword_length_violation,
+    normalize_keyword,
+)
 from services.keyword_reconciliation import aligned_keyword_rows, reconcile_keywords
 from services.pending_tag_mutation import MutationStatus, PendingTagMutation, TagIntent
 from services.tag_mutation import TagMutationResult, TagMutationService
@@ -217,6 +222,11 @@ class ResolveKeywordsDialog(QtWidgets.QDialog):
                 "values; Apply writes both fields once."
             )
         )
+        self.policyWarning = QtWidgets.QLabel()
+        self.policyWarning.setWordWrap(True)
+        self.policyWarning.setStyleSheet("color: #dc2626; font-weight: 700;")
+        self.policyWarning.hide()
+        layout.addWidget(self.policyWarning)
         self._rows = QtWidgets.QGridLayout()
         self._rows.setColumnStretch(0, 1)
         self._rows.setColumnStretch(5, 1)
@@ -483,6 +493,7 @@ class ResolveKeywordsDialog(QtWidgets.QDialog):
                     for candidate in values
                     if candidate.casefold() != value.casefold()
                 ]
+        self._clear_policy_warning()
         self._render_rows()
 
     def _set_available(self, button: QtWidgets.QToolButton, available: bool) -> None:
@@ -496,21 +507,43 @@ class ResolveKeywordsDialog(QtWidgets.QDialog):
         if value.casefold() not in {candidate.casefold() for candidate in destination}:
             destination.append(value)
 
+    def _show_policy_warning(self, value: str, byte_count: int) -> None:
+        self.policyWarning.setText(
+            f"IPTC keyword {value!r} is {byte_count}/64 UTF-8 bytes"
+        )
+        self.policyWarning.show()
+
+    def _clear_policy_warning(self) -> None:
+        self.policyWarning.hide()
+        self.policyWarning.clear()
+
     def _copy(self, value: str | None, iptc_to_xmp: bool) -> None:
         if value is None:
             return
+        if not iptc_to_xmp:
+            violation = keyword_length_violation(value)
+            if violation is not None:
+                self._show_policy_warning(violation.value, violation.utf8_byte_count)
+                return
         destination = self._xmp if iptc_to_xmp else self._iptc
         self._add_missing(destination, value)
+        self._clear_policy_warning()
         self._render_rows()
 
     def _copy_all_iptc(self) -> None:
         for keyword in self._iptc:
             self._add_missing(self._xmp, keyword)
+        self._clear_policy_warning()
         self._render_rows()
 
     def _copy_all_xmp(self) -> None:
+        violation = iptc_keyword_list_violation(self._xmp)
+        if violation is not None:
+            self._show_policy_warning(violation.value, violation.utf8_byte_count)
+            return
         for keyword in self._xmp:
             self._add_missing(self._iptc, keyword)
+        self._clear_policy_warning()
         self._render_rows()
 
     def _delete(self, value: str | None, iptc: bool) -> None:
@@ -522,17 +555,20 @@ class ResolveKeywordsDialog(QtWidgets.QDialog):
             for candidate in values
             if candidate.casefold() != value.casefold()
         ]
+        self._clear_policy_warning()
         self._render_rows()
 
     def _clear_iptc(self) -> None:
         self._iptc = []
         self._iptc_readable = True
+        self._clear_policy_warning()
         self._render_rows()
         self._update_apply_enabled()
 
     def _clear_xmp(self) -> None:
         self._xmp = []
         self._xmp_readable = True
+        self._clear_policy_warning()
         self._render_rows()
         self._update_apply_enabled()
 
@@ -542,8 +578,14 @@ class ResolveKeywordsDialog(QtWidgets.QDialog):
         )
 
     def _accept_if_allowed(self) -> None:
-        if self._iptc_readable and self._xmp_readable:
-            self.accept()
+        if not (self._iptc_readable and self._xmp_readable):
+            return
+        violation = iptc_keyword_list_violation(self._iptc)
+        if violation is not None:
+            self._show_policy_warning(violation.value, violation.utf8_byte_count)
+            return
+        self._clear_policy_warning()
+        self.accept()
 
     def chosen_state(self) -> KeywordState:
         return KeywordState(
@@ -867,6 +909,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
+        self.addEdit.textChanged.connect(self._update_add_keyword_limit_feedback)
         self.addEdit.returnPressed.connect(self.add_keyword_from_input)
         self.addEdit.setToolTip("Insert: i · Add: Ctrl+Enter")
         self.addBtn = QtWidgets.QPushButton("Add")
@@ -1359,6 +1402,8 @@ class MainWindow(QtWidgets.QMainWindow):
         edit_qss = (
             "QLineEdit { border: 1px solid palette(mid); border-radius: 4px; }"
             "QLineEdit:focus { border: 1px solid #60a5fa; }"
+            'QLineEdit[keywordLengthInvalid="true"] '
+            "{ border: 2px solid #dc2626; color: #dc2626; }"
         )
         for lst in (self.files, self.keywordsList, self.knownList):
             lst.setStyleSheet(list_qss)
@@ -2198,6 +2243,8 @@ class MainWindow(QtWidgets.QMainWindow):
         files = self.selected_file_paths()
         if not files:
             self.statusBar().showMessage("No files selected")
+            return
+        if self._reject_invalid_iptc_keywords(self._yanked_tags):
             return
         target = files[0]
         pending_mutation = self._begin_pending_tag_mutation(
@@ -3732,12 +3779,42 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.apply_iptc_emptiness(emptiness_by_path)
         self._render_photo_workspace_snapshot(snapshot, before)
 
+    def _report_keyword_limit_violation(self, value: str, byte_count: int) -> None:
+        self.statusBar().showMessage(
+            f"IPTC keyword is {byte_count}/64 UTF-8 bytes: {value!r}"
+        )
+
+    def _update_add_keyword_limit_feedback(self, raw_text: str) -> None:
+        violation = keyword_length_violation(raw_text)
+        invalid = violation is not None
+        self.addEdit.setProperty("keywordLengthInvalid", invalid)
+        self.addEdit.style().unpolish(self.addEdit)
+        self.addEdit.style().polish(self.addEdit)
+        self.addBtn.setEnabled(not invalid)
+        if violation is not None:
+            self._report_keyword_limit_violation(
+                violation.value, violation.utf8_byte_count
+            )
+        elif self.statusBar().currentMessage().startswith("IPTC keyword is "):
+            self.statusBar().clearMessage()
+
+    def _reject_invalid_iptc_keywords(self, values: list[str]) -> bool:
+        violation = iptc_keyword_list_violation(values)
+        if violation is None:
+            return False
+        self._report_keyword_limit_violation(violation.value, violation.utf8_byte_count)
+        return True
+
     def add_keyword_from_input(self) -> None:
-        tag = self.addEdit.text().strip()
-        self.addEdit.clear()
+        raw_tag = self.addEdit.text()
+        if self._reject_invalid_iptc_keywords([raw_tag]):
+            self.addEdit.setFocus()
+            return
+        tag = normalize_keyword(raw_tag)
         if not tag:
             return
-        self._apply_add_tag(tag)
+        if self._apply_add_tag(tag):
+            self.addEdit.clear()
 
     def add_keyword_from_known(self, item=None) -> None:
         it = (
@@ -3747,16 +3824,18 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         if it is None:
             return
-        tag = (it.text() or "").strip()
-        if not tag:
+        tag = normalize_keyword(it.text() or "")
+        if not tag or self._reject_invalid_iptc_keywords([tag]):
             return
         self._apply_add_tag(tag)
 
-    def _apply_add_tag(self, tag: str) -> None:
+    def _apply_add_tag(self, tag: str) -> bool:
+        if self._reject_invalid_iptc_keywords([tag]):
+            return False
         files = self.selected_file_paths()
         if not files:
             self.statusBar().showMessage("No files selected")
-            return
+            return False
         pending_mutation = self._begin_pending_tag_mutation(files, [TagIntent.add(tag)])
         add_recent_tag(tag)
         self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
@@ -3771,6 +3850,7 @@ class MainWindow(QtWidgets.QMainWindow):
             pending_mutation,
             f"Added '{tag}' to {len(files)} file(s)",
         )
+        return True
 
     def remove_selected_keywords(self) -> None:
         files = self.selected_file_paths()
