@@ -932,57 +932,76 @@ class MainWindow(QtWidgets.QMainWindow):
         self.knownFilter.setPlaceholderText("Filter known tags...")
         self.knownFilter.textChanged.connect(self._render_known_tags)
         self.knownFilter.returnPressed.connect(self._focus_first_known_tag)
-        self.knownFilter.setToolTip("Focus: / or Ctrl+F")
+        self.knownFilter.setToolTip("Focus: / or Ctrl+K")
         self.knownRefreshBtn = QtWidgets.QPushButton("Refresh")
         self.knownRefreshBtn.setFixedWidth(80)
         self.knownRefreshBtn.clicked.connect(self.force_refresh_known_tags)
-        self.knownRefreshBtn.setToolTip("Refresh tag repo (F5)")
+        self.knownRefreshBtn.setToolTip("Refresh known tags (F5)")
         self.knownList = QtWidgets.QListWidget()
         self.knownList.itemActivated.connect(self.add_keyword_from_known)
         self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
         self.knownList.setToolTip("Focus: t / Alt+2 / Ctrl+W J · Navigate: j/k, n/N")
 
-        self.recursiveScan = QtWidgets.QCheckBox("Recursive scan")
-        self.recursiveScan.setToolTip("Include subfolders when building tag repo")
-        self.recursiveScan.setChecked(False)
-        self.recursiveScan.toggled.connect(self.force_refresh_known_tags)
-
-        self.onlyUntagged = QtWidgets.QCheckBox("Only IPTC-empty")
-        self.onlyUntagged.setToolTip(
-            "Show only files without IPTC keywords (Ctrl+Shift+E)"
-        )
+        self.onlyUntagged = QtWidgets.QCheckBox("Only without IPTC tags")
+        self.onlyUntagged.setToolTip("Show only files without IPTC keywords (Ctrl+E)")
         self.onlyUntagged.toggled.connect(
             lambda _checked: self.apply_iptc_filter_async()
         )
         self.dbSearchEdit = QtWidgets.QLineEdit()
-        self.dbSearchEdit.setPlaceholderText("Search DB tags/date...")
-        self.dbSearchEdit.setToolTip(
-            "Reverse search: tag:foo, date:YYYY, date:YYYY-MM, "
-            "date:YYYY-MM-DD, date:YYYY-MM-DD..YYYY-MM-DD, or date:unknown · "
-            "Focus: Ctrl+Shift+F"
-        )
+        self.dbSearchEdit.setPlaceholderText("Search tags")
+        self.dbSearchEdit.setToolTip("Search indexed tags · Focus: Ctrl+T or Alt+T")
         self.dbSearchEdit.returnPressed.connect(self.apply_db_search)
-        self.dbSearchBtn = QtWidgets.QPushButton("Search")
+        self.dbDateSearchEdit = QtWidgets.QLineEdit()
+        self.dbDateSearchEdit.setPlaceholderText(
+            "YYYY, YYYY-MM, YYYY-MM-DD, range, or unknown"
+        )
+        self.dbDateSearchEdit.setToolTip(
+            "Capture date: YYYY, YYYY-MM, YYYY-MM-DD, "
+            "YYYY-MM-DD..YYYY-MM-DD, or unknown · Focus: Ctrl+D or Alt+D"
+        )
+        self.dbDateSearchEdit.returnPressed.connect(self.apply_db_search)
+        self.dbSearchBtn = QtWidgets.QPushButton("S\u0332earch")
         self.dbSearchBtn.clicked.connect(self.apply_db_search)
-        self.dbSearchClearBtn = QtWidgets.QPushButton("Clear")
-        self.dbSearchClearBtn.clicked.connect(self.clear_db_search)
-        self.dbSearchClearBtn.setToolTip("Clear photo-tag search (Ctrl+Shift+X)")
+        self.dbSearchBtn.setToolTip("Apply file filters (Alt+S)")
+        self.dbSearchClearBtn = QtWidgets.QPushButton("C\u0332lear")
+        self.dbSearchClearBtn.clicked.connect(self.clear_all_filters)
+        self.dbSearchClearBtn.setToolTip(
+            "Clear all file filters (Alt+C or :clearfilters)"
+        )
         self.filenameFilterEdit = QtWidgets.QLineEdit()
         self.filenameFilterEdit.setPlaceholderText("Filter filenames")
         self.filenameFilterEdit.setToolTip(
-            "Literal filename substring · Focus: Ctrl+Shift+L"
+            "Literal filename substring · Focus: Ctrl+F or Alt+F"
         )
         self.filenameFilterEdit.textChanged.connect(self.apply_filename_filter)
         self.filenameFilterEdit.returnPressed.connect(self._focus_first_visible_file)
-        self.filenameCaseSensitiveBtn = QtWidgets.QPushButton("Aa")
+        self.filenameCaseSensitiveBtn = QtWidgets.QPushButton("A\u0332a")
         self.filenameCaseSensitiveBtn.setCheckable(True)
-        self.filenameCaseSensitiveBtn.setToolTip("Match filename case exactly")
+        self.filenameCaseSensitiveBtn.setToolTip("Match filename case exactly (Alt+A)")
         self.filenameCaseSensitiveBtn.toggled.connect(self.apply_filename_filter)
+        self.workspaceCountLabel = QtWidgets.QLabel("0 in workspace")
+        self.workspaceCountLabel.setStyleSheet("color: palette(text); font-size: 11px;")
+        self.filterSummary = QtWidgets.QWidget()
+        self.filterSummaryLayout = QtWidgets.QHBoxLayout(self.filterSummary)
+        self.filterSummaryLayout.setContentsMargins(0, 0, 0, 0)
+        self.filterSummaryLayout.setSpacing(4)
+        self.filterChips = QtWidgets.QWidget()
+        self.filterChips.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Preferred,
+        )
+        self.filterChipsLayout = QtWidgets.QHBoxLayout(self.filterChips)
+        self.filterChipsLayout.setContentsMargins(0, 0, 0, 0)
+        self.filterChipsLayout.setSpacing(4)
+        self.filterSummaryLayout.addWidget(self.filterChips)
+        self.filterSummaryLayout.addStretch(1)
         self.filterInfoLabel = QtWidgets.QLabel("")
-        self.filterInfoLabel.setWordWrap(True)
+        self.filterInfoLabel.setStyleSheet("color: #315a7e; font-size: 11px;")
         self.filterInfoLabel.setToolTip(
             "Active Photo Workspace conditions and result count"
         )
+        self.filterSummaryLayout.addWidget(self.filterInfoLabel)
+        self.filterSummary.hide()
         self.filesRenderProgressIcon = LoadingSpinner(16)
         self.filesRenderProgressIcon.setObjectName("filesRenderProgressIcon")
         self.filesRenderProgressIcon.setToolTip("Loading discovered photo paths")
@@ -1067,14 +1086,13 @@ class MainWindow(QtWidgets.QMainWindow):
         rightSplitter.setChildrenCollapsible(False)
         imageLayout.addWidget(rightSplitter)
 
-        # --- Left-bottom: repo panel (known tags) ---
-        self.repoBox = QtWidgets.QGroupBox("Tag repo")
+        # --- Left-bottom: known tags ---
+        self.repoBox = QtWidgets.QGroupBox("Known tags")
         self.repoBox.setStyleSheet(
             "QGroupBox { font-weight: 600; }"
             "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 6px; }"
         )
         repoLayout = QtWidgets.QVBoxLayout(self.repoBox)
-        repoLayout.addWidget(QtWidgets.QLabel("Known tags (recent + folder)"))
 
         knownFilterRowW = QtWidgets.QWidget()
         knownFilterRow = QtWidgets.QHBoxLayout(knownFilterRowW)
@@ -1082,33 +1100,54 @@ class MainWindow(QtWidgets.QMainWindow):
         knownFilterRow.addWidget(self.knownFilter, 1)
         knownFilterRow.addWidget(self.knownRefreshBtn)
         repoLayout.addWidget(knownFilterRowW)
-        repoLayout.addWidget(self.recursiveScan)
         repoLayout.addWidget(self.knownList, 1)
 
         filesPanel = QtWidgets.QWidget()
         filesLayout = QtWidgets.QVBoxLayout(filesPanel)
         filesLayout.setContentsMargins(0, 0, 0, 0)
-        filesSearchRowW = QtWidgets.QWidget()
-        filesSearchRow = QtWidgets.QHBoxLayout(filesSearchRowW)
-        filesSearchRow.setContentsMargins(0, 0, 0, 0)
-        filesSearchRow.addWidget(self.dbSearchEdit, 1)
-        filesSearchRow.addWidget(self.dbSearchBtn)
-        filesSearchRow.addWidget(self.dbSearchClearBtn)
-        filesLayout.addWidget(filesSearchRowW)
+        filesLayout.setSpacing(6)
+        filesWorkspaceRowW = QtWidgets.QWidget()
+        filesWorkspaceRow = QtWidgets.QHBoxLayout(filesWorkspaceRowW)
+        filesWorkspaceRow.setContentsMargins(7, 0, 0, 0)
+        filesWorkspaceRow.addWidget(self.addFolderBtn)
+        filesWorkspaceRow.addWidget(self.workspaceCountLabel)
+        filesWorkspaceRow.addStretch(1)
+        filesLayout.addWidget(filesWorkspaceRowW)
+
+        self.filesFilterBox = QtWidgets.QFrame()
+        self.filesFilterBox.setObjectName("filesFilterBox")
+        self.filesFilterBox.setStyleSheet(
+            "QFrame#filesFilterBox { border: 1px solid palette(midlight); "
+            "border-radius: 4px; }"
+        )
+        filesFilterLayout = QtWidgets.QVBoxLayout(self.filesFilterBox)
+        filesFilterLayout.setContentsMargins(7, 7, 7, 7)
+        filesFilterLayout.setSpacing(5)
+        filesFilterForm = QtWidgets.QFormLayout()
+        filesFilterForm.setContentsMargins(0, 0, 0, 0)
+        filesFilterForm.setHorizontalSpacing(6)
+        filesFilterForm.setVerticalSpacing(5)
+        filesFilterForm.setLabelAlignment(
+            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
+        )
+        filesFilterForm.addRow("T\u0332ags:", self.dbSearchEdit)
+        filesFilterForm.addRow("D\u0332ate:", self.dbDateSearchEdit)
         filenameFilterRowW = QtWidgets.QWidget()
         filenameFilterRow = QtWidgets.QHBoxLayout(filenameFilterRowW)
         filenameFilterRow.setContentsMargins(0, 0, 0, 0)
         filenameFilterRow.addWidget(self.filenameFilterEdit, 1)
         filenameFilterRow.addWidget(self.filenameCaseSensitiveBtn)
-        filesLayout.addWidget(filenameFilterRowW)
-        filesTopRow = QtWidgets.QHBoxLayout()
-        filesTopRow.setContentsMargins(0, 0, 0, 0)
-        filesTopRow.addWidget(self.onlyUntagged)
-        filesTopRow.addWidget(self.filesRenderProgress)
-        filesTopRow.addWidget(self.addFolderBtn)
-        filesTopRow.addStretch(1)
-        filesLayout.addLayout(filesTopRow)
-        filesLayout.addWidget(self.filterInfoLabel)
+        filesFilterForm.addRow("F\u0332ilename:", filenameFilterRowW)
+        filesFilterForm.addRow(self.onlyUntagged)
+        filesFilterLayout.addLayout(filesFilterForm)
+        filesFilterActions = QtWidgets.QHBoxLayout()
+        filesFilterActions.setContentsMargins(0, 0, 0, 0)
+        filesFilterActions.addWidget(self.dbSearchBtn, 1)
+        filesFilterActions.addWidget(self.dbSearchClearBtn, 1)
+        filesFilterLayout.addLayout(filesFilterActions)
+        filesLayout.addWidget(self.filesFilterBox)
+        self.filterSummaryLayout.addWidget(self.filesRenderProgress)
+        filesLayout.addWidget(self.filterSummary)
         filesLayout.addWidget(self.files, 1)
 
         leftSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -1239,7 +1278,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "knownList": self.knownList,
             "addEdit": self.addEdit,
             "knownFilter": self.knownFilter,
+            "dbDateSearchEdit": self.dbDateSearchEdit,
             "filenameFilterEdit": self.filenameFilterEdit,
+            "filesFilterBox": self.filesFilterBox,
             "cmdLine": self.cmdLine,
         }
 
@@ -1298,7 +1339,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "remove_selected_keywords": self.remove_selected_keywords,
             "_focus_known_filter_select_all": self._focus_known_filter_select_all,
             "_focus_db_search_select_all": self._focus_db_search_select_all,
+            "_focus_date_filter_select_all": self._focus_date_filter_select_all,
             "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
+            "_toggle_filename_case_sensitive": self._toggle_filename_case_sensitive,
             "clear_db_search": self.clear_db_search,
             "clear_filename_filter": self.clear_filename_filter,
             "clear_all_filters": self.clear_all_filters,
@@ -1435,7 +1478,14 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         for lst in (self.files, self.keywordsList, self.knownList):
             lst.setStyleSheet(list_qss)
-        for edit in (self.addEdit, self.knownFilter, self.cmdLine):
+        for edit in (
+            self.addEdit,
+            self.knownFilter,
+            self.dbSearchEdit,
+            self.dbDateSearchEdit,
+            self.filenameFilterEdit,
+            self.cmdLine,
+        ):
             edit.setStyleSheet(edit_qss)
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
@@ -3036,6 +3086,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._files_render_loaded = loaded
         self._files_render_total = total
         self.filterInfoLabel.hide()
+        self.filterSummary.show()
         self._update_files_render_progress_text()
         self.filesRenderProgress.show()
         if self.files.count() == 0:
@@ -3065,7 +3116,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _hide_files_render_progress(self) -> None:
         self.filesRenderProgress.hide()
         self.filesPaneLoadingIcon.hide()
-        self.filterInfoLabel.show()
+        self._update_view_indicator(self.photo_workspace.snapshot())
         if not self.filesPaneMessage.isVisible():
             self._loading_photos_timer.stop()
 
@@ -3581,58 +3632,72 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_selection_changed()
         return selection_changed
 
-    def _update_view_indicator(self, snapshot: PhotoWorkspaceSnapshot) -> None:
-        """Render the persistent Photo Workspace scope above the files pane."""
-        filename_query = snapshot.filename_filter_query
-        if filename_query is None:
-            if self._active_search_request is not None:
-                self.filterInfoLabel.setText(
-                    f"Searching index · {self._active_search_request.query}"
-                )
-            elif snapshot.filter_operation_id is not None:
-                self.filterInfoLabel.setText(
-                    "Filtering IPTC-empty · "
-                    f"{snapshot.filter_processed}/{snapshot.filter_total}"
-                )
-            elif snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-                if snapshot.has_database_search:
-                    self.filterInfoLabel.setText(
-                        "Filters: "
-                        f"search: {self._displayed_search_query or ''} · "
-                        f"IPTC-empty · {len(snapshot.visible_paths)} results"
-                    )
-                else:
-                    self.filterInfoLabel.setText(
-                        "IPTC-empty · "
-                        f"{len(snapshot.visible_paths)}/{snapshot.filter_total}"
-                    )
-            elif snapshot.view_mode is PhotoWorkspaceViewMode.DATABASE_SEARCH:
-                self.filterInfoLabel.setText(
-                    "Search: "
-                    f"{self._displayed_search_query or ''} · "
-                    f"{len(snapshot.visible_paths)} results"
-                )
-            else:
-                self.filterInfoLabel.setText(
-                    f"Folder view · {len(snapshot.paths)} photos"
-                )
+    def _set_filter_chips(self, conditions: list[str]) -> None:
+        """Render the compact, active-only filter bubbles in the Files pane."""
+        while self.filterChipsLayout.count():
+            item = self.filterChipsLayout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        if not conditions:
+            self.filterChips.hide()
             return
-
-        conditions = [f"filename contains “{filename_query}”"]
-        if self._active_search_request is not None:
-            conditions.append(f"searching index: {self._active_search_request.query}")
-        elif snapshot.has_database_search:
-            conditions.append(f"search: {self._displayed_search_query or ''}")
-        if snapshot.filter_operation_id is not None:
-            conditions.append(
-                "filtering IPTC-empty "
-                f"{snapshot.filter_processed}/{snapshot.filter_total}"
-            )
-        elif snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-            conditions.append("IPTC-empty")
-        self.filterInfoLabel.setText(
-            f"Filters: {' · '.join(conditions)} · {len(snapshot.visible_paths)} results"
+        prefix = QtWidgets.QLabel("Filters:")
+        prefix.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Maximum,
+            QtWidgets.QSizePolicy.Policy.Fixed,
         )
+        prefix.setStyleSheet("color: palette(text); font-size: 11px;")
+        self.filterChipsLayout.addWidget(prefix)
+        for condition in conditions:
+            chip = QtWidgets.QLabel(condition)
+            chip.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Maximum,
+                QtWidgets.QSizePolicy.Policy.Fixed,
+            )
+            chip.setStyleSheet(
+                "background: #e7f0fa; border: 1px solid #aac5de; "
+                "border-radius: 8px; color: #315e86; padding: 1px 5px; "
+                "font-size: 10px;"
+            )
+            self.filterChipsLayout.addWidget(chip)
+        self.filterChips.show()
+
+    def _update_view_indicator(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        """Render workspace count, active filter bubbles, and the match count."""
+        self.workspaceCountLabel.setText(
+            f"{self.photo_workspace.workspace_path_count} in workspace"
+        )
+        conditions: list[str] = []
+        has_db_search = (
+            self._active_search_request is not None or snapshot.has_database_search
+        )
+        if has_db_search:
+            tag_query = self.dbSearchEdit.text().strip()
+            date_query = self.dbDateSearchEdit.text().strip()
+            if tag_query:
+                conditions.append(f"Tags: {tag_query}")
+            if date_query:
+                conditions.append(f"Date: {date_query}")
+        if snapshot.filename_filter_query is not None:
+            conditions.append(f"Filename: {snapshot.filename_filter_query}")
+        if (
+            snapshot.filter_operation_id is not None
+            or snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
+        ):
+            conditions.append("No tags")
+
+        self._set_filter_chips(conditions)
+        if self._active_search_request is not None:
+            message = "Searching…"
+        elif snapshot.filter_operation_id is not None:
+            message = "Filtering…"
+        elif conditions:
+            message = f"match {len(snapshot.visible_paths)} files"
+        else:
+            message = ""
+        self.filterInfoLabel.setText(message)
+        self.filterInfoLabel.setVisible(bool(message))
+        self.filterSummary.setVisible(bool(conditions) or bool(message))
 
     def _update_files_pane_empty_state(self, snapshot: PhotoWorkspaceSnapshot) -> None:
         """Show an unambiguous empty state for completed active conditions."""
@@ -3792,6 +3857,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def clear_all_filters(self) -> None:
         self.dbSearchEdit.clear()
+        self.dbDateSearchEdit.clear()
         self.onlyUntagged.blockSignals(True)
         self.onlyUntagged.setChecked(False)
         self.onlyUntagged.blockSignals(False)
@@ -3817,6 +3883,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def clear_db_search(self) -> None:
         self.dbSearchEdit.clear()
+        self.dbDateSearchEdit.clear()
         self._active_search_request = None
         self._displayed_search_request = None
         self._displayed_search_generation = None
@@ -3852,11 +3919,31 @@ class MainWindow(QtWidgets.QMainWindow):
         if not query:
             self.statusBar().showMessage("Search query required")
             return
-        self.dbSearchEdit.setText(query)
+        if query.casefold().startswith("date:"):
+            self.dbSearchEdit.clear()
+            self.dbDateSearchEdit.setText(query[5:])
+        else:
+            self.dbDateSearchEdit.clear()
+            self.dbSearchEdit.setText(query)
         self.apply_db_search()
 
+    def _database_search_query(self) -> str:
+        """Translate the separate Tags and Date controls to the index grammar."""
+        tag_query = self.dbSearchEdit.text().strip()
+        date_query = self.dbDateSearchEdit.text().strip()
+        if not date_query:
+            return tag_query
+        if not tag_query:
+            return f"date:{date_query}"
+        tag_term = (
+            tag_query[4:].strip()
+            if tag_query.casefold().startswith("tag:")
+            else tag_query
+        )
+        return f"tag:{tag_term} date:{date_query}"
+
     def apply_db_search(self) -> None:
-        query = (self.dbSearchEdit.text() or "").strip()
+        query = self._database_search_query()
         if not query:
             self.clear_db_search()
             return
@@ -4175,6 +4262,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_db_search_select_all(self) -> None:
         self.dbSearchEdit.setFocus()
         self.dbSearchEdit.selectAll()
+
+    def _focus_date_filter_select_all(self) -> None:
+        self.dbDateSearchEdit.setFocus()
+        self.dbDateSearchEdit.selectAll()
+
+    def _toggle_filename_case_sensitive(self) -> None:
+        self.filenameCaseSensitiveBtn.toggle()
 
     def _focus_filename_filter_select_all(self) -> None:
         self.filenameFilterEdit.setFocus()

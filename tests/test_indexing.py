@@ -382,6 +382,41 @@ class PhotoIndexDateSearchTests(unittest.TestCase):
                 [paths["march.jpg"], paths["unknown.jpg"]],
             )
 
+    def test_tag_and_date_terms_intersect_in_one_indexed_search(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = {
+                name: normalize_path(root / name)
+                for name in (
+                    "beach-january.jpg",
+                    "beach-february.jpg",
+                    "city-january.jpg",
+                )
+            }
+            for path in paths.values():
+                Path(path).touch()
+            index = PhotoIndex(root)
+            index.update_states(
+                {
+                    paths["beach-january.jpg"]: KeywordState(
+                        ["beach"], ["beach"], date_original="2024:01:15 12:00:00"
+                    ),
+                    paths["beach-february.jpg"]: KeywordState(
+                        ["beach"], ["beach"], date_original="2024:02:15 12:00:00"
+                    ),
+                    paths["city-january.jpg"]: KeywordState(
+                        ["city"], ["city"], date_original="2024:01:15 12:00:00"
+                    ),
+                }
+            )
+
+            self.assertEqual(
+                index.search_photos("tag:beach date:2024-01"),
+                [paths["beach-january.jpg"]],
+            )
+            with self.assertRaises(DateQueryError):
+                index.search_photos("tag:beach date:2024-02-30")
+
     def test_date_index_migration_backfills_existing_raw_values(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

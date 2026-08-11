@@ -26,7 +26,7 @@ Before implementation:
 - Year and month expressions mean their complete calendar period. Full-date range endpoints are inclusive.
 - `date:unknown` returns photos with no source date and photos whose source date cannot be normalized. It supports metadata counterchecks and correction work.
 - Store a separate normalized nullable capture-date value as `YYYY-MM-DD`; retain the existing raw `photos.date_taken` value for legacy compatibility. Add the new column through a SQLite migration and backfill it by normalizing existing raw values; values that cannot be normalized become date-unknown until a later index refresh supplies valid metadata.
-- Date filtering remains search-field and `:search` syntax only. Invalid date expressions do not schedule a search or change the active Photo Workspace; they produce clear status feedback.
+- Date filtering remains an indexed-search operation. The persistent Files-pane Date input compiles to the same `date:` grammar; `:search` remains the command interface. Invalid date expressions do not schedule a search or change the active Photo Workspace; they produce clear status feedback.
 
 ## Constraints
 

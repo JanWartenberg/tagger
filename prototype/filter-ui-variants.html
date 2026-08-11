@@ -1,0 +1,178 @@
+<!doctype html>
+<!--
+  THROWAWAY UI PROTOTYPE — not production UI.
+  Question: Within TAGGER's actual split-pane layout, how should the left Files
+  pane make Add folder primary while grouping its filters? Six variants,
+  selected with ?variant=A|B|C|D. Open with a browser or serve this directory:
+  python -m http.server 8000 --directory /workspace/tagger/prototype
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TAGGER — Files pane filter variants</title>
+  <style>
+    :root { --bg:#e8e6e1; --window:#f6f5f2; --panel:#fbfbfa; --line:#c9c8c3; --soft:#e8e8e4; --ink:#202425; --muted:#69706d; --blue:#2566a6; --blue2:#e7f0fa; --shadow:0 16px 44px #0003; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    button,input { font:inherit; } button { cursor:pointer; border:1px solid #b8bbb9; border-radius:5px; padding:6px 9px; background:#fff; color:var(--ink); } button:hover { background:#f0f4f7; }
+    input { min-width:0; width:100%; padding:6px 8px; border:1px solid #b8bbb9; border-radius:4px; background:white; } input:focus { outline:2px solid #8fbae6; outline-offset:1px; }
+    .primary { border-color:#1d568f; background:var(--blue); color:#fff; font-weight:650; } .primary:hover { background:#174a7d; } .ghost { border-color:transparent; background:transparent; color:#4b5856; } .ghost:hover { border-color:#c6ceca; }
+    .app { display:grid; grid-template-rows:34px 1fr 24px; width:min(1280px,calc(100vw - 30px)); height:min(810px,calc(100vh - 40px)); min-height:640px; margin:20px auto 80px; overflow:hidden; border:1px solid #aaa9a5; border-radius:8px; background:var(--window); box-shadow:var(--shadow); }
+    .titlebar { display:flex; align-items:center; gap:9px; padding:0 13px; background:#303638; color:#f8f8f5; font-size:12px; } .titlebar .dots { color:#b4bcba; letter-spacing:2px; } .titlebar span:last-child { color:#bec6c3; }
+    .body { display:grid; grid-template-columns:minmax(320px, 34%) 8px 1fr; min-height:0; }
+    .splitter { position:relative; background:#deddd9; border-left:1px solid #c4c3bf; border-right:1px solid #c4c3bf; } .splitter:after { content:""; position:absolute; top:48%; left:2px; width:2px; height:25px; border-radius:2px; background:#a7a8a4; }
+    .left-column { display:grid; grid-template-rows:minmax(330px, 61%) 7px minmax(180px,39%); min-height:0; background:#f7f7f5; } .h-split { background:#deddd9; border-top:1px solid #c4c3bf; border-bottom:1px solid #c4c3bf; }
+    .files-pane { min-height:0; display:flex; flex-direction:column; padding:10px; overflow:hidden; } .tag-repo { min-height:0; margin:0 10px 10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); overflow:hidden; display:flex; flex-direction:column; }
+    .group-title { margin:0; padding:0 7px; font-size:13px; font-weight:700; } .group-head { display:flex; align-items:center; justify-content:space-between; padding:8px 10px 6px; }
+    .file-list { min-height:96px; flex:1; margin-top:7px; overflow:hidden; border:1px solid #c7c7c2; border-radius:4px; background:white; } .file { display:flex; align-items:center; gap:8px; height:28px; padding:0 7px; border-bottom:1px solid #eeeeeb; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; } .file.selected { background:#dceafa; color:#123e6a; } .file .tiny-thumb { width:17px; height:14px; flex:0 0 auto; border-radius:2px; background:linear-gradient(145deg,#9ab5c3 0 44%,#e5cd94 44% 65%,#668a71 65%); }
+    .filter-status { padding:6px 2px 0; color:#52635d; font-size:11px; } .filter-status b { color:#254c70; }
+    .repo-content { display:grid; min-height:0; flex:1; grid-template-rows:auto auto 1fr; gap:6px; padding:0 10px 10px; } .repo-row { display:flex; gap:5px; } .repo-row input { flex:1; } .repo-row button { width:67px; } .known-list { overflow:hidden; border:1px solid #d0cfcb; border-radius:4px; background:#fff; color:#505755; } .known-list div { padding:4px 7px; border-bottom:1px solid #efefec; }
+    .image { min-height:0; margin:10px; border:1px solid var(--line); border-radius:6px; background:var(--panel); display:grid; grid-template-rows:1fr 7px minmax(205px,35%); overflow:hidden; } .image-title { position:absolute; margin:0 0 0 9px; padding:0 6px; transform:translateY(-9px); background:var(--window); font-weight:700; }
+    .preview { min-height:0; padding:19px 13px 12px; display:flex; flex-direction:column; } .selected-file { display:flex; justify-content:space-between; gap:10px; color:#47524f; font-size:12px; } .selected-file b { color:var(--ink); } .preview-photo { flex:1; min-height:140px; margin-top:10px; border:1px solid #b8b8b3; border-radius:3px; background:linear-gradient(142deg,#8caab5 0 40%,#e3c88d 40% 57%,#e9edf0 57% 65%,#54796c 65%); box-shadow:inset 0 0 50px #0002; } .image-split { background:#deddd9; border-top:1px solid #c4c3bf; border-bottom:1px solid #c4c3bf; }
+    .tags { min-height:0; display:grid; grid-template-rows:auto 1fr auto auto; gap:7px; padding:10px 13px 12px; } .tags label { font-weight:650; } .tag-list { min-height:54px; overflow:hidden; border:1px solid #cccac5; border-radius:4px; background:#fff; } .tag-list div { padding:4px 7px; border-bottom:1px solid #efefec; } .tag-add { display:flex; gap:6px; } .tag-add input { flex:1; } .backup { font-size:11px; color:#5f6765; }
+    .bottom { padding:4px 12px; border-top:1px solid #d0cfca; background:#f0efeb; color:#5c6461; font-size:11px; }
+    .variant { display:none; min-height:0; flex-direction:column; } .variant.active { display:flex; }
+    .hint { color:var(--muted); font-size:11px; } .section-label { display:block; margin-bottom:4px; color:#50605b; font-size:10px; font-weight:760; letter-spacing:.06em; text-transform:uppercase; } .check { display:flex; align-items:center; gap:6px; cursor:pointer; } .check input { width:auto; accent-color:var(--blue); }
+
+    /* A: sequence the fundamental action before a visible filter group. */
+    .a-workspace { display:flex; gap:7px; align-items:center; padding:0 0 9px; border-bottom:1px solid #d7d6d1; } .a-workspace .primary { white-space:nowrap; } .a-workspace .where { min-width:0; flex:1; } .a-workspace .where b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .a-filters { margin-top:9px; border:1px solid #aebfd0; border-radius:6px; background:#fbfdff; } .a-filter-head { display:flex; justify-content:space-between; align-items:center; padding:6px 8px; border-bottom:1px solid #cfdae5; background:var(--blue2); font-weight:700; } .a-filter-head small { font-weight:500; color:#4e6580; } .a-grid { display:grid; gap:6px; padding:7px; } .a-row { display:grid; grid-template-columns:66px 1fr auto; align-items:center; gap:5px; } .a-row label { color:#4b5755; font-size:11px; text-align:right; } .a-row button { padding:6px 7px; } .a-empty { padding:1px 0 0 72px; font-size:12px; } .a-reset { display:flex; justify-content:flex-end; margin-top:-2px; }
+
+    /* B: move folder acquisition into the pane title bar; filters are an accordion. */
+    .b-title { display:flex; align-items:center; gap:6px; padding-bottom:9px; border-bottom:1px solid #d7d6d1; } .b-title h2 { flex:1; margin:0; font-size:14px; } .b-title .primary { white-space:nowrap; }
+    .b-filter-toggle { display:flex; align-items:center; width:100%; margin-top:8px; padding:7px 8px; border-color:#b3c5d5; background:var(--blue2); text-align:left; } .b-filter-toggle b { flex:1; } .b-filter-toggle .badge { padding:2px 6px; border-radius:10px; background:#c9ddec; color:#275a86; font-size:10px; font-weight:700; } .b-filter-toggle .chev { margin-left:7px; font-size:16px; }
+    .b-filter-panel { padding:8px; border:1px solid #b3c5d5; border-top:0; background:#fff; } .b-filter-panel .labelled { display:grid; gap:3px; margin-bottom:7px; } .b-filter-panel .subrow { display:flex; gap:5px; } .b-filter-panel .subrow input { flex:1; } .b-filter-panel .subrow button { padding:6px 8px; } .b-filter-bottom { display:flex; align-items:center; justify-content:space-between; padding-top:2px; }
+
+    /* C: Add-folder becomes an app-level workspace bar; Files holds one strict filter card. */
+    .c-workspace-bar { display:grid; grid-template-columns:1fr auto; gap:4px 8px; align-items:center; padding:0 0 9px; border-bottom:1px solid #d7d6d1; } .c-workspace-bar .section-label { margin:0; } .c-workspace-bar .folder { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; } .c-workspace-bar .primary { grid-row:1 / span 2; grid-column:2; align-self:stretch; }
+    .c-files-heading { display:flex; justify-content:space-between; align-items:center; padding:9px 0 5px; } .c-files-heading h2 { margin:0; font-size:14px; } .c-filter-card { padding:7px; border-left:3px solid var(--blue); border-radius:0 5px 5px 0; background:#f0f5f9; } .c-filter-card-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; } .c-filter-card-header b { font-size:12px; } .c-filter-lines { display:grid; grid-template-columns:1fr 1fr; gap:6px; } .c-filter-lines input { font-size:12px; } .c-check-row { display:flex; justify-content:space-between; align-items:center; margin-top:6px; font-size:12px; }
+
+    /* D: One activated filter command opens a "filter sheet", saving list height after setup. */
+    .d-title { display:flex; gap:7px; align-items:center; padding-bottom:9px; border-bottom:1px solid #d7d6d1; } .d-title .primary { white-space:nowrap; } .d-title .folder { flex:1; min-width:0; } .d-title .folder b { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .d-filter-summary { display:flex; align-items:center; gap:7px; margin-top:9px; padding:7px 8px; border:1px solid #aac0d5; background:#f2f7fc; text-align:left; } .d-filter-summary b { flex:1; } .d-chip { padding:2px 5px; border:1px solid #a9c3da; border-radius:10px; background:#fff; color:#315e86; font-size:10px; } .d-sheet { display:grid; gap:7px; padding:9px; border:1px solid #aac0d5; border-top:0; background:#fff; } .d-sheet-row { display:grid; grid-template-columns:61px 1fr auto; align-items:center; gap:5px; } .d-sheet-row label { color:#4a5755; font-size:11px; text-align:right; } .d-sheet .check { padding-left:66px; font-size:12px; } .d-sheet-actions { display:flex; justify-content:space-between; align-items:center; }
+
+    /* E: the selected direction — four independent rows, one submit action, then result chips. */
+    .e-workspace { display:flex; align-items:center; gap:9px; padding-bottom:9px; border-bottom:1px solid #d7d6d1; } .e-workspace .workspace-count { color:#64706b; font-size:11px; }
+    .e-filter-box { margin-top:9px; padding:9px; border:1px solid #c7d0d7; border-radius:6px; background:#f8fafb; } .e-filter-box > b { display:block; margin-bottom:7px; font-size:12px; }
+    .e-row { display:grid; grid-template-columns:62px 1fr auto; align-items:center; gap:6px; margin-top:6px; } .e-row label { color:#4a5755; font-size:11px; text-align:right; } .e-row button { padding:6px 8px; font-weight:700; } .e-check { margin:8px 0 0 68px; font-size:12px; }
+    .e-actions { display:flex; gap:6px; margin-top:9px; } .e-actions button { flex:1; } .e-active-filters { display:flex; align-items:center; flex-wrap:wrap; gap:4px; padding:8px 1px 0; } .e-active-filters .filter-word { color:#5b6662; font-size:11px; } .e-match { margin-left:3px; color:#315a7e; font-size:11px; font-weight:700; }
+
+    /* F: E without redundant headings/status, so the Files list gains that height. */
+    .f-filter-box { padding-top:7px; } .f-filter-box .e-row:first-child { margin-top:0; }
+
+    .switcher { position:fixed; z-index:3; bottom:17px; left:50%; display:flex; align-items:center; gap:6px; padding:6px; transform:translateX(-50%); border:1px solid #56616a; border-radius:999px; background:#232c32; color:#fff; box-shadow:0 8px 24px #0006; } .switcher button { min-width:31px; padding:5px 8px; border:0; border-radius:50%; background:#3f4c55; color:white; } .switcher button:hover { background:#596a74; } .switcher strong { min-width:178px; text-align:center; font-size:11px; }
+    .state { position:fixed; right:16px; bottom:18px; max-width:380px; padding:7px 10px; border:1px solid #b8c8c0; border-radius:6px; background:#f2f8f5; color:#315547; box-shadow:0 4px 14px #0002; font-size:11px; }
+    @media (max-width:780px) { .app { width:calc(100vw - 12px); margin-top:6px; } .body { grid-template-columns:minmax(292px,44%) 7px 1fr; } .image { margin:8px; } .state { display:none; } .a-row { grid-template-columns:55px 1fr auto; } .a-empty { padding-left:61px; } }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="titlebar"><span class="dots">● ● ●</span><b>TAGGER</b><span>Photo metadata workspace</span></header>
+    <div class="body">
+      <aside class="left-column">
+        <section class="files-pane">
+          <!-- A — stacked workflow -->
+          <div class="variant" id="variant-A">
+            <div class="a-workspace"><button class="primary" data-action="folder">＋ Add folder</button><div class="where"><span class="section-label">Current workspace</span><b>Summer trip / Iceland</b><span class="hint">243 photos</span></div></div>
+            <div class="a-filters"><div class="a-filter-head">Filter files <small>3 filters · all active filters apply</small></div><div class="a-grid">
+              <div class="a-row"><label>Tags / date</label><input data-filter="Tags/date" placeholder="Search DB tags/date..."><button data-action="search">Search</button></div>
+              <div class="a-row"><label>Filename</label><input data-filter="Filename" placeholder="Filter filenames"><button title="Match case exactly">Aa</button></div>
+              <label class="check a-empty"><input type="checkbox" data-filter="Only IPTC empty"> Only IPTC-empty</label><div class="a-reset"><button class="ghost" data-action="clear">Clear all filters</button></div>
+            </div></div>
+          </div>
+          <!-- B — title-bar + accordion -->
+          <div class="variant" id="variant-B">
+            <div class="b-title"><h2>Files <span class="hint">· 243 in workspace</span></h2><button class="primary" data-action="folder">＋ Add folder</button></div>
+            <button class="b-filter-toggle" id="b-toggle"><b>Filters</b><span class="badge">3 ways · AND</span><span class="chev">⌄</span></button>
+            <div class="b-filter-panel" id="b-panel">
+              <label class="labelled"><span class="section-label">Search indexed tags or date</span><span class="subrow"><input data-filter="Tags/date" placeholder="e.g. beach or date:2025"><button data-action="search">Search</button></span></label>
+              <label class="labelled"><span class="section-label">Filename contains</span><span class="subrow"><input data-filter="Filename" placeholder="Filter filenames"><button title="Match case exactly">Aa</button></span></label>
+              <div class="b-filter-bottom"><label class="check"><input type="checkbox" data-filter="Only IPTC empty"> Only IPTC-empty</label><button class="ghost" data-action="clear">Clear</button></div>
+            </div>
+          </div>
+          <!-- C — workspace bar -->
+          <div class="variant" id="variant-C">
+            <div class="c-workspace-bar"><span class="section-label">Photo workspace</span><b class="folder">Summer trip / Iceland <span class="hint">· 243 photos</span></b><button class="primary" data-action="folder">＋ Add folder</button></div>
+            <div class="c-files-heading"><h2>Files</h2><span class="hint">18 shown</span></div>
+            <div class="c-filter-card"><div class="c-filter-card-header"><b>Filter this workspace</b><button class="ghost" data-action="clear">Clear all</button></div><div class="c-filter-lines"><input data-filter="Tags/date" placeholder="DB tags or date"><input data-filter="Filename" placeholder="Filename contains"></div><div class="c-check-row"><label class="check"><input type="checkbox" data-filter="Only IPTC empty"> Only IPTC-empty</label><span class="hint">three filters combine · Aa case button</span></div></div>
+          </div>
+          <!-- D — summary + filter sheet -->
+          <div class="variant" id="variant-D">
+            <div class="d-title"><button class="primary" data-action="folder">＋ Add folder</button><div class="folder"><span class="section-label">Current workspace</span><b>Summer trip / Iceland</b><span class="hint">243 photos</span></div></div>
+            <button class="d-filter-summary" id="d-toggle"><span>⌄</span><b>Filter files</b><span class="d-chip">filename: ice</span><span class="d-chip">IPTC empty</span></button>
+            <div class="d-sheet" id="d-sheet"><div class="d-sheet-row"><label>Tags / date</label><input data-filter="Tags/date" placeholder="Search DB tags/date..."><button data-action="search">Search</button></div><div class="d-sheet-row"><label>Filename</label><input data-filter="Filename" value="ice"><button title="Match case exactly">Aa</button></div><label class="check"><input type="checkbox" checked data-filter="Only IPTC empty"> Only IPTC-empty</label><div class="d-sheet-actions"><span class="hint">All active filters apply</span><button class="ghost" data-action="clear">Clear filters</button></div></div>
+          </div>
+          <!-- E — specified four-row filter layout -->
+          <div class="variant" id="variant-E">
+            <div class="e-workspace"><button class="primary" data-action="folder">＋ Add folder</button><span class="workspace-count">23 in workspace</span></div>
+            <div class="e-filter-box"><b>Filter files</b>
+              <div class="e-row"><label>Tags:</label><input data-filter="Tags" value="beach" placeholder="Search tags"></div>
+              <div class="e-row"><label>Date:</label><input data-filter="Date" value="2025-06" placeholder="YYYY, YYYY-MM, or range"></div>
+              <div class="e-row"><label>Filename:</label><input data-filter="Filename" value="ice" placeholder="Filter filenames"><button title="Match case exactly">aA</button></div>
+              <label class="check e-check"><input type="checkbox" checked data-filter="Only without IPTC tags"> Only without IPTC tags</label>
+              <div class="e-actions"><button class="primary" data-action="search">Search</button><button data-action="clear">Clear</button></div>
+              <div class="e-active-filters" id="e-active-filters"><span class="filter-word">Filters:</span><span class="d-chip">Tags: beach</span><span class="d-chip">Date: 2025-06</span><span class="d-chip">Filename: ice</span><span class="d-chip">IPTC empty</span><span class="e-match">match 5 files</span></div>
+            </div>
+          </div>
+          <!-- F — selected direction with redundant labels removed for list height -->
+          <div class="variant" id="variant-F">
+            <div class="e-workspace"><button class="primary" data-action="folder">＋ Add folder</button><span class="workspace-count">23 in workspace</span></div>
+            <div class="e-filter-box f-filter-box">
+              <div class="e-row"><label>Tags:</label><input data-filter="Tags" value="beach" placeholder="Search tags"></div>
+              <div class="e-row"><label>Date:</label><input data-filter="Date" value="2025-06" placeholder="YYYY, YYYY-MM, or range"></div>
+              <div class="e-row"><label>Filename:</label><input data-filter="Filename" value="ice" placeholder="Filter filenames"><button title="Match case exactly">aA</button></div>
+              <label class="check e-check"><input type="checkbox" checked data-filter="Only without IPTC tags"> Only without IPTC tags</label>
+              <div class="e-actions"><button class="primary" data-action="search">Search</button><button data-action="clear">Clear</button></div>
+              <div class="e-active-filters" id="f-active-filters"><span class="filter-word">Filters:</span><span class="d-chip">Tags: beach</span><span class="d-chip">Date: 2025-06</span><span class="d-chip">Filename: ice</span><span class="d-chip">IPTC empty</span><span class="e-match">match 5 files</span></div>
+            </div>
+          </div>
+          <div class="filter-status" id="duplicate-status"><b id="result-count">18 photos</b> match the current Photo Workspace conditions.</div>
+          <div class="file-list"><div class="file selected"><span class="tiny-thumb"></span>iceberg-beach-001.jpg</div><div class="file"><span class="tiny-thumb"></span>glacier-lagoon.jpg</div><div class="file"><span class="tiny-thumb"></span>black-sand-beach.jpg</div><div class="file"><span class="tiny-thumb"></span>ice-cave-approach.jpeg</div><div class="file"><span class="tiny-thumb"></span>coast-drive-019.jpg</div></div>
+        </section>
+        <div class="h-split"></div>
+        <section class="tag-repo"><div class="group-head"><h2 class="group-title">Known tags</h2></div><div class="repo-content"><div class="repo-row"><input placeholder="Filter known tags..."><button>Refresh</button></div><div class="known-list"><div>beach</div><div>coast</div><div>glacier</div><div>ice</div><div>landscape</div></div></div></section>
+      </aside>
+      <div class="splitter" aria-hidden="true"></div>
+      <section class="image"><span class="image-title">Image</span><div class="preview"><div class="selected-file"><span><b>iceberg-beach-001.jpg</b><br>14 June 2025</span><button>Copy date</button></div><div class="preview-photo" aria-label="Photo preview placeholder"></div></div><div class="image-split"></div><div class="tags"><label>Tags on image</label><div class="tag-list"><div>beach</div><div>ice</div><div>iceland</div></div><div class="tag-add"><input placeholder="Add keyword..."><button>Add</button><button>Remove selected</button></div><label class="check backup"><input type="checkbox"> Keep *_original backups (exiftool default)</label></div></section>
+    </div>
+    <footer class="bottom">Ready</footer>
+  </main>
+  <nav class="switcher" aria-label="Prototype variant switcher"><button id="previous" aria-label="Previous variant">←</button><strong id="switcher-label"></strong><button id="next" aria-label="Next variant">→</button></nav>
+  <output id="state" class="state">Demo state</output>
+  <script>
+    const variants = {
+      A: "A — staged: workspace first, filters second",
+      B: "B — Files header + collapsible filter group",
+      C: "C — workspace bar + compact filter card",
+      D: "D — summary chips + expandable filter sheet",
+      E: "E — four fields + Search/Clear + active-filter bubbles",
+      F: "F — E with redundant labels removed for more file-list height"
+    };
+    const keys = Object.keys(variants);
+    let current = new URLSearchParams(location.search).get("variant") || "A";
+    if (!variants[current]) current = "A";
+    function updateState() {
+      const area = document.querySelector(`#variant-${current}`);
+      const active = [...area.querySelectorAll("[data-filter]")].flatMap(el => el.type === "checkbox" ? (el.checked ? [el.dataset.filter] : []) : (el.value.trim() ? [`${el.dataset.filter}: “${el.value.trim()}”`] : []));
+      document.getElementById("state").textContent = `Demo state · actual layout: Files + Known tags share the left splitter; Preview + Tags share Image on the right · ${active.length ? active.join(" + ") : "no active filters"}`;
+      if (current === "E" || current === "F") {
+        const bubbles = document.getElementById(`${current.toLowerCase()}-active-filters`);
+        bubbles.innerHTML = `<span class="filter-word">Filters:</span>${active.map(item => `<span class="d-chip">${item}</span>`).join("")}<span class="e-match">match ${active.length ? 5 : 23} files</span>`;
+      }
+      document.getElementById("duplicate-status").style.display = current === "F" ? "none" : "";
+    }
+    function show(key) { current = key; document.querySelectorAll(".variant").forEach(el => el.classList.remove("active")); document.getElementById(`variant-${key}`).classList.add("active"); document.getElementById("switcher-label").textContent = variants[key]; const url = new URL(location); url.searchParams.set("variant", key); history.replaceState({}, "", url); updateState(); }
+    function cycle(n) { show(keys[(keys.indexOf(current) + n + keys.length) % keys.length]); }
+    document.getElementById("previous").onclick = () => cycle(-1); document.getElementById("next").onclick = () => cycle(1);
+    document.addEventListener("input", updateState); document.addEventListener("change", updateState);
+    document.addEventListener("click", event => {
+      if (event.target.dataset.action === "clear") { document.querySelectorAll(`#variant-${current} [data-filter]`).forEach(el => { if (el.type === "checkbox") el.checked = false; else el.value = ""; }); updateState(); }
+      if (event.target.id === "b-toggle") { const panel = document.getElementById("b-panel"); const open = panel.style.display !== "none"; panel.style.display = open ? "none" : "block"; event.target.querySelector(".chev").textContent = open ? "›" : "⌄"; }
+      if (event.target.id === "d-toggle") { const panel = document.getElementById("d-sheet"); const open = panel.style.display !== "none"; panel.style.display = open ? "none" : "grid"; event.target.querySelector("span").textContent = open ? "›" : "⌄"; }
+    });
+    document.addEventListener("keydown", event => { const tag = document.activeElement.tagName; if (["INPUT", "TEXTAREA"].includes(tag) || document.activeElement.isContentEditable) return; if (event.key === "ArrowLeft") cycle(-1); if (event.key === "ArrowRight") cycle(1); });
+    show(current);
+  </script>
+</body>
+</html>

@@ -7,15 +7,15 @@ Priority: low
 
 The persistent known-tags pane may not serve TAGGER's keyboard-driven workflow as well as autocomplete or a reduced alternative.
 
-## Desired Outcome
+## Current Position
 
-Make an evidence-based product decision to retain, remove, replace, or reduce the pane without coupling that decision to background discovery or index I/O changes.
+The Files-pane filter redesign leaves **Known tags** in place as a local layout trade-off: it reclaims space from redundant filter/status text and the Recursive scan control, while `Ctrl+K` preserves a direct keyboard workflow. This does not decide the pane's longer-term product role.
 
 ## Open Triage Decisions
 
 - Which current workflows depend on the pane versus autocomplete.
 - Evaluation criteria and user feedback needed before a product decision.
-- If change is chosen, the replacement interaction and migration scope.
+- Whether the pane should remain, be reduced, replaced, or removed; create separately scoped implementation work only after that decision.
 
 ## Out of Scope
 

@@ -62,6 +62,16 @@ class FilenameFilterTests(unittest.TestCase):
         self.assertEqual(restored_search.visible_paths, ("needle-result.jpg",))
         self.assertEqual(restored_folder.visible_paths, ("needle.jpg",))
 
+    def test_workspace_count_keeps_the_folder_size_during_an_indexed_search(
+        self,
+    ) -> None:
+        workspace = PhotoWorkspace()
+        workspace.add_paths(["first.jpg", "second.jpg"])
+
+        workspace.apply_database_search_matches(["second.jpg"])
+
+        self.assertEqual(workspace.workspace_path_count, 2)
+
     def test_search_started_after_iptc_empty_keeps_both_conditions_active(self) -> None:
         workspace = PhotoWorkspace()
         workspace.add_paths(["plain.jpg", "iptc.jpg", "other.jpg"])

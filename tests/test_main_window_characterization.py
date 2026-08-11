@@ -124,11 +124,47 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.add_folder_dialog()
 
     def test_view_indicator_describes_the_normal_photo_workspace(self) -> None:
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 0 photos")
+        self.assertEqual(self.window.workspaceCountLabel.text(), "0 in workspace")
+        self.assertFalse(self.window.filterSummary.isVisible())
 
         self._add_paths("first.jpg", "second.jpg")
 
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.workspaceCountLabel.text(), "2 in workspace")
+        self.assertFalse(self.window.filterSummary.isVisible())
+
+    def test_files_filter_box_has_separate_date_field_and_compact_summary(self) -> None:
+        _first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+
+        self.window.dbSearchEdit.setText("second")
+        self.window.dbDateSearchEdit.setText("2024-01")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.search_queries[-1], "tag:second date:2024-01")
+        self.assertEqual(self.window.workspaceCountLabel.text(), "2 in workspace")
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
+        self.assertEqual(self.window.repoBox.title(), "Known tags")
+        self.assertFalse(hasattr(self.window, "recursiveScan"))
+        self.assertTrue(
+            any(
+                label.text() == "Tags: second"
+                for label in self.window.filterChips.findChildren(QtWidgets.QLabel)
+            )
+        )
+        self.assertTrue(
+            any(
+                label.text() == "Date: 2024-01"
+                for label in self.window.filterChips.findChildren(QtWidgets.QLabel)
+            )
+        )
+
+        self.window.dbSearchClearBtn.click()
+
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
+        self.assertEqual(self.window.dbDateSearchEdit.text(), "")
+        self.assertFalse(self.window.onlyUntagged.isChecked())
 
     def test_filename_filter_updates_live_and_clears_independently(self) -> None:
         first, second = self._add_paths("first.jpg", "second.jpg")
@@ -137,10 +173,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertTrue(self.window.files.item(0).isHidden())
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Filters: filename contains “second” · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
 
         self.window.filenameFilterEdit.clear()
 
@@ -193,7 +226,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dbSearchEdit.text(), "")
         self.assertEqual(self.window.filenameFilterEdit.text(), "")
         self.assertFalse(self.window.onlyUntagged.isChecked())
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_filename_filter_composes_with_indexed_search_and_iptc_empty(self) -> None:
         _first, matching = self._add_paths("first.jpg", "matching.jpg")
@@ -205,23 +238,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run_index_work()
         self.app.processEvents()
 
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Filters: filename contains “matching” · search: tag:matching · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
         FakePhotoIndex.iptc_empty_results = {matching}
         self.window.onlyUntagged.setChecked(True)
-        self._wait_until(
-            lambda: self.window.filterInfoLabel.text()
-            == "Filters: filename contains “matching” · search: tag:matching · IPTC-empty · 1 results"
-        )
+        self._wait_until(lambda: self.window.filterInfoLabel.text() == "match 1 files")
 
         self.window.onlyUntagged.setChecked(False)
 
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Filters: filename contains “matching” · search: tag:matching · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
         self.assertEqual(self.window.selected_file_paths(), [matching])
 
     def test_indexed_search_started_after_iptc_empty_keeps_both_conditions_active(
@@ -240,10 +264,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertTrue(self.window.onlyUntagged.isChecked())
         self.assertEqual(self.window.selected_file_paths(), [matching])
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Filters: search: tag:matching · IPTC-empty · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
 
     def test_view_indicator_describes_pending_and_completed_iptc_empty_filter(
         self,
@@ -252,15 +273,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.window.onlyUntagged.setChecked(True)
 
-        self.assertEqual(
-            self.window.filterInfoLabel.text(), "Filtering IPTC-empty · 0/2"
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "Filtering…")
         self._wait_until(self.window.onlyUntagged.isChecked)
-        self.assertEqual(self.window.filterInfoLabel.text(), "IPTC-empty · 0/2")
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 0 files")
 
         self.window.onlyUntagged.setChecked(False)
 
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_view_indicator_describes_pending_and_completed_search_and_back(
         self,
@@ -271,19 +290,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.window.apply_db_search()
 
-        self.assertEqual(
-            self.window.filterInfoLabel.text(), "Searching index · tag:second"
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "Searching…")
         self.discovery_runner.run_index_work()
         self.app.processEvents()
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Search: tag:second · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
 
         self.window._dispatch_command("back", [])
 
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_search_after_an_empty_result_keeps_the_active_index_root(self) -> None:
         _first, second = self._add_paths("first.jpg", "second.jpg")
@@ -349,7 +363,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.discovery_runner.run_index_work()
             self.app.processEvents()
 
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_view_indicator_restores_folder_scope_when_replacing_the_workspace(
         self,
@@ -359,7 +373,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.window.replace_photo_workspace([replacement])
 
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 1 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_folder_discovery_clears_the_workspace_and_renders_paths_on_completion(
         self,
@@ -414,7 +428,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(replacement_paths_are_normalized, [True])
         self.assertFalse(self.window.filesRenderProgressLabel.isVisible())
         self.assertFalse(self.window._loading_photos_timer.isActive())
-        self.assertTrue(self.window.filterInfoLabel.isVisible())
+        self.assertFalse(self.window.filterInfoLabel.isVisible())
         self.assertTrue(self.window.files.isEnabled())
 
     def test_folder_discovery_renders_large_path_sets_in_event_loop_batches(
@@ -469,7 +483,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.window._hide_files_render_progress()
         self.assertFalse(self.window.filesPaneLoadingIcon.isVisible())
-        self.assertTrue(self.window.filterInfoLabel.isVisible())
+        self.assertFalse(self.window.filterInfoLabel.isVisible())
         self.assertFalse(self.window._loading_photos_timer.isActive())
 
     def test_loading_photos_message_hides_letters_in_sequence(self) -> None:
@@ -1196,9 +1210,96 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(action.command.name, "focuscurrenttags")
         self.assertEqual(action.shortcuts[0].sequence, "Alt+3")
 
-    def test_search_controls_explain_their_keyboard_shortcuts(self) -> None:
-        self.assertIn("Ctrl+Shift+F", self.window.dbSearchEdit.toolTip())
-        self.assertIn("Ctrl+Shift+X", self.window.dbSearchClearBtn.toolTip())
+    def test_file_filter_controls_explain_their_shortcuts(self) -> None:
+        self.assertIn("Ctrl+T", self.window.dbSearchEdit.toolTip())
+        self.assertIn("Ctrl+D", self.window.dbDateSearchEdit.toolTip())
+        self.assertIn("Ctrl+F", self.window.filenameFilterEdit.toolTip())
+        self.assertIn("Ctrl+E", self.window.onlyUntagged.toolTip())
+        self.assertIn("Alt+A", self.window.filenameCaseSensitiveBtn.toolTip())
+        self.assertIn("Alt+S", self.window.dbSearchBtn.toolTip())
+        self.assertIn("Alt+C", self.window.dbSearchClearBtn.toolTip())
+
+    def test_file_filter_shortcuts_are_catalogue_backed(self) -> None:
+        self.assertEqual(
+            self.window._actions_by_id["focusdbsearch"].shortcuts[0].sequence,
+            "Ctrl+T",
+        )
+        self.assertEqual(
+            self.window._actions_by_id["focusdatefilter"].shortcuts[0].sequence,
+            "Ctrl+D",
+        )
+        self.assertEqual(
+            self.window._actions_by_id["focusfilenamefilter"].shortcuts[0].sequence,
+            "Ctrl+F",
+        )
+        self.assertEqual(
+            self.window._actions_by_id["focusfilter"].shortcuts[0].sequence,
+            "Ctrl+K",
+        )
+        self.assertEqual(
+            self.window._actions_by_id["toggleemptyiptc"].shortcuts[0].sequence,
+            "Ctrl+E",
+        )
+
+        self.window._dispatch_action("focusdatefilter")
+
+        self.assertIs(self.window.focusWidget(), self.window.dbDateSearchEdit)
+
+    def test_file_filter_shortcuts_focus_and_toggle_controls(self) -> None:
+        (photo,) = self._add_paths("photo.jpg")
+        FakePhotoIndex.iptc_empty_results = {photo}
+        self.window.knownFilter.setFocus()
+
+        QtTest.QTest.keyClick(
+            self.window.knownFilter,
+            QtCore.Qt.Key.Key_T,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIs(self.window.focusWidget(), self.window.dbSearchEdit)
+        QtTest.QTest.keyClick(
+            self.window.dbSearchEdit,
+            QtCore.Qt.Key.Key_D,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIs(self.window.focusWidget(), self.window.dbDateSearchEdit)
+        QtTest.QTest.keyClick(
+            self.window.dbDateSearchEdit,
+            QtCore.Qt.Key.Key_F,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIs(self.window.focusWidget(), self.window.filenameFilterEdit)
+        QtTest.QTest.keyClick(
+            self.window.filenameFilterEdit,
+            QtCore.Qt.Key.Key_K,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        self.assertIs(self.window.focusWidget(), self.window.knownFilter)
+
+        self.window.filenameFilterEdit.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.filenameFilterEdit,
+            QtCore.Qt.Key.Key_A,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertTrue(self.window.filenameCaseSensitiveBtn.isChecked())
+        self.assertFalse(self.window.onlyUntagged.isChecked())
+        QtTest.QTest.keyClick(
+            self.window.filenameFilterEdit,
+            QtCore.Qt.Key.Key_E,
+            QtCore.Qt.KeyboardModifier.ControlModifier,
+        )
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+        self.assertTrue(self.window.onlyUntagged.isChecked())
+
+        self.window.filenameFilterEdit.setText("photo")
+        QtTest.QTest.keyClick(
+            self.window.filenameFilterEdit,
+            QtCore.Qt.Key.Key_C,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(self.window.filenameFilterEdit.text(), "")
+        self.assertFalse(self.window.onlyUntagged.isChecked())
 
     def test_search_command_accepts_tab_and_preserves_internal_whitespace(self) -> None:
         self._add_paths("one.jpg")
@@ -1928,7 +2029,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
 
         self.assertFalse(self.window.onlyUntagged.isChecked())
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 100 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
         self.assertEqual(self.window.selected_file_paths(), [target])
         self.assertLessEqual(
             abs(self.window.files.visualItemRect(self.window.files.item(40)).top()), 1
@@ -2031,10 +2132,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.all_file_paths(), [second])
         self.assertEqual(self.window.files.count(), 1)
         self.assertEqual(self.window.selected_file_paths(), [second])
-        self.assertEqual(
-            self.window.filterInfoLabel.text(),
-            "Search: tag:second · 1 results",
-        )
+        self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
 
     def test_latest_selection_is_not_delayed_by_stale_metadata_reads(self) -> None:
         previous_max_threads = self.window.pool.maxThreadCount()
@@ -2223,7 +2321,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
         self.assertEqual(self.window.dbSearchEdit.text(), "")
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_escape_restores_a_completed_search_before_leaving_the_file_pane(
         self,
@@ -2241,7 +2339,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.all_file_paths(), [first, second])
         self.assertEqual(self.window.dbSearchEdit.text(), "")
-        self.assertEqual(self.window.filterInfoLabel.text(), "Folder view · 2 photos")
+        self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
         self.window.knownList.addItems(["bird", "birch"])

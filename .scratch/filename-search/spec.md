@@ -15,9 +15,9 @@ Provide a visible, keyboard-accessible filename filter that narrows the current 
 
 ### Surface and commands
 
-- Add a dedicated visible field labelled **Filter filenames**. It is distinct from the existing **Search DB tags/date...** field; `file:` is not added to indexed-search syntax.
+- Add a dedicated visible field labelled **Filter filenames**. It is distinct from the indexed **Tags** and **Date** inputs; `file:` is not added to indexed-search syntax.
 - Add a visible `Aa` toggle beside the field. It is off by default for case-insensitive matching.
-- Add `Ctrl+Shift+L` and `:focusfilenamefilter` to focus the field and select its text.
+- Add `Ctrl+F`, `Alt+F` within the Files filter box, and `:focusfilenamefilter` to focus the field and select its text.
 - Add `:filterfiles <query>` to set the condition. `:filterfiles --case <query>` sets the condition with case-sensitive matching.
 - Add `:clearfilenamefilter` to remove only this condition, and `:clearfilters` to atomically clear every active condition and return to the folder view.
 - Existing `:clearsearch`, `:clear`, and `:back` remain indexed-search-only; they do not clear the filename or IPTC-empty conditions.
@@ -43,9 +43,9 @@ Provide a visible, keyboard-accessible filename filter that narrows the current 
 
 ### Presentation
 
-- The files-pane view indicator lists every active condition and its result count, for example `Filters: filename contains “DSC” · IPTC-empty · 12 results`.
-- Give that indicator a second line when needed. Reclaim a small amount of height from the known-tags pane rather than truncating active conditions.
-- The dedicated filename field, checked IPTC-empty control, indexed-search field, and indicator must all agree about which conditions are active.
+- The Files pane shows active conditions as compact chips with a match count; pending indexed-search and IPTC-empty work shows concise progress feedback instead.
+- Show the workspace count separately and hide the summary when no condition is active rather than repeating inactive folder-state text.
+- The dedicated filename field, checked IPTC-empty control, indexed Tags/Date inputs, and active-filter presentation must agree about which conditions are active.
 
 ## Architecture Direction
 

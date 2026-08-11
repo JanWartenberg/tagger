@@ -139,8 +139,25 @@ def _date_search_from_query(query: str) -> DateSearch | None:
     return _parse_date_search_term(query[5:])
 
 
+def _split_tag_and_date_query(query: str) -> tuple[str, str] | None:
+    """Return the tag and date terms emitted by the separate filter controls."""
+    if not query.casefold().startswith("tag:"):
+        return None
+    marker = " date:"
+    split_at = query.casefold().rfind(marker)
+    if split_at < 4:
+        return None
+    tag_term = query[4:split_at].strip()
+    date_term = query[split_at + len(marker) :].strip()
+    return (tag_term, date_term) if tag_term and date_term else None
+
+
 def validate_search_query(query: str) -> None:
     """Raise ``DateQueryError`` when a date expression is not valid."""
+    compound = _split_tag_and_date_query(query.strip())
+    if compound is not None:
+        _parse_date_search_term(compound[1])
+        return
     _date_search_from_query(query)
 
 
@@ -517,6 +534,13 @@ class PhotoIndex:
         query = query.strip()
         if not query:
             return []
+
+        compound = _split_tag_and_date_query(query)
+        if compound is not None:
+            tag_term, date_term = compound
+            tag_paths = set(self.search_photos(tag_term))
+            date_paths = self.search_photos(f"date:{date_term}")
+            return [path for path in date_paths if path in tag_paths]
 
         qlower = query.lower()
         with self._connection() as conn:

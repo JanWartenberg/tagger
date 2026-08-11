@@ -19,3 +19,9 @@ Decide whether the persistent known-tags pane should remain, be reduced, be repl
 ## Comments
 
 Created from `BACKLOG.md`. This ticket is evaluative; it does not authorize a behavior change by itself.
+
+The Files-pane filter redesign retained **Known tags** as a local layout trade-off:
+space came from redundant filter/status text and the Recursive scan control,
+and `Ctrl+K` preserves a direct keyboard workflow. This was not a durable
+product decision to retain the pane. Reopened for separate evaluation of
+whether it should remain, be reduced, replaced, or removed.

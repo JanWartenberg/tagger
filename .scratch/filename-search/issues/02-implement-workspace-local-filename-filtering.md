@@ -16,10 +16,11 @@ Deliver the approved workspace-local filename filter while preserving TAGGER's c
 - Match NFC-normalized complete basenames, including extensions, with literal trimmed substring semantics. Default to case-folded matching; support case-sensitive matching through the condition's `Aa` state.
 - Preserve source membership beneath the condition so individual clearing restores the current underlying indexed-search/IPTC-empty/folder result rather than a filename-filtered subset.
 - Apply the condition to incoming discovery and drag/drop paths. Replacing the Photo Workspace resets the query and case mode.
-- Add the dedicated **Filter filenames** field, `Aa` toggle, `Ctrl+Shift+L`, `:focusfilenamefilter`, `:filterfiles <query>`, `:filterfiles --case <query>`, `:clearfilenamefilter`, and `:clearfilters` through the action catalogue.
+- Add the dedicated **Filter filenames** field, `Aa` toggle, `Ctrl+F`, contextual `Alt+F`, `:focusfilenamefilter`, `:filterfiles <query>`, `:filterfiles --case <query>`, `:clearfilenamefilter`, and `:clearfilters` through the action catalogue.
 - Make edits live; Enter focuses the first visible photo; Escape leaves the condition active and returns focus. Empty field text removes only this condition.
+- The later Files-pane filter UI redesign groups Filename with separate Tags and Date inputs; it does not change filename-filter ownership or semantics.
 - Keep `:clearsearch`, `:clear`, and `:back` limited to indexed-search clearing.
-- Render all active conditions plus result count in the files-pane indicator, allowing a second line and modestly reducing known-tags-pane height. Render the centred generic empty state for every zero-result filter/search combination.
+- Render active conditions as compact chips with match/progress feedback in the Files pane. Render the centred generic empty state for every zero-result filter/search combination.
 
 ## Acceptance Criteria
 

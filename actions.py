@@ -48,6 +48,7 @@ class ActionSpec:
 
 def build_action_specs() -> tuple[ActionSpec, ...]:
     widget_shortcut = QtCore.Qt.ShortcutContext.WidgetShortcut
+    filter_shortcut = QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
 
     return (
         ActionSpec(
@@ -148,20 +149,44 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Focus known-tag filter",
             handler_name="_focus_known_filter_select_all",
             command=CommandBinding("focusfilter"),
-            shortcuts=(ShortcutBinding("Ctrl+F"), ShortcutBinding("/")),
+            shortcuts=(ShortcutBinding("Ctrl+K"), ShortcutBinding("/")),
         ),
         ActionSpec(
             id="focusdbsearch",
-            description="Focus photo-tag search",
+            description="Focus Tags filter",
             handler_name="_focus_db_search_select_all",
-            shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
+            shortcuts=(
+                ShortcutBinding("Ctrl+T"),
+                ShortcutBinding("Alt+T", "filesFilterBox", context=filter_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="focusdatefilter",
+            description="Focus Date filter",
+            handler_name="_focus_date_filter_select_all",
+            command=CommandBinding("focusdatefilter"),
+            shortcuts=(
+                ShortcutBinding("Ctrl+D"),
+                ShortcutBinding("Alt+D", "filesFilterBox", context=filter_shortcut),
+            ),
         ),
         ActionSpec(
             id="focusfilenamefilter",
-            description="Focus filename filter",
+            description="Focus Filename filter",
             handler_name="_focus_filename_filter_select_all",
             command=CommandBinding("focusfilenamefilter"),
-            shortcuts=(ShortcutBinding("Ctrl+Shift+L"),),
+            shortcuts=(
+                ShortcutBinding("Ctrl+F"),
+                ShortcutBinding("Alt+F", "filesFilterBox", context=filter_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="togglefilenamematchcase",
+            description="Toggle Filename match case",
+            handler_name="_toggle_filename_case_sensitive",
+            shortcuts=(
+                ShortcutBinding("Alt+A", "filesFilterBox", context=filter_shortcut),
+            ),
         ),
         ActionSpec(
             id="filterfiles",
@@ -180,12 +205,18 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Clear all workspace filters",
             handler_name="clear_all_filters",
             command=CommandBinding("clearfilters"),
+            shortcuts=(
+                ShortcutBinding("Alt+C", "filesFilterBox", context=filter_shortcut),
+            ),
         ),
         ActionSpec(
             id="search",
             description="Search indexed photos",
             handler_name="_command_search",
             command=CommandBinding("search", accepts_arguments=True),
+            shortcuts=(
+                ShortcutBinding("Alt+S", "filesFilterBox", context=filter_shortcut),
+            ),
         ),
         ActionSpec(
             id="clearsearch",
@@ -200,7 +231,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_focus_add_edit_select_all",
             command=CommandBinding("focusadd"),
             shortcuts=(ShortcutBinding("Ctrl+L"),),
-            key_routes=(KeyRoute(kind="single", sequence=("i",), scope="global_non_input"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("i",), scope="global_non_input"),
+            ),
         ),
         ActionSpec(
             id="focusfiles",
@@ -208,7 +241,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_focus_pane_files",
             command=CommandBinding("focusfiles"),
             shortcuts=(ShortcutBinding("Alt+1"),),
-            key_routes=(KeyRoute(kind="single", sequence=("f",), scope="global_non_input"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("f",), scope="global_non_input"),
+            ),
         ),
         ActionSpec(
             id="focustags",
@@ -216,7 +251,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_focus_pane_known",
             command=CommandBinding("focustags"),
             shortcuts=(ShortcutBinding("Alt+2"),),
-            key_routes=(KeyRoute(kind="single", sequence=("t",), scope="global_non_input"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("t",), scope="global_non_input"),
+            ),
         ),
         ActionSpec(
             id="focuskeywords",
@@ -237,7 +274,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Toggle only IPTC-empty filter",
             handler_name="_toggle_only_iptc_empty",
             command=CommandBinding("toggleemptyiptc"),
-            shortcuts=(ShortcutBinding("Ctrl+Shift+E"),),
+            shortcuts=(ShortcutBinding("Ctrl+E"),),
         ),
         ActionSpec(
             id="panenext",
@@ -253,7 +290,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("paneleft"),
             shortcuts=(
                 ShortcutBinding("Ctrl+W, H"),
-                ShortcutBinding("h", widget_ref="keywordsList", context=widget_shortcut),
+                ShortcutBinding(
+                    "h", widget_ref="keywordsList", context=widget_shortcut
+                ),
             ),
         ),
         ActionSpec(
@@ -285,7 +324,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Move selection down",
             handler_name="_action_list_down",
             command=CommandBinding("listdown"),
-            key_routes=(KeyRoute(kind="single", sequence=("j",), scope="list_widgets"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("j",), scope="list_widgets"),
+            ),
             native_triggers=(NativeTrigger("Down"),),
         ),
         ActionSpec(
@@ -293,7 +334,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Move selection up",
             handler_name="_action_list_up",
             command=CommandBinding("listup"),
-            key_routes=(KeyRoute(kind="single", sequence=("k",), scope="list_widgets"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("k",), scope="list_widgets"),
+            ),
             native_triggers=(NativeTrigger("Up"),),
         ),
         ActionSpec(
@@ -302,7 +345,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_action_list_top",
             command=CommandBinding("listtop"),
             key_routes=(
-                KeyRoute(kind="sequence", sequence=("g", "g"), scope="list_widgets", timeout_ms=600),
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("g", "g"),
+                    scope="list_widgets",
+                    timeout_ms=600,
+                ),
             ),
             native_triggers=(NativeTrigger("Home"),),
         ),
@@ -311,7 +359,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Jump to bottom of list",
             handler_name="_action_list_bottom",
             command=CommandBinding("listbottom"),
-            key_routes=(KeyRoute(kind="single", sequence=("G",), scope="list_widgets"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("G",), scope="list_widgets"),
+            ),
             native_triggers=(NativeTrigger("End"),),
         ),
         ActionSpec(
@@ -334,7 +384,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_toggle_visual_keywords",
             command=CommandBinding("visual"),
             shortcuts=(
-                ShortcutBinding("Shift+V", widget_ref="keywordsList", context=widget_shortcut),
+                ShortcutBinding(
+                    "Shift+V", widget_ref="keywordsList", context=widget_shortcut
+                ),
             ),
         ),
         ActionSpec(
@@ -343,7 +395,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_yank_selected_tags",
             command=CommandBinding("yank"),
             shortcuts=(
-                ShortcutBinding("Ctrl+C", widget_ref="keywordsList", context=widget_shortcut),
+                ShortcutBinding(
+                    "Ctrl+C", widget_ref="keywordsList", context=widget_shortcut
+                ),
             ),
             key_routes=(
                 KeyRoute(
@@ -380,7 +434,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("paste"),
             shortcuts=(
                 ShortcutBinding("Ctrl+V", widget_ref="files", context=widget_shortcut),
-                ShortcutBinding("Ctrl+V", widget_ref="keywordsList", context=widget_shortcut),
+                ShortcutBinding(
+                    "Ctrl+V", widget_ref="keywordsList", context=widget_shortcut
+                ),
             ),
             key_routes=(
                 KeyRoute(
@@ -471,7 +527,9 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="open_command_line",
             description="Open command line",
             handler_name="_open_command_line",
-            key_routes=(KeyRoute(kind="single", sequence=(":",), scope="global_non_input"),),
+            key_routes=(
+                KeyRoute(kind="single", sequence=(":",), scope="global_non_input"),
+            ),
             show_in_help=False,
         ),
         ActionSpec(

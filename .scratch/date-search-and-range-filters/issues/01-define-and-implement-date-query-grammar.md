@@ -16,7 +16,7 @@ Define and deliver reliable indexed capture-date queries for calendar periods an
 - Define capture date as `EXIF:DateTimeOriginal`, falling back to `EXIF:CreateDate`; do not alter its calendar day for time or timezone data.
 - Store a separate nullable normalized `YYYY-MM-DD` capture-date column. Migrate and backfill it from the existing raw `photos.date_taken` values; unparseable and missing values are date-unknown.
 - Preserve `tag:` and bare-tag query behavior.
-- Keep date filtering in the search field and `:search`; invalid date expressions leave the active Photo Workspace unchanged and show clear status feedback.
+- Keep date filtering in indexed search and `:search`; the persistent Files-pane Date input compiles to the same `date:` grammar. Invalid date expressions leave the active Photo Workspace unchanged and show clear status feedback.
 - Route valid reads through `BackgroundCoordinator.search_index()` and render results through the existing database-search view and files-pane view indicator.
 
 ## Initial Test Expectations

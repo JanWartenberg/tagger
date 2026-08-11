@@ -1,6 +1,6 @@
 # 01 — Add Modal Date Search Picker
 
-Status: needs-triage
+Status: wontfix
 Category: feature
 Priority: low
 Milestone: M4 — Faster photo-finding and tagging workflows
@@ -31,3 +31,7 @@ Give mouse-oriented users a modal UI for composing an existing date search witho
 ## Comments
 
 Created as a future follow-up while implementing the keyboard date-search variant. It is deliberately separate so the keyboard workflow does not wait for mouse UI design.
+
+Superseded by the selected Files-pane filter design: Date is a persistent,
+separate input beside Tags, rather than an entry point to a modal picker. The
+existing date-query grammar remains its search contract.

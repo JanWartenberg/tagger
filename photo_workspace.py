@@ -102,6 +102,13 @@ class PhotoWorkspace:
         return self._search_restore_state is not None
 
     @property
+    def workspace_path_count(self) -> int:
+        """Return the folder-backed size before an indexed search narrows it."""
+        if self._search_restore_state is not None:
+            return len(self._search_restore_state.paths)
+        return len(self._paths)
+
+    @property
     def iptc_empty_membership(self) -> frozenset[str] | None:
         """Return unfiltered IPTC-empty membership for explicit refresh checks."""
         if (
