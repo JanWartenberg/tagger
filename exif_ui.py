@@ -769,6 +769,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache: dict[str, KeywordState] = {}
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
+        self._recent_tags_snapshot = load_recent_tags()
         self._known_tags_snapshot: set[str] = set()
         self._known_tags_root: str | None = None
         self._active_known_tags_request: IndexReadRequest | None = None
@@ -928,20 +929,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "If enabled, exiftool keeps *_original backups (Ctrl+Shift+B)"
         )
 
-        self.knownFilter = QtWidgets.QLineEdit()
-        self.knownFilter.setPlaceholderText("Filter known tags...")
-        self.knownFilter.textChanged.connect(self._render_known_tags)
-        self.knownFilter.returnPressed.connect(self._focus_first_known_tag)
-        self.knownFilter.setToolTip("Focus: / or Ctrl+K")
-        self.knownRefreshBtn = QtWidgets.QPushButton("Refresh")
-        self.knownRefreshBtn.setFixedWidth(80)
-        self.knownRefreshBtn.clicked.connect(self.force_refresh_known_tags)
-        self.knownRefreshBtn.setToolTip("Refresh known tags (F5)")
-        self.knownList = QtWidgets.QListWidget()
-        self.knownList.itemActivated.connect(self.add_keyword_from_known)
-        self.knownList.itemDoubleClicked.connect(self.add_keyword_from_known)
-        self.knownList.setToolTip("Focus: t / Alt+2 / Ctrl+W J · Navigate: j/k, n/N")
-
         self.onlyUntagged = QtWidgets.QCheckBox("Only without IPTC tags")
         self.onlyUntagged.setToolTip("Show only files without IPTC keywords (Ctrl+E)")
         self.onlyUntagged.toggled.connect(
@@ -973,12 +960,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filenameFilterEdit.setToolTip(
             "Literal filename substring · Focus: Ctrl+F or Alt+F"
         )
-        self.filenameFilterEdit.textChanged.connect(self.apply_filename_filter)
-        self.filenameFilterEdit.returnPressed.connect(self._focus_first_visible_file)
+        self._filename_filter_timer = QtCore.QTimer(self)
+        self._filename_filter_timer.setSingleShot(True)
+        self._filename_filter_timer.setInterval(700)
+        self._filename_filter_timer.timeout.connect(self.apply_filename_filter)
+        self.filenameFilterEdit.textChanged.connect(self._schedule_filename_filter)
+        self.filenameFilterEdit.returnPressed.connect(
+            self._apply_filename_filter_and_focus_first
+        )
         self.filenameCaseSensitiveBtn = QtWidgets.QPushButton("A\u0332a")
         self.filenameCaseSensitiveBtn.setCheckable(True)
         self.filenameCaseSensitiveBtn.setToolTip("Match filename case exactly (Alt+A)")
-        self.filenameCaseSensitiveBtn.toggled.connect(self.apply_filename_filter)
+        self.filenameCaseSensitiveBtn.toggled.connect(
+            self._apply_filename_filter_immediately
+        )
         self.workspaceCountLabel = QtWidgets.QLabel("0 in workspace")
         self.workspaceCountLabel.setStyleSheet("color: palette(text); font-size: 11px;")
         self.filterSummary = QtWidgets.QWidget()
@@ -1086,22 +1081,6 @@ class MainWindow(QtWidgets.QMainWindow):
         rightSplitter.setChildrenCollapsible(False)
         imageLayout.addWidget(rightSplitter)
 
-        # --- Left-bottom: known tags ---
-        self.repoBox = QtWidgets.QGroupBox("Known tags")
-        self.repoBox.setStyleSheet(
-            "QGroupBox { font-weight: 600; }"
-            "QGroupBox::title { subcontrol-origin: margin; left: 8px; padding: 0 6px; }"
-        )
-        repoLayout = QtWidgets.QVBoxLayout(self.repoBox)
-
-        knownFilterRowW = QtWidgets.QWidget()
-        knownFilterRow = QtWidgets.QHBoxLayout(knownFilterRowW)
-        knownFilterRow.setContentsMargins(0, 0, 0, 0)
-        knownFilterRow.addWidget(self.knownFilter, 1)
-        knownFilterRow.addWidget(self.knownRefreshBtn)
-        repoLayout.addWidget(knownFilterRowW)
-        repoLayout.addWidget(self.knownList, 1)
-
         filesPanel = QtWidgets.QWidget()
         filesLayout = QtWidgets.QVBoxLayout(filesPanel)
         filesLayout.setContentsMargins(0, 0, 0, 0)
@@ -1150,21 +1129,13 @@ class MainWindow(QtWidgets.QMainWindow):
         filesLayout.addWidget(self.filterSummary)
         filesLayout.addWidget(self.files, 1)
 
-        leftSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        leftSplitter.addWidget(filesPanel)
-        leftSplitter.addWidget(self.repoBox)
-        leftSplitter.setStretchFactor(0, 8)
-        leftSplitter.setStretchFactor(1, 5)
-        leftSplitter.setChildrenCollapsible(False)
-        leftSplitter.setMinimumWidth(250)
-
+        filesPanel.setMinimumWidth(250)
         splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
-        splitter.addWidget(leftSplitter)
+        splitter.addWidget(filesPanel)
         splitter.addWidget(self.imageBox)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setChildrenCollapsible(False)
-        leftSplitter.setMinimumWidth(250)
 
         self.setCentralWidget(splitter)
         self.iptcEmptyRefreshOffer = QtWidgets.QWidget()
@@ -1221,13 +1192,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self,
             self.centralWidget(),
             splitter,
-            leftSplitter,
             self.files,
             self.files.viewport(),
             filesPanel,
-            self.repoBox,
-            self.knownList,
-            self.knownList.viewport(),
             self.imageBox,
             self.previewLabel,
             self.keywordsList,
@@ -1248,7 +1215,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vim_visual_keywords = False
         self._vim_visual_anchor = 0
         self._yanked_tags: list[str] = []
-        self._last_left_pane: QtWidgets.QListWidget = self.files
         self._actions_by_id: dict[str, ActionSpec] = {}
         self._commands_by_name: dict[str, ActionSpec] = {}
         self._listed_actions: list[ActionSpec] = []
@@ -1275,9 +1241,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "window": self,
             "files": self.files,
             "keywordsList": self.keywordsList,
-            "knownList": self.knownList,
             "addEdit": self.addEdit,
-            "knownFilter": self.knownFilter,
             "dbDateSearchEdit": self.dbDateSearchEdit,
             "filenameFilterEdit": self.filenameFilterEdit,
             "filesFilterBox": self.filesFilterBox,
@@ -1327,7 +1291,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "_cmd_list_commands": lambda: self._cmd_list_commands(),
             "_cmd_quit": lambda: self._cmd_quit(),
             "add_folder_dialog": self.add_folder_dialog,
-            "force_refresh_known_tags": self.force_refresh_known_tags,
             "reindex_active_root": self.reindex_active_root,
             "refresh_iptc_empty_view": self.refresh_iptc_empty_view,
             "cancel_active_refresh": self.cancel_active_refresh,
@@ -1337,7 +1300,6 @@ class MainWindow(QtWidgets.QMainWindow):
             "resolve_mismatch": self.resolve_mismatch,
             "add_keyword_from_input": self.add_keyword_from_input,
             "remove_selected_keywords": self.remove_selected_keywords,
-            "_focus_known_filter_select_all": self._focus_known_filter_select_all,
             "_focus_db_search_select_all": self._focus_db_search_select_all,
             "_focus_date_filter_select_all": self._focus_date_filter_select_all,
             "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
@@ -1347,21 +1309,16 @@ class MainWindow(QtWidgets.QMainWindow):
             "clear_all_filters": self.clear_all_filters,
             "_focus_add_edit_select_all": self._focus_add_edit_select_all,
             "_focus_pane_files": self._focus_pane_files,
-            "_focus_pane_known": self._focus_pane_known,
             "_focus_pane_keywords": self._focus_pane_keywords,
             "_toggle_keep_backup": self._toggle_keep_backup,
             "_toggle_only_iptc_empty": self._toggle_only_iptc_empty,
             "_focus_next_pane": self._focus_next_pane,
             "_focus_pane_left": self._focus_pane_left,
             "_focus_pane_right": self._focus_pane_right,
-            "_focus_pane_down": self._focus_pane_down,
-            "_focus_pane_up": self._focus_pane_up,
             "_action_list_down": self._action_list_down,
             "_action_list_up": self._action_list_up,
             "_action_list_top": self._action_list_top,
             "_action_list_bottom": self._action_list_bottom,
-            "_action_known_next": self._action_known_next,
-            "_action_known_prev": self._action_known_prev,
             "_toggle_visual_keywords": self._toggle_visual_keywords,
             "_yank_selected_tags": self._yank_selected_tags,
             "_yank_current_file_tags": self._yank_current_file_tags,
@@ -1476,11 +1433,10 @@ class MainWindow(QtWidgets.QMainWindow):
             'QLineEdit[keywordLengthInvalid="true"] '
             "{ border: 2px solid #dc2626; color: #dc2626; }"
         )
-        for lst in (self.files, self.keywordsList, self.knownList):
+        for lst in (self.files, self.keywordsList):
             lst.setStyleSheet(list_qss)
         for edit in (
             self.addEdit,
-            self.knownFilter,
             self.dbSearchEdit,
             self.dbDateSearchEdit,
             self.filenameFilterEdit,
@@ -1523,9 +1479,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if et == QtCore.QEvent.Type.KeyPress and isinstance(event, QtGui.QKeyEvent):
             if self._handle_key_routes(obj, event):
                 return True
-        if et == QtCore.QEvent.Type.FocusIn:
-            if obj in (self.files, self.knownList):
-                self._last_left_pane = obj
         return super().eventFilter(obj, event)
 
     def _list_from_obj(
@@ -1533,7 +1486,7 @@ class MainWindow(QtWidgets.QMainWindow):
     ) -> QtWidgets.QListWidget | None:
         cur = obj
         while cur is not None:
-            if cur in (self.files, self.knownList, self.keywordsList):
+            if cur in (self.files, self.keywordsList):
                 return cur
             try:
                 cur = cur.parent()
@@ -1969,19 +1922,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _tag_candidates(self, prefix: str) -> list[str]:
         prefix_cf = prefix.casefold()
-        names: list[str] = []
-        for i in range(self.knownList.count()):
-            it = self.knownList.item(i)
-            if it is None:
-                continue
-            txt = (it.text() or "").strip()
-            if not txt:
-                continue
-            if txt.casefold().startswith(prefix_cf):
-                names.append(txt)
-        names = dedupe_casefold(names)
-        names.sort(key=lambda s: s.casefold())
-        return names
+        return [
+            tag
+            for tag in self._known_tag_candidates()
+            if tag.casefold().startswith(prefix_cf)
+        ]
 
     def _common_prefix(self, items: list[str]) -> str:
         if not items:
@@ -2073,9 +2018,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_pane_files(self) -> None:
         self._focus_pane(self.files)
 
-    def _focus_pane_known(self) -> None:
-        self._focus_pane(self.knownList)
-
     def _focus_pane_keywords(self) -> None:
         self._focus_pane(self.keywordsList)
 
@@ -2084,12 +2026,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _focus_pane_right(self) -> None:
         self._focus_pane_by_direction("right")
-
-    def _focus_pane_down(self) -> None:
-        self._focus_pane_by_direction("down")
-
-    def _focus_pane_up(self) -> None:
-        self._focus_pane_by_direction("up")
 
     def _action_list_down(self) -> None:
         lst = self._resolve_current_list_widget()
@@ -2110,12 +2046,6 @@ class MainWindow(QtWidgets.QMainWindow):
         lst = self._resolve_current_list_widget()
         if lst is not None:
             self._go_list_edge(lst, to_end=True)
-
-    def _action_known_next(self) -> None:
-        self._move_list_selection(self.knownList, +1)
-
-    def _action_known_prev(self) -> None:
-        self._move_list_selection(self.knownList, -1)
 
     def _set_single_list_selection(self, lst: QtWidgets.QListWidget, row: int) -> None:
         if row < 0 or row >= lst.count():
@@ -2360,53 +2290,20 @@ class MainWindow(QtWidgets.QMainWindow):
         pane.setFocus()
 
     def _focus_next_pane(self) -> None:
-        panes = [self.files, self.knownList, self.keywordsList]
+        panes = [self.files, self.keywordsList]
         focus = self.focusWidget()
-        current = None
-        for p in panes:
-            if focus is p:
-                current = p
-                break
-        if current is None:
-            self._focus_pane(panes[0])
-            return
-        idx = panes.index(current)
-        nxt = panes[(idx + 1) % len(panes)]
-        self._focus_pane(nxt)
-
-    def _focus_pane_by_direction(self, direction: str) -> None:
-        # NOTE: If pane layout grows more complex, revisit shortcut coherence.
-        focus = self.focusWidget()
-        current = (
-            focus if focus in (self.files, self.knownList, self.keywordsList) else None
-        )
+        current = next((pane for pane in panes if focus is pane), None)
         if current is None:
             self._focus_pane(self.files)
             return
+        self._focus_pane(panes[(panes.index(current) + 1) % len(panes)])
 
-        if direction == "left":
-            if current is self.keywordsList:
-                self._focus_pane(self._last_left_pane or self.files)
-            return
-
-        if direction == "right":
-            if current in (self.files, self.knownList):
-                self._focus_pane(self.keywordsList)
-            return
-
-        if direction == "down":
-            if current is self.files:
-                self._focus_pane(self.knownList)
-            elif current is self.keywordsList:
-                self._focus_pane(self.knownList)
-            return
-
-        if direction == "up":
-            if current is self.knownList:
-                self._focus_pane(self.files)
-            elif current is self.keywordsList:
-                self._focus_pane(self.files)
-            return
+    def _focus_pane_by_direction(self, direction: str) -> None:
+        focus = self.focusWidget()
+        if direction == "left" and focus is self.keywordsList:
+            self._focus_pane(self.files)
+        elif direction == "right" and focus is self.files:
+            self._focus_pane(self.keywordsList)
 
     # Fallback handlers: some widgets won't forward drag events to the filter.
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
@@ -2488,6 +2385,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._index_root = None
         self._search_restore_scroll = None
         self._filename_filter_restore_scroll = None
+        self._filename_filter_timer.stop()
         self.filenameFilterEdit.blockSignals(True)
         self.filenameCaseSensitiveBtn.blockSignals(True)
         try:
@@ -2905,7 +2803,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _rerun_stale_result_repair_query(self, request: IndexRefreshRequest) -> None:
-        self._render_known_tags()
         self._active_known_tags_request = self._background_coordinator.load_known_tags(
             request.root,
             workspace_generation=self._tag_mutation_coordinator.workspace_generation,
@@ -2975,13 +2872,12 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             return
         if isinstance(event, IndexReadFailed):
-            self._record_session_error("Known-tag refresh", event.error)
-            self.statusBar().showMessage("Known-tag refresh failed")
+            self._record_session_error("Tag autocomplete refresh", event.error)
+            self.statusBar().showMessage("Tag autocomplete refresh failed")
             return
         if isinstance(event, KnownTagsCompleted):
             self._known_tags_snapshot = set(event.tags)
             self._known_tags_root = request.root
-            self._render_known_tags()
 
     def _handle_discovery_event(self, event: DiscoveryEvent) -> None:
         if event.kind is DiscoveryKind.REPLACEMENT:
@@ -3344,8 +3240,6 @@ class MainWindow(QtWidgets.QMainWindow):
             + [item for item in selected_items if item is not current_item]
         )
         snapshot = self.photo_workspace.select_paths(requested_paths)
-        if snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY:
-            self._preserve_files_scroll(lambda: self._render_photo_workspace(snapshot))
         self._selection_token += 1
         self._pending_metadata_read = None
         self._metadata_read_timer.stop()
@@ -3827,8 +3721,27 @@ class MainWindow(QtWidgets.QMainWindow):
                 return it
         return None
 
+    def _schedule_filename_filter(self, text: str) -> None:
+        """Apply a non-empty filename query after the user pauses typing."""
+        if not text.strip():
+            self._filename_filter_timer.stop()
+            if self.photo_workspace.snapshot().filename_filter_query is not None:
+                self.apply_filename_filter()
+            return
+        self._filename_filter_timer.start()
+
+    def _apply_filename_filter_immediately(self, _value: object = None) -> None:
+        """Apply an explicit filename-filter control change without delay."""
+        self._filename_filter_timer.stop()
+        self.apply_filename_filter()
+
+    def _apply_filename_filter_and_focus_first(self) -> None:
+        """Commit a pending filename query before moving focus to its result."""
+        self._apply_filename_filter_immediately()
+        self._focus_first_visible_file()
+
     def apply_filename_filter(self, _value: object = None) -> None:
-        """Apply the live filename condition without scheduling background work."""
+        """Apply the pending filename condition without background work."""
         before_snapshot = self.photo_workspace.snapshot()
         before = list(before_snapshot.selected_paths)
         if (
@@ -3856,6 +3769,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Filename filter cleared")
 
     def clear_all_filters(self) -> None:
+        self._filename_filter_timer.stop()
         self.dbSearchEdit.clear()
         self.dbDateSearchEdit.clear()
         self.onlyUntagged.blockSignals(True)
@@ -3903,6 +3817,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_selection_changed()
 
     def _command_filter_files(self, args: list[str]) -> None:
+        self._filename_filter_timer.stop()
         case_sensitive = bool(args and args[0] == "--case")
         if case_sensitive:
             args = args[1:]
@@ -4073,19 +3988,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._apply_add_tag(tag):
             self.addEdit.clear()
 
-    def add_keyword_from_known(self, item=None) -> None:
-        it = (
-            item
-            if isinstance(item, QtWidgets.QListWidgetItem)
-            else self.knownList.currentItem()
-        )
-        if it is None:
-            return
-        tag = normalize_keyword(it.text() or "")
-        if not tag or self._reject_invalid_iptc_keywords([tag]):
-            return
-        self._apply_add_tag(tag)
-
     def _apply_add_tag(self, tag: str) -> bool:
         if self._reject_invalid_iptc_keywords([tag]):
             return False
@@ -4095,6 +3997,9 @@ class MainWindow(QtWidgets.QMainWindow):
             return False
         pending_mutation = self._begin_pending_tag_mutation(files, [TagIntent.add(tag)])
         add_recent_tag(tag)
+        self._recent_tags_snapshot = dedupe_casefold(
+            [tag] + self._recent_tags_snapshot
+        )[:100]
         self.statusBar().showMessage(f"Queued add '{tag}' to {len(files)} file(s)")
         self._enqueue_tag_mutation(
             files,
@@ -4208,7 +4113,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("Refreshing IPTC-empty results…")
 
     def force_refresh_known_tags(self) -> None:
-        self._render_known_tags()
+        """Refresh the cached autocomplete vocabulary for the active index root."""
         snapshot = self.photo_workspace.snapshot()
         paths = self.selected_file_paths() or self.all_file_paths()
         root = (
@@ -4227,37 +4132,21 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def refresh_known_tags(self) -> None:
-        self._render_known_tags()
+        """Refresh cached autocomplete candidates when the workspace root changes."""
         paths = self.selected_file_paths() or self.all_file_paths()
         root = self._index_root_for_paths(paths) if paths else None
         if root and normalize_path(root) != self._known_tags_root:
             self.force_refresh_known_tags()
 
-    def _render_known_tags(self) -> None:
-        filter_text = (self.knownFilter.text() or "").strip().casefold()
-        recent = load_recent_tags()
-        combined = []
-        seen_lower: set[str] = set()
-        for tag in recent + sorted(self._known_tags_snapshot, key=str.casefold):
-            normalized = tag.casefold()
-            if normalized in seen_lower:
-                continue
-            seen_lower.add(normalized)
-            combined.append(tag)
-        if filter_text:
-            combined = [tag for tag in combined if filter_text in tag.casefold()]
-        self.knownList.clear()
-        self.knownList.addItems(combined)
-
-    def _focus_first_known_tag(self) -> None:
-        if self.knownList.count() == 0:
-            return
-        self.knownList.setCurrentRow(0)
-        self.knownList.setFocus()
-
-    def _focus_known_filter_select_all(self) -> None:
-        self.knownFilter.setFocus()
-        self.knownFilter.selectAll()
+    def _known_tag_candidates(self) -> list[str]:
+        """Return deduplicated recent and indexed tags for add-tag autocomplete."""
+        return sorted(
+            dedupe_casefold(
+                self._recent_tags_snapshot
+                + sorted(self._known_tags_snapshot, key=str.casefold)
+            ),
+            key=str.casefold,
+        )
 
     def _focus_db_search_select_all(self) -> None:
         self.dbSearchEdit.setFocus()

@@ -18,7 +18,7 @@ The normal folder-tagging workflow remains the default. This work is a behavior-
 1. Folder-dialog discovery and dropped-directory discovery never traverse the filesystem on the Qt UI thread.
 2. SQLite reads and writes that can scale with photo count never run in UI callbacks.
 3. A completed current folder discovery makes its photos usable before indexing finishes.
-4. Superseded work can never alter the active workspace, visible loading state, selection, active root, search results, or known-tags list.
+4. Superseded work can never alter the active workspace, visible loading state, selection, active root, search results, or tag-autocomplete cache.
 5. SQLite writes to one index root never overlap.
 6. The complex scheduling, ordering, stale-result, and index-write behavior has locality in a Qt-free deep module and can be tested without widgets, real filesystem traversal, SQLite, or ExifTool.
 
@@ -29,7 +29,6 @@ The normal folder-tagging workflow remains the default. This work is a behavior-
 - Cancel an already running filesystem traversal, SQLite operation, or ExifTool process.
 - Implement a live discovery count. This is a separate low-priority backlog item.
 - Implement error history or `:errors`. This is a separate low-priority backlog item.
-- Remove or redesign the known-tags pane. That product decision is a separate low-priority backlog item.
 - Extract input routing, preview loading, or tag-mutation coordination from `MainWindow`. The Coordinator is only the first, narrow extraction tracked by the Main Window Coordinator Decomposition spec.
 
 ## Verified Current-State Findings
@@ -81,9 +80,9 @@ The exact Python names and dataclass names are implementation details, but the i
 | Ensure/sync an index from discovered paths | Check initialization and enqueue a full sync as required, without a second traversal. | Index progress/completion or failure with root and request identity. |
 | Submit confirmed metadata states | Resolve the path's root, coalesce pending incremental states by normalized path, and enqueue a write. | Successful commit or failure. |
 | Search the index | Run an identified read in the background. | Current query, root, and matching paths or failure. |
-| Refresh known tags | Run an identified read in the background. | Current root/request and tag snapshot or failure. |
+| Refresh tag autocomplete cache | Run an identified read in the background. | Current root/request and tag snapshot or failure. |
 
-Every event contains sufficient immutable identity to decide whether it still belongs to the current workspace, root, request, search, known-tag refresh, and/or additive-drop sequence. The Coordinator performs its own scheduling and stale rules; the Qt adapter performs the final UI-context check before rendering and must never render an event whose identity is no longer current.
+Every event contains sufficient immutable identity to decide whether it still belongs to the current workspace, root, request, search, tag-cache refresh, and/or additive-drop sequence. The Coordinator performs its own scheduling and stale rules; the Qt adapter performs the final UI-context check before rendering and must never render an event whose identity is no longer current.
 
 ## User-Visible Discovery Contract
 
@@ -113,7 +112,7 @@ Every event contains sufficient immutable identity to decide whether it still be
 - Do not actively cancel discovery, ExifTool, filesystem, or SQLite operations.
 - Starting a folder-dialog replacement creates a new workspace/request identity. Older replacement discovery work may finish but is discarded.
 - Additive dropped-directory results remain eligible only for the workspace generation in which they were started, and are released according to their drop sequence.
-- A stale completion must not change files-pane contents, selection, scroll state, loading presentation, active index root, known tags, search view, or footer success/error feedback.
+- A stale completion must not change files-pane contents, selection, scroll state, loading presentation, active index root, tag-autocomplete cache, search view, or footer success/error feedback.
 
 ## Indexing Contract
 
@@ -135,11 +134,11 @@ Every event contains sufficient immutable identity to decide whether it still be
 
 ### Index reads
 
-- Database search, known-tag loading, initialization checks, and membership checks run off the UI thread.
+- Database search, tag-autocomplete-cache loading, initialization checks, and membership checks run off the UI thread.
 - Reads may run in parallel with the serial per-root write queue and observe the last committed, internally consistent state. They do not wait behind a long full sync.
-- Search and known-tag completions carry root and request identity. Only the newest still-current result is eligible to update UI state.
+- Search and tag-cache completions carry root and request identity. Only the newest still-current result is eligible to update UI state.
 
-## Search and Known-Tags Contract
+## Search and Tag-Autocomplete Cache Contract
 
 ### Database search
 
@@ -148,13 +147,12 @@ Every event contains sufficient immutable identity to decide whether it still be
 - Only the current query/root/workspace result is applied, atomically, through the existing Photo Workspace database-search intent.
 - A stale, failed, or superseded search never overwrites a newer search or a workspace replacement.
 
-### Known tags and autocomplete
+### Tag autocomplete cache
 
-- A known-tags refresh retains the existing list until a current completion atomically replaces it. Do not add noisy footer feedback for routine refreshes.
-- Automatically triggered known-tag refreshes after index changes begin only after the corresponding write operation commits successfully.
-- Pressing Tab for tag autocomplete remains purely in-memory: it reads the currently displayed known-tags snapshot and never initiates or waits for SQLite I/O.
-- `Filter known tags…` filters the loaded snapshot locally and immediately. It must not request SQLite on every keystroke.
-- Submit a known-tags read only after relevant committed data changes, workspace/root changes, or explicit user refresh.
+- A tag-cache refresh retains the existing snapshot until a current completion atomically replaces it. Do not add noisy footer feedback for routine refreshes.
+- Automatically triggered tag-cache refreshes after index changes begin only after the corresponding write operation commits successfully.
+- Pressing Tab for tag autocomplete remains purely in-memory: it reads the cached recent/indexed vocabulary and never initiates or waits for SQLite I/O.
+- Submit a tag-cache read only after relevant committed data changes or workspace/root changes.
 
 ## Feedback and Errors
 
@@ -191,7 +189,7 @@ Cover at least:
 8. A confirmed update submitted during full sync runs after that sync.
 9. A failed write leaves later queue work runnable.
 10. Reads are scheduled off-thread, may run with a write in progress, and observe a committed index snapshot.
-11. Superseded search and known-tag requests do not produce UI-eligible events.
+11. Superseded search and tag-cache requests do not produce UI-eligible events.
 
 ### Qt adapter tests
 
@@ -206,9 +204,9 @@ Cover at least:
 5. A dropped-directory discovery leaves current paths selectable and scrollable, uses footer feedback, and appends its result without losing selection or scroll anchoring.
 6. Two drops that complete out of order appear in initiation order.
 7. Search retains the old view until the current result applies atomically; stale search results are ignored.
-8. Known tags retain the old list until current completion; text filtering is local and Tab causes no database request.
+8. Tag autocomplete retains its old cache until current completion, and Tab causes no database request.
 9. Discovery/index failures do not invoke a modal error dialog.
-10. Index completion and stale results do not overwrite current workspace feedback or known-tag state.
+10. Index completion and stale results do not overwrite current workspace feedback or tag-cache state.
 
 ### Validation
 
@@ -237,10 +235,10 @@ The slices are ordered to retain behavior and keep interfaces reviewable. Do not
    - Move initialization/membership checks and all writes into the per-root queue.
    - Implement coalescing, full-sync ordering, failure-continuation behavior, and commit-triggered refreshes.
 
-4. **Background reads, search, and known tags**
-   - Move search and known-tag reads behind identified Coordinator requests.
-   - Preserve old views/lists until atomic current completion.
-   - Make known-tag filtering local and preserve in-memory Tab autocomplete.
+4. **Background reads, search, and tag autocomplete cache**
+   - Move search and tag-cache reads behind identified Coordinator requests.
+   - Preserve old search views and cached autocomplete vocabulary until atomic current completion.
+   - Preserve in-memory Tab autocomplete without a visible known-tags pane.
 
 5. **Adapter characterization, cleanup, and acceptance**
    - Remove superseded UI-thread index/discovery paths.

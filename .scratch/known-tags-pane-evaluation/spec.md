@@ -1,21 +1,21 @@
 # Known-Tags Pane Evaluation
 
-Status: needs-triage
+Status: completed
 Priority: low
 
 ## Problem Statement
 
 The persistent known-tags pane may not serve TAGGER's keyboard-driven workflow as well as autocomplete or a reduced alternative.
 
-## Current Position
+## Decision
 
-The Files-pane filter redesign leaves **Known tags** in place as a local layout trade-off: it reclaims space from redundant filter/status text and the Recursive scan control, while `Ctrl+K` preserves a direct keyboard workflow. This does not decide the pane's longer-term product role.
+Delete the persistent **Known tags** pane without a replacement surface. Maintainer evidence is that it was never used during regular TAGGER use; no distinct task beyond autocomplete justified consuming default layout space.
 
-## Open Triage Decisions
+Keep the underlying recent and indexed tag cache. The add-keyword input uses that cache for `Tab` autocomplete independently of any visible widget.
 
-- Which current workflows depend on the pane versus autocomplete.
-- Evaluation criteria and user feedback needed before a product decision.
-- Whether the pane should remain, be reduced, replaced, or removed; create separately scoped implementation work only after that decision.
+## Completion
+
+The pane, its commands, shortcuts, focus/navigation routes, refresh control, and pane-specific documentation are removed. The cache remains asynchronously refreshed after relevant index changes and workspace/root changes.
 
 ## Out of Scope
 

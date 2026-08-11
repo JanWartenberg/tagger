@@ -7,7 +7,7 @@ Priority: medium
 
 The Files pane presents one compact, keyboard-accessible filter box: separate Tags, Date, and Filename inputs; an `Aa` filename-case toggle; an Only-without-IPTC-tags condition; and explicit Search and Clear actions. Tags and Date intersect through the existing indexed-search grammar; Filename remains a workspace-local condition.
 
-The pane shows the workspace count and active filter chips with the current match count, instead of repeating inactive folder-state text. The Known tags pane remains present as a provisional layout choice; its longer-term product role is tracked separately.
+The pane shows the workspace count and active filter chips with the current match count, instead of repeating inactive folder-state text. The subsequent Known-tags evaluation removed the unused persistent pane while retaining its cache for add-keyword autocomplete.
 
 ## Interaction
 

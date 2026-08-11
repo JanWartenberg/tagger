@@ -10,15 +10,15 @@ Features (MVP)
 - Shows canonical `IPTC:Keywords`; reads `XMP-dc:Subject` as a compatibility field
 - Routine tag writes preserve an intentionally empty XMP field
 - Offers a single-photo Resolve dialog for IPTC/XMP disagreements, with explicit copy and deletion choices for each field
-- "Known tags": recent (last 100) + tags found in the same folder
-- Files-pane filters for indexed tags, capture date, filename, and photos without IPTC keywords; after tagging, an IPTC-empty result remains available for one step back so its tags can be copied
+- Tag autocomplete combines recent tags (last 100) with tags cached from the active index root
+- Files-pane filters for indexed tags, capture date, filename (applied 700 ms after typing stops), and photos without IPTC keywords; after tagging, an IPTC-empty result remains available for one step back so its tags can be copied
 
 Commands & shortcuts
 - Command line: press `:` to open; `:ls`, `:list`, `:h`, `:help`, or `F1` list commands; `:q`/`:quit` quits; `Tab` completes
 - `Esc` closes command line / exits text fields
-- Focus: `Ctrl+W W` cycles panes, `Ctrl+W H/J/K/L` move focus
-- Global focus (non-inputs): `i` add keyword, `t` known tags, `f` files
-- Known tag filter: `/` or `Ctrl+K` focuses and selects text, `n/N` move in matches
+- Focus: `Ctrl+W W` cycles the Files and current-tags panes; `Ctrl+W H/L` move focus between them
+- Global focus (non-inputs): `i` add keyword, `f` files
+- Tag input: `Tab` completes from the cached autocomplete vocabulary
 - Files-pane filters: `Ctrl+T`, `Ctrl+D`, and `Ctrl+F` focus Tags, Date, and Filename; within the filter box, `Alt+T`, `Alt+D`, and `Alt+F` do the same, `Alt+A` toggles filename case matching, `Alt+S` applies indexed search, and `Alt+C` clears every filter. `Ctrl+E` toggles Only without IPTC tags.
 - Indexed search: pressing Enter in Tags or Date focuses the files pane on the first photo of an accepted non-empty result. `:search <query>` accepts bare tags, `tag:`, date queries (`date:YYYY`, `date:YYYY-MM`, `date:YYYY-MM-DD`, inclusive `date:YYYY-MM-DD..YYYY-MM-DD`, or `date:unknown`), and `tag:<tag> date:<date>` intersections. `:focusdatefilter` and `:focusfilenamefilter` focus their respective controls; `:filterfiles [--case] <query>` and `:clearfilenamefilter` control the workspace-local filename condition. `:clearfilters` clears every condition; `Ctrl+Shift+X`, `:clearsearch`/`:clear`, `:back`, or `Esc` in the file pane clear only indexed Tags/Date search and restore the preceding workspace view.
 - Index: `:reindex` fully refreshes the active root in the background

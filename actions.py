@@ -72,13 +72,6 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+O"),),
         ),
         ActionSpec(
-            id="refresh",
-            description="Refresh known tags",
-            handler_name="force_refresh_known_tags",
-            command=CommandBinding("refresh"),
-            shortcuts=(ShortcutBinding("F5"),),
-        ),
-        ActionSpec(
             id="reindex",
             description="Fully refresh the active photo index",
             handler_name="reindex_active_root",
@@ -143,13 +136,6 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
                     timeout_ms=600,
                 ),
             ),
-        ),
-        ActionSpec(
-            id="focusfilter",
-            description="Focus known-tag filter",
-            handler_name="_focus_known_filter_select_all",
-            command=CommandBinding("focusfilter"),
-            shortcuts=(ShortcutBinding("Ctrl+K"), ShortcutBinding("/")),
         ),
         ActionSpec(
             id="focusdbsearch",
@@ -246,16 +232,6 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
-            id="focustags",
-            description="Focus known-tags pane",
-            handler_name="_focus_pane_known",
-            command=CommandBinding("focustags"),
-            shortcuts=(ShortcutBinding("Alt+2"),),
-            key_routes=(
-                KeyRoute(kind="single", sequence=("t",), scope="global_non_input"),
-            ),
-        ),
-        ActionSpec(
             id="focuskeywords",
             description="Focus current-tags pane",
             handler_name="_focus_pane_keywords",
@@ -306,20 +282,6 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
-            id="panedown",
-            description="Focus lower pane",
-            handler_name="_focus_pane_down",
-            command=CommandBinding("panedown"),
-            shortcuts=(ShortcutBinding("Ctrl+W, J"),),
-        ),
-        ActionSpec(
-            id="paneup",
-            description="Focus upper pane",
-            handler_name="_focus_pane_up",
-            command=CommandBinding("paneup"),
-            shortcuts=(ShortcutBinding("Ctrl+W, K"),),
-        ),
-        ActionSpec(
             id="listdown",
             description="Move selection down",
             handler_name="_action_list_down",
@@ -363,20 +325,6 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
                 KeyRoute(kind="single", sequence=("G",), scope="list_widgets"),
             ),
             native_triggers=(NativeTrigger("End"),),
-        ),
-        ActionSpec(
-            id="knownnext",
-            description="Next known-tag match",
-            handler_name="_action_known_next",
-            command=CommandBinding("knownnext"),
-            shortcuts=(ShortcutBinding("n"),),
-        ),
-        ActionSpec(
-            id="knownprev",
-            description="Previous known-tag match",
-            handler_name="_action_known_prev",
-            command=CommandBinding("knownprev"),
-            shortcuts=(ShortcutBinding("N"),),
         ),
         ActionSpec(
             id="visual",
@@ -519,7 +467,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
                     kind="widget_specific",
                     sequence=("Ctrl+C",),
                     scope="widget_exact",
-                    widget_refs=("addEdit", "knownFilter"),
+                    widget_refs=("addEdit",),
                 ),
             ),
         ),

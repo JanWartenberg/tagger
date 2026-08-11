@@ -27,8 +27,8 @@ Provide a visible, keyboard-accessible filename filter that narrows the current 
 - Match the complete basename, including its extension; never match parent directories or full paths.
 - Normalize the query and basename to Unicode NFC. Default matching is case-folded substring matching; `Aa` matching preserves case after NFC normalization.
 - Trim outer query whitespace. All remaining characters, including spaces, `.`, `*`, `?`, and brackets, are literal; glob and regular-expression syntax are out of scope.
-- Apply the condition live on every edit. An empty field removes the condition.
-- Enter in the field moves focus to the first visible photo without changing the already-live condition. Escape follows normal line-edit behavior: it leaves the condition intact and only returns focus.
+- Apply a non-empty condition 700 ms after the most recent edit. An empty field removes the condition immediately.
+- Enter commits any pending condition and moves focus to the first visible photo. Escape follows normal line-edit behavior: it leaves the condition intact and only returns focus.
 - The query and `Aa` state are session-only. Replacing the Photo Workspace through folder opening or drop clears the query and resets `Aa` to its default.
 
 ### Composition and state
@@ -55,7 +55,7 @@ The existing `PhotoWorkspaceViewMode` continues to describe the underlying sourc
 
 ## Validation
 
-- Add pure Photo Workspace tests for literal/NFC/case behavior, extension matching, live narrowing, empty intersections, selection and restoration, source changes beneath an active filename condition, discovery additions, individual clears, and clear-all.
+- Add pure Photo Workspace tests for literal/NFC/case behavior, extension matching, debounced narrowing at the Qt adapter, empty intersections, selection and restoration, source changes beneath an active filename condition, discovery additions, individual clears, and clear-all.
 - Add offscreen MainWindow coverage for the dedicated control, `Aa`, commands, shortcut, Enter/Escape behavior, indicator wrapping, centred empty state, and composition with indexed-search and IPTC-empty conditions.
 - Preserve existing indexed-search, IPTC-empty, stale-completion, selection, and scroll-restoration behavior.
 

@@ -31,7 +31,6 @@ The module declares `IPTC_KEYWORD_MAX_UTF8_BYTES = 64`. A keyword is valid when 
 
 ### Existing non-manual add routes
 
-- Known-tag activation/double-click validates the selected tag before `_apply_add_tag()`. On failure, do not queue or record it as recent; report the byte-count reason in the footer.
 - Yanked-tag paste validates the complete yanked list before it creates intents. If any tag is invalid, reject the paste atomically: queue no tag and identify the invalid value/count in the footer.
 - These paths normally contain earlier IPTC values, but must remain protected against malformed externally written metadata.
 
@@ -54,7 +53,7 @@ The module declares `IPTC_KEYWORD_MAX_UTF8_BYTES = 64`. A keyword is valid when 
 - Exactly 64 UTF-8 bytes are accepted; 65 are rejected. Tests cover ASCII, multibyte UTF-8, NFC composition, and outer whitespace that is removed before counting.
 - An over-limit manual value is visibly invalid while typing; Add is unavailable; submitting it retains raw text, focus, and cursor/selection and starts no mutation or recent-tag update.
 - Valid manual input still queues and clears exactly as it did before.
-- Known-tag insertion and yanked-tag paste reject invalid input before queueing; a yanked-list rejection is atomic.
+- Yanked-tag paste rejects invalid input before queueing; a rejection is atomic.
 - Resolve refuses invalid XMP-to-IPTC single and whole-list copies without altering either candidate list; Apply remains open and unqueued when its final IPTC list is invalid.
 - A direct call to `ExifTool.write_keyword_fields()` with an invalid IPTC value raises the distinct policy error before `_run`; an over-limit XMP-only value remains allowed.
 - `TagMutationService` does not call ExifTool for a final invalid IPTC target and Resolve does not retry a policy rejection.
@@ -72,7 +71,7 @@ The module declares `IPTC_KEYWORD_MAX_UTF8_BYTES = 64`. A keyword is valid when 
 
 - Add focused pure-policy tests for byte counting and violations.
 - Extend ExifTool and tag-mutation tests for the final guard and no-retry behavior.
-- Extend offscreen MainWindow characterization tests for live manual feedback, rejected submission preservation/focus, Known Tags, and yanked paste.
+- Extend offscreen MainWindow characterization tests for live manual feedback, rejected submission preservation/focus, and yanked paste.
 - Extend Resolve-dialog tests for rejected one-item/all-item XMP-to-IPTC copies and invalid Apply.
 
 ## Validation

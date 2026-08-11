@@ -24,11 +24,11 @@ TAGGER writes `IPTC:Keywords` and, where present, `XMP-dc:Subject`. A keyword th
 
 - The Add Keyword field warns live once the normalized value exceeds the limit: its text/border turns red, its Add button is unavailable, and the normal footer reports the current UTF-8 byte count.
 - A submit attempt through Enter, Ctrl+Enter, the button, or `:addtag` is rejected defensively: focus remains in the field, its unmodified text remains available for editing/copying, and no pending mutation or recent tag is created.
-- Known-tag activation and yanked-tag paste validate their candidate lists before queuing. They normally contain previously written IPTC tags, but remain guarded against malformed external metadata.
+- Yanked-tag paste validates its candidate list before queuing. It normally contains previously written IPTC tags, but remains guarded against malformed external metadata.
 - In Resolve, an XMP-to-IPTC single copy is rejected in place when over the limit. A whole-list XMP-to-IPTC copy is atomic: if any candidate is invalid, no value is copied and the dialog explains why. Apply performs the same final validation and leaves the dialog open on rejection.
 
 ## Constraints
 
 - The validation rule must have one pure, Qt-free implementation shared by UI preflight, Resolve, mutation services, and the ExifTool write adapter.
 - Preserve TAGGER's synchronized IPTC/XMP keyword-write behavior unless a separately approved change is required.
-- No tag-import or command-argument insertion endpoint currently exists; the covered paths are manual input, Known Tags, yanked-tag paste, and Resolve copying.
+- No tag-import or command-argument insertion endpoint currently exists; the covered paths are manual input, yanked-tag paste, and Resolve copying.

@@ -145,8 +145,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakePhotoIndex.search_queries[-1], "tag:second date:2024-01")
         self.assertEqual(self.window.workspaceCountLabel.text(), "2 in workspace")
         self.assertEqual(self.window.filterInfoLabel.text(), "match 1 files")
-        self.assertEqual(self.window.repoBox.title(), "Known tags")
-        self.assertFalse(hasattr(self.window, "recursiveScan"))
+        self.assertFalse(hasattr(self.window, "repoBox"))
+        self.assertFalse(hasattr(self.window, "knownList"))
+        self.assertFalse(hasattr(self.window, "knownFilter"))
         self.assertTrue(
             any(
                 label.text() == "Tags: second"
@@ -166,10 +167,34 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dbDateSearchEdit.text(), "")
         self.assertFalse(self.window.onlyUntagged.isChecked())
 
+    def test_known_tag_cache_supplies_add_keyword_autocomplete_without_a_pane(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        FakePhotoIndex.known_tags = {"coordinator-bird"}
+        self.window.force_refresh_known_tags()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.window.addEdit.setText("coor")
+        self.window.addEdit.setFocus()
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
+
+        self.assertEqual(self.window.addEdit.text(), "coordinator-bird")
+        self.assertFalse(hasattr(self.window, "repoBox"))
+        self.assertNotIn("refresh", self.window._actions_by_id)
+        self.assertNotIn("focusfilter", self.window._actions_by_id)
+        self.assertNotIn("focustags", self.window._actions_by_id)
+        self.assertNotIn("knownnext", self.window._actions_by_id)
+        self.assertNotIn("knownprev", self.window._actions_by_id)
+        self.assertNotIn("panedown", self.window._actions_by_id)
+        self.assertNotIn("paneup", self.window._actions_by_id)
+
     def test_filename_filter_updates_live_and_clears_independently(self) -> None:
         first, second = self._add_paths("first.jpg", "second.jpg")
 
         self.window.filenameFilterEdit.setText("second")
+        self._wait_until(lambda: self.window.selected_file_paths() == [second])
 
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertTrue(self.window.files.item(0).isHidden())
@@ -180,6 +205,57 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [first])
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
+
+    def test_filename_filter_debounces_edits_and_applies_only_the_final_query(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+
+        self.window.filenameFilterEdit.setText("fir")
+        QtTest.QTest.qWait(500)
+        self.window.filenameFilterEdit.setText("sec")
+        QtTest.QTest.qWait(500)
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [first])
+        self._wait_until(lambda: self.window.selected_file_paths() == [second])
+
+    def test_clearing_a_pending_filename_filter_does_not_rebuild_the_files_pane(
+        self,
+    ) -> None:
+        self._add_paths("first.jpg", "second.jpg")
+        self.window.filenameFilterEdit.setText("second")
+
+        with patch.object(
+            self.window,
+            "_render_photo_workspace",
+            wraps=self.window._render_photo_workspace,
+        ) as render:
+            self.window.filenameFilterEdit.clear()
+            self.app.processEvents()
+
+        render.assert_not_called()
+        self.assertIsNone(self.window.photo_workspace.snapshot().filename_filter_query)
+
+    def test_iptc_empty_selection_does_not_rebuild_the_files_pane(self) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.iptc_empty_results = {first, second}
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(lambda: self.window.selected_file_paths() == [first])
+
+        with patch.object(
+            self.window,
+            "_render_photo_workspace",
+            wraps=self.window._render_photo_workspace,
+        ) as render:
+            self.window.files.setCurrentItem(
+                self.window.files.item(1),
+                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+            )
+            self.app.processEvents()
+
+        render.assert_not_called()
+        self.assertEqual(self.window.selected_file_paths(), [second])
 
     def test_filename_filter_commands_focus_case_mode_and_empty_state(self) -> None:
         first, second = self._add_paths("Report.JPG", "report.jpg")
@@ -231,6 +307,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def test_filename_filter_composes_with_indexed_search_and_iptc_empty(self) -> None:
         _first, matching = self._add_paths("first.jpg", "matching.jpg")
         self.window.filenameFilterEdit.setText("matching")
+        self._wait_until(lambda: self.window.selected_file_paths() == [matching])
         FakePhotoIndex.search_results = {matching}
         self.window.dbSearchEdit.setText("tag:matching")
 
@@ -763,15 +840,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakeExifTool.write_calls, [])
         self.assertIn("65/64 UTF-8 bytes", self.window.statusBar().currentMessage())
 
-    def test_known_and_yanked_over_limit_tags_are_rejected_before_queueing(
-        self,
-    ) -> None:
+    def test_yanked_over_limit_tags_are_rejected_before_queueing(self) -> None:
         self._add_paths("one.jpg")
         self._wait_until(lambda: self.window.keywordsList.count() == 1)
         long_tag = "x" * 65
-        known_item = QtWidgets.QListWidgetItem(long_tag)
 
-        self.window.add_keyword_from_known(known_item)
         self.window._yanked_tags = ["valid", long_tag]
         self.window._paste_yanked_tags()
 
@@ -1233,10 +1306,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Ctrl+F",
         )
         self.assertEqual(
-            self.window._actions_by_id["focusfilter"].shortcuts[0].sequence,
-            "Ctrl+K",
-        )
-        self.assertEqual(
             self.window._actions_by_id["toggleemptyiptc"].shortcuts[0].sequence,
             "Ctrl+E",
         )
@@ -1248,10 +1317,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def test_file_filter_shortcuts_focus_and_toggle_controls(self) -> None:
         (photo,) = self._add_paths("photo.jpg")
         FakePhotoIndex.iptc_empty_results = {photo}
-        self.window.knownFilter.setFocus()
+        self.window.files.setFocus()
 
         QtTest.QTest.keyClick(
-            self.window.knownFilter,
+            self.window.files,
             QtCore.Qt.Key.Key_T,
             QtCore.Qt.KeyboardModifier.ControlModifier,
         )
@@ -1268,13 +1337,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             QtCore.Qt.KeyboardModifier.ControlModifier,
         )
         self.assertIs(self.window.focusWidget(), self.window.filenameFilterEdit)
-        QtTest.QTest.keyClick(
-            self.window.filenameFilterEdit,
-            QtCore.Qt.Key.Key_K,
-            QtCore.Qt.KeyboardModifier.ControlModifier,
-        )
-        self.assertIs(self.window.focusWidget(), self.window.knownFilter)
-
         self.window.filenameFilterEdit.setFocus()
         QtTest.QTest.keyClick(
             self.window.filenameFilterEdit,
@@ -2243,34 +2305,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dateLabel.text(), "")
         self.assertNotEqual(self.window.statusBar().currentMessage(), "Ready")
 
-    def test_known_tag_filter_uses_the_loaded_snapshot_without_a_read(self) -> None:
-        self._add_paths("one.jpg")
-        FakePhotoIndex.known_tags = {"coordinator-bird", "coordinator-beach"}
-        self.window.force_refresh_known_tags()
-        self.discovery_runner.run_index_work()
-        self.app.processEvents()
-        self.assertIn(
-            "coordinator-bird",
-            [
-                self.window.knownList.item(index).text()
-                for index in range(self.window.knownList.count())
-            ],
-        )
-
-        reads_before_filter = FakePhotoIndex.known_tag_reads
-        self.window.knownFilter.setText("bird")
-        self.app.processEvents()
-
-        self.assertEqual(FakePhotoIndex.known_tag_reads, reads_before_filter)
-        self.assertEqual(
-            [
-                self.window.knownList.item(index).text()
-                for index in range(self.window.knownList.count())
-            ],
-            ["coordinator-bird"],
-        )
-
-    def test_known_tags_remain_visible_until_the_current_read_completes(self) -> None:
+    def test_known_tag_cache_updates_autocomplete_after_its_read_completes(
+        self,
+    ) -> None:
         self._add_paths("one.jpg")
         FakePhotoIndex.known_tags = {"first-snapshot"}
         self.window.force_refresh_known_tags()
@@ -2280,23 +2317,16 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.known_tags = {"second-snapshot"}
         self.window.force_refresh_known_tags()
 
-        self.assertIn(
-            "first-snapshot",
-            [
-                self.window.knownList.item(index).text()
-                for index in range(self.window.knownList.count())
-            ],
-        )
+        self.window.addEdit.setText("fir")
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(self.window.addEdit.text(), "first-snapshot")
 
         self.discovery_runner.run_index_work()
         self.app.processEvents()
-        self.assertIn(
-            "second-snapshot",
-            [
-                self.window.knownList.item(index).text()
-                for index in range(self.window.knownList.count())
-            ],
-        )
+        self.window.addEdit.setText("sec")
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
+
+        self.assertEqual(self.window.addEdit.text(), "second-snapshot")
 
     def test_clear_search_shortcut_restores_all_photos(self) -> None:
         _first, second, _duplicate = self._add_paths(
@@ -2342,7 +2372,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.filterInfoLabel.text(), "")
 
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
-        self.window.knownList.addItems(["bird", "birch"])
+        self.window._known_tags_snapshot = {"bird", "birch"}
         self.window.addEdit.setText("bi")
         self.window.addEdit.setFocus()
 

@@ -17,7 +17,7 @@ Deliver the approved workspace-local filename filter while preserving TAGGER's c
 - Preserve source membership beneath the condition so individual clearing restores the current underlying indexed-search/IPTC-empty/folder result rather than a filename-filtered subset.
 - Apply the condition to incoming discovery and drag/drop paths. Replacing the Photo Workspace resets the query and case mode.
 - Add the dedicated **Filter filenames** field, `Aa` toggle, `Ctrl+F`, contextual `Alt+F`, `:focusfilenamefilter`, `:filterfiles <query>`, `:filterfiles --case <query>`, `:clearfilenamefilter`, and `:clearfilters` through the action catalogue.
-- Make edits live; Enter focuses the first visible photo; Escape leaves the condition active and returns focus. Empty field text removes only this condition.
+- Apply a non-empty edit after a 700 ms pause; Enter commits it and focuses the first visible photo; Escape leaves the condition active and returns focus. Empty field text removes only this condition immediately.
 - The later Files-pane filter UI redesign groups Filename with separate Tags and Date inputs; it does not change filename-filter ownership or semantics.
 - Keep `:clearsearch`, `:clear`, and `:back` limited to indexed-search clearing.
 - Render active conditions as compact chips with match/progress feedback in the Files pane. Render the centred generic empty state for every zero-result filter/search combination.
@@ -36,7 +36,7 @@ Deliver the approved workspace-local filename filter while preserving TAGGER's c
 
 ## Completion
 
-Implemented with live workspace filtering, composable indexed-search/IPTC-empty conditions, commands, empty-state feedback, and pure/offscreen regression coverage.
+Implemented with debounced workspace filename filtering, composable indexed-search/IPTC-empty conditions, commands, empty-state feedback, and pure/offscreen regression coverage.
 
 ## Constraints
 
