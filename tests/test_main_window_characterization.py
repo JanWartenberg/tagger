@@ -2393,6 +2393,26 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dbSearchEdit.text(), "")
         self.assertEqual(self.window.filterInfoLabel.text(), "")
 
+    def test_editing_or_clearing_after_tab_completion_hides_tag_suggestions(
+        self,
+    ) -> None:
+        self.window._known_tags_snapshot = {"bird", "birch"}
+        self.window.addEdit.setText("bi")
+        self.window.addEdit.setFocus()
+
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
+        self.assertTrue(self.window._tagHint.isVisible())
+
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_R)
+        self.assertFalse(self.window._tagHint.isVisible())
+
+        self.window.addEdit.setText("bi")
+        QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
+        self.assertTrue(self.window._tagHint.isVisible())
+
+        self.window.addEdit.clear()
+        self.assertFalse(self.window._tagHint.isVisible())
+
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
         self.window._known_tags_snapshot = {"bird", "birch"}
         self.window.addEdit.setText("bi")

@@ -913,6 +913,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
         self.addEdit.textChanged.connect(self._update_add_keyword_limit_feedback)
+        self.addEdit.textChanged.connect(self._hide_tag_matches)
         self.addEdit.returnPressed.connect(self.add_keyword_from_input)
         self.addEdit.setToolTip("Insert: i · Add: Ctrl+Enter")
         self.addBtn = QtWidgets.QPushButton("Add")
