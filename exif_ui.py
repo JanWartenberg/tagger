@@ -801,6 +801,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._filename_filter_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self._files_render_token = 0
+        self._files_selection_scroll_anchor: tuple[str | None, int] | None = None
+        self._files_selection_scroll_restore_timer = QtCore.QTimer(self)
+        self._files_selection_scroll_restore_timer.setSingleShot(True)
+        self._files_selection_scroll_restore_timer.timeout.connect(
+            self._restore_pending_files_selection_scroll_anchor
+        )
         self._pending_metadata_read: tuple[int, str] | None = None
         self._metadata_read_in_flight = False
         self._metadata_read_timer = QtCore.QTimer(self)
@@ -1452,6 +1458,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_preview_pixmap()
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.Resize:
             self._position_files_pane_message()
+        if obj is self.files.viewport() and et == QtCore.QEvent.Type.MouseButtonPress:
+            self._capture_files_selection_scroll_anchor()
         if et in (
             QtCore.QEvent.Type.DragEnter,
             QtCore.QEvent.Type.DragMove,
@@ -1749,13 +1757,11 @@ class MainWindow(QtWidgets.QMainWindow):
             if lst is self.keywordsList:
                 self._set_single_list_selection(lst, row)
             elif lst is self.files:
-                lst.setCurrentRow(
-                    row,
-                    QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
-                )
+                self._set_file_current_row(row)
             else:
                 lst.setCurrentRow(row)
-        lst.scrollToItem(lst.currentItem())
+        if lst is not self.files:
+            self._ensure_list_item_visible(lst, lst.currentItem())
 
     def _go_list_edge(self, lst: QtWidgets.QListWidget, to_end: bool) -> None:
         if lst.count() == 0:
@@ -1766,13 +1772,47 @@ class MainWindow(QtWidgets.QMainWindow):
         if lst is self.keywordsList and not self._vim_visual_keywords:
             self._set_single_list_selection(lst, row)
         elif lst is self.files:
-            lst.setCurrentRow(
-                row,
-                QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
-            )
+            self._set_file_current_row(row)
+            return
         else:
             lst.setCurrentRow(row)
-        lst.scrollToItem(lst.currentItem())
+        self._ensure_list_item_visible(lst, lst.currentItem())
+
+    def _set_file_current_row(self, row: int) -> None:
+        """Change a Files-pane selection without Qt moving a visible target."""
+        item = self.files.item(row)
+        if item is None:
+            return
+        rect = self.files.visualItemRect(item)
+        viewport = self.files.viewport().rect()
+        was_visible = rect.intersects(viewport)
+        anchor = self._capture_files_scroll_anchor() if was_visible else None
+        self.files.setCurrentRow(
+            row,
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        if anchor is not None:
+            # Windows QListWidget can apply ensure-visible after setCurrentRow.
+            self._queue_files_selection_scroll_anchor_restore(anchor)
+            return
+        self._ensure_list_item_visible(self.files, item)
+
+    def _ensure_list_item_visible(
+        self,
+        lst: QtWidgets.QListWidget,
+        item: QtWidgets.QListWidgetItem | None,
+    ) -> None:
+        """Scroll only when keyboard selection leaves the current viewport."""
+        if item is None:
+            return
+        rect = lst.visualItemRect(item)
+        viewport = lst.viewport().rect()
+        if rect.top() < viewport.top():
+            lst.scrollToItem(item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop)
+        elif rect.bottom() > viewport.bottom():
+            lst.scrollToItem(
+                item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtBottom
+            )
 
     def _visible_file_rows(self) -> tuple[int, ...]:
         """Return file-widget rows from the workspace's logical visibility."""
@@ -3428,6 +3468,26 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             self.mismatchLabel.setText("")
             self.resolveBtn.setEnabled(False)
+
+    def _capture_files_selection_scroll_anchor(self) -> None:
+        """Keep a mouse click from moving a filtered Files-pane viewport."""
+        self._queue_files_selection_scroll_anchor_restore(
+            self._capture_files_scroll_anchor()
+        )
+
+    def _queue_files_selection_scroll_anchor_restore(
+        self, anchor: tuple[str | None, int]
+    ) -> None:
+        self._files_selection_scroll_anchor = anchor
+        # Run after QListWidget's selection and ensure-visible events. An owned
+        # timer is deleted with MainWindow, unlike a singleShot lambda.
+        self._files_selection_scroll_restore_timer.start(1)
+
+    def _restore_pending_files_selection_scroll_anchor(self) -> None:
+        anchor = self._files_selection_scroll_anchor
+        self._files_selection_scroll_anchor = None
+        if anchor is not None:
+            self._restore_files_scroll_anchor(anchor)
 
     def _capture_files_scroll_anchor(self) -> tuple[str | None, int]:
         top_item = self.files.itemAt(0, 0)

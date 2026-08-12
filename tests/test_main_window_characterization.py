@@ -1999,6 +1999,67 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertEqual(self.window.selectedLabel.text(), second)
 
+    def test_no_tags_j_and_k_keep_an_already_visible_selection_in_place(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
+        FakePhotoIndex.iptc_empty_results = set(paths[:150])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(self.window.onlyUntagged.isChecked)
+        self.window.files.setFocus()
+        scroll_bar = self.window.files.verticalScrollBar()
+        initial_scroll = scroll_bar.value()
+        self.window.files.itemSelectionChanged.connect(
+            lambda: QtCore.QTimer.singleShot(
+                0, lambda: scroll_bar.setValue(initial_scroll + 30)
+            )
+        )
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_J)
+        QtTest.QTest.qWait(10)
+        self.assertEqual(self.window.files.currentRow(), 1)
+        self.assertEqual(scroll_bar.value(), initial_scroll)
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_K)
+        QtTest.QTest.qWait(10)
+        self.assertEqual(self.window.files.currentRow(), 0)
+        self.assertEqual(scroll_bar.value(), initial_scroll)
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_K)
+        QtTest.QTest.qWait(10)
+        self.assertEqual(self.window.files.currentRow(), 0)
+        self.assertEqual(scroll_bar.value(), initial_scroll)
+
+    def test_no_tags_click_keeps_the_existing_scroll_anchor(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
+        FakePhotoIndex.iptc_empty_results = set(paths[:150])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(self.window.onlyUntagged.isChecked)
+
+        self.window.files.scrollToItem(
+            self.window.files.item(100),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+        scroll_bar = self.window.files.verticalScrollBar()
+        anchor = scroll_bar.value()
+
+        # Some native QListWidget backends schedule a spurious ensure-visible
+        # scroll after changing selection among hidden rows.
+        self.window.files.itemSelectionChanged.connect(
+            lambda: QtCore.QTimer.singleShot(
+                0, lambda: scroll_bar.setValue(anchor - 30)
+            )
+        )
+        rect = self.window.files.visualItemRect(self.window.files.item(102))
+        QtTest.QTest.mouseClick(
+            self.window.files.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=rect.center(),
+        )
+        self._wait_for_ui(lambda: self.window.files.currentRow() == 102)
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(scroll_bar.value(), anchor)
+
     def test_file_pane_arrow_keys_change_the_active_photo(self) -> None:
         first, second, _duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
