@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 from photo_workspace import PhotoWorkspace, PhotoWorkspaceViewMode
 
@@ -123,6 +124,24 @@ class FilenameFilterTests(unittest.TestCase):
         self.assertEqual(snapshot.paths, ("first.jpg", "second.jpg"))
         self.assertEqual(snapshot.visible_paths, ("first.jpg", "second.jpg"))
         self.assertIsNone(snapshot.filename_filter_query)
+
+    def test_final_filename_filter_derives_visible_membership_once_for_snapshot(
+        self,
+    ) -> None:
+        workspace = PhotoWorkspace()
+        workspace.add_paths(
+            [f"photos/photo-{number:05}.jpg" for number in range(3_000)]
+        )
+
+        with patch.object(
+            workspace, "_filtered_visible", wraps=workspace._filtered_visible
+        ) as filtered_visible:
+            snapshot = workspace.set_filename_filter("photo-02999")
+
+        # One call repairs selection and one constructs the ordered snapshot.
+        # Recomputing it per path makes final filter application quadratic.
+        self.assertEqual(filtered_visible.call_count, 2)
+        self.assertEqual(snapshot.visible_paths, ("photos/photo-02999.jpg",))
 
     def test_clearing_restores_the_pre_filter_selection(self) -> None:
         workspace = PhotoWorkspace()

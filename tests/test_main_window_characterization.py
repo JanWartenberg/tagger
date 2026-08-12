@@ -206,6 +206,28 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
 
+    def test_file_item_lookup_tracks_filter_renders_and_workspace_replacement(
+        self,
+    ) -> None:
+        first, second = self._add_paths("first.jpg", "second.jpg")
+
+        first_item = self.window._find_item_by_path(first)
+        self.assertIs(first_item, self.window.files.item(0))
+
+        self.window.filenameFilterEdit.setText("second")
+        self.window.apply_filename_filter()
+
+        self.assertIs(self.window._find_item_by_path(first), self.window.files.item(0))
+        self.assertIs(self.window._find_item_by_path(second), self.window.files.item(1))
+
+        replacement = normalize_path("C:/photos/replacement.jpg")
+        self.window.replace_photo_workspace([replacement], paths_are_normalized=True)
+
+        self.assertIsNone(self.window._find_item_by_path(first))
+        self.assertIs(
+            self.window._find_item_by_path(replacement), self.window.files.item(0)
+        )
+
     def test_filename_filter_debounces_edits_and_applies_only_the_final_query(
         self,
     ) -> None:

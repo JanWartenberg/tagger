@@ -120,9 +120,8 @@ class PhotoWorkspace:
 
     def snapshot(self) -> PhotoWorkspaceSnapshot:
         """Return the immutable state used to render the workspace."""
-        visible = tuple(
-            path for path in self._paths if path in self._filtered_visible()
-        )
+        visible_membership = self._filtered_visible()
+        visible = tuple(path for path in self._paths if path in visible_membership)
         selected = tuple(path for path in visible if path in self._selected)
         filename_filter = self._filename_filter
         return PhotoWorkspaceSnapshot(

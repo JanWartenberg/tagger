@@ -1,6 +1,6 @@
 # 01 — Restore Responsive Filename Filtering and Baseline Performance
 
-Status: needs-triage
+Status: completed
 Priority: high
 Category: performance-regression
 Milestone: M4 — Faster photo-finding and tagging workflows
@@ -20,12 +20,12 @@ Remove the roughly 30-second UI freeze caused by typing in **Filter filenames**,
 
 ## Acceptance Criteria
 
-- [ ] A deterministic agent-runnable regression test or benchmark reproduces the pre-fix input-latency failure on a large workspace and asserts a documented responsiveness budget after the change.
-- [ ] Rapid edits produce no filtering/list-rendering work until 700 ms after the most recent edit; only the final query is applied.
-- [ ] Filtering evaluates only the current workspace source and remains a literal basename-only condition with existing NFC and case behavior.
-- [ ] The UI event loop remains responsive while entering and replacing filename queries; stale delayed or background results cannot overwrite a newer query or workspace state.
-- [ ] Date/tag indexed search, IPTC-empty, filename composition, empty states, clear behavior, selection, restoration, commands, shortcuts, and current background-coordinator behavior remain covered by regression tests.
-- [ ] A checked-in or documented repeatable performance baseline distinguishes this problem from other interactive paths and records follow-up tickets only for measured issues.
+- [x] A deterministic agent-runnable regression test or benchmark reproduces the pre-fix input-latency failure on a large workspace and asserts a documented responsiveness budget after the change.
+- [x] Rapid edits produce no filtering/list-rendering work until 700 ms after the most recent edit; only the final query is applied.
+- [x] Filtering evaluates only the current workspace source and remains a literal basename-only condition with existing NFC and case behavior.
+- [x] The UI event loop remains responsive while entering and replacing filename queries; stale delayed or background results cannot overwrite a newer query or workspace state.
+- [x] Date/tag indexed search, IPTC-empty, filename composition, empty states, clear behavior, selection, restoration, commands, shortcuts, and current background-coordinator behavior remain covered by regression tests.
+- [x] A checked-in or documented repeatable performance baseline distinguishes this problem from other interactive paths and records follow-up tickets only for measured issues.
 
 ## Constraints
 
@@ -39,3 +39,5 @@ Remove the roughly 30-second UI freeze caused by typing in **Filter filenames**,
 - The same harness measures filename input at 0.40 s for 100 paths, 1.43 s for 300, 3.84 s for 600, and 16.40 s for 3,000 without IPTC-empty; the IPTC-empty state has comparable timings. `apply_filename_filter()` also synchronously invokes the full-list renderer. Debouncing prevents repeated work while typing but does not make the eventual full render responsive; separately measure and replace/coalesce the rendering strategy.
 - Partial implementation: selection changes no longer rebuild the Files pane in the IPTC-empty view, and non-empty filename edits now debounce for 700 ms. An explicit filename command, case-mode toggle, Enter, empty-field clear, workspace replacement, and clear-all cancel or commit pending work as appropriate. Offscreen characterization tests cover the debounce and the absent IPTC-empty selection rebuild.
 - Maintainer validation: the IPTC-empty/no-tags filter is responsive again after this change. Applying the eventual debounced filename filter against an original folder of roughly 3,000 files still freezes the application. Follow-up investigation is tracked in 02; do not treat debounce as a complete filename-rendering fix.
+- Completed through 02 and 03: `tests/profile_filename_filter.py` reproduces the former quadratic 3,000-path snapshot path and now completes in about 0.003 s with two membership derivations. The controlled offscreen MainWindow path measured 0.043 s. The full offscreen suite (210 tests) passed after the fix.
+- Follow-up user validation initially mistook the intentional source-view state during the asynchronous No tags query for a failed filter. The checkbox becoming checked with no errors confirms the indexed result was applied; the mixed tagged/untagged offscreen reproduction also filters correctly.

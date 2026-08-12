@@ -827,6 +827,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.backgroundDiscoveryEvent.connect(self._handle_coordinator_event)
 
         self.files = FileListWidget()
+        self._file_items_by_path: dict[str, QtWidgets.QListWidgetItem] = {}
         self.files.filesDropped.connect(self.handle_dropped_urls)
         self.files.itemSelectionChanged.connect(self.on_selection_changed)
         self.files.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
@@ -3059,6 +3060,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return None
 
     def _render_photo_workspace(self, snapshot: PhotoWorkspaceSnapshot) -> None:
+        # A synchronous transition supersedes any queued replacement batches.
+        self._files_render_token += 1
         self._update_view_indicator(snapshot)
         self.onlyUntagged.blockSignals(True)
         self.files.blockSignals(True)
@@ -3067,13 +3070,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
             )
             self._clear_pending_mutation_spinner_items()
+            self._file_items_by_path.clear()
             self.files.clear()
             visible_paths = set(snapshot.visible_paths)
             selected_paths = set(snapshot.selected_paths)
             for path in snapshot.paths:
                 item = QtWidgets.QListWidgetItem(path)
-                self._set_file_mutation_indicator(item, path)
+                self._set_file_mutation_indicator(item, path, path_is_normalized=True)
                 self.files.addItem(item)
+                self._file_items_by_path[path] = item
                 item.setHidden(path not in visible_paths)
                 item.setSelected(path in selected_paths)
             if snapshot.active_path is not None:
@@ -3104,6 +3109,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.files.blockSignals(True)
         try:
             self._clear_pending_mutation_spinner_items()
+            self._file_items_by_path.clear()
             self.files.clear()
         finally:
             self.files.blockSignals(False)
@@ -3124,8 +3130,11 @@ class MainWindow(QtWidgets.QMainWindow):
             try:
                 for path in paths[position:end]:
                     item = QtWidgets.QListWidgetItem(path)
-                    self._set_file_mutation_indicator(item, path)
+                    self._set_file_mutation_indicator(
+                        item, path, path_is_normalized=True
+                    )
                     self.files.addItem(item)
+                    self._file_items_by_path[path] = item
                     item.setHidden(path not in visible_paths)
                     item.setSelected(path in selected_paths)
             finally:
@@ -3174,9 +3183,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self._sync_pending_mutation_spinner_timer()
 
     def _set_file_mutation_indicator(
-        self, item: QtWidgets.QListWidgetItem, path: str
+        self,
+        item: QtWidgets.QListWidgetItem,
+        path: str,
+        *,
+        path_is_normalized: bool = False,
     ) -> None:
-        normalized_path = normalize_path(path)
+        normalized_path = path if path_is_normalized else normalize_path(path)
         status = self._tag_mutation_coordinator.status_for(normalized_path)
         if status is MutationStatus.PENDING:
             self._pending_mutation_spinner_items[normalized_path] = item
@@ -3714,12 +3727,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tag_mutation_coordinator.enqueue(paths, fn, pending_mutation, status)
 
     def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
-        target = normalize_path(path)
-        for i in range(self.files.count()):
-            it = self.files.item(i)
-            if normalize_path(it.text()) == target:
-                return it
-        return None
+        return self._file_items_by_path.get(normalize_path(path))
 
     def _schedule_filename_filter(self, text: str) -> None:
         """Apply a non-empty filename query after the user pauses typing."""
