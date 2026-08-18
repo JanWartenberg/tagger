@@ -1,0 +1,121 @@
+<!doctype html>
+<!--
+  THROWAWAY UI PROTOTYPE — not production UI.
+  Question: Which surface best makes a TAGGER multi-photo mutation, its active
+  photo, and partial failures understandable? Four variants, switchable via
+  ?variant=A|B|C|D. All photos, tags, selection, writes, and failures live only
+  in JavaScript memory; no files, metadata, or network requests are used.
+  Run: python -m http.server 8000 --directory /workspace/tagger/prototype
+  Then open: http://localhost:8000/multi-photo-tagging-variants.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TAGGER — multi-photo workflow variants</title>
+<style>
+  :root { --bg:#e7e5df; --window:#f7f6f2; --panel:#fff; --line:#c7c7c1; --ink:#202527; --muted:#66706d; --blue:#2366a4; --blue-soft:#e7f0fa; --orange:#a55712; --orange-soft:#fff0df; --green:#27724e; --shadow:0 18px 46px #0003; }
+  * { box-sizing:border-box; } body { margin:0; background:var(--bg); color:var(--ink); font:13px/1.35 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  button,input { font:inherit; } button { cursor:pointer; border:1px solid #b6bbb9; border-radius:5px; padding:6px 9px; color:var(--ink); background:#fff; } button:hover { background:#f0f5f8; } button:disabled { cursor:not-allowed; opacity:.5; }
+  input { min-width:0; width:100%; border:1px solid #b9bcb9; border-radius:4px; padding:6px 8px; } input:focus { outline:2px solid #95bee5; outline-offset:1px; }
+  .primary { border-color:#1b568d; background:var(--blue); color:#fff; font-weight:650; } .primary:hover { background:#174a7b; } .danger { border-color:#ca9b70; background:var(--orange-soft); color:#7b3c08; } .quiet { border-color:transparent; background:transparent; color:#485450; } .quiet:hover { border-color:#c3cbc7; }
+  .app { display:grid; grid-template-rows:35px 1fr 25px; width:min(1280px,calc(100vw - 30px)); height:min(800px,calc(100vh - 60px)); min-height:620px; margin:22px auto 88px; overflow:hidden; border:1px solid #aaa9a5; border-radius:8px; background:var(--window); box-shadow:var(--shadow); }
+  .title { display:flex; align-items:center; gap:10px; padding:0 13px; color:#f5f7f5; background:#303638; font-size:12px; } .title span { color:#bac3bf; } .dots { letter-spacing:2px; color:#b9c2be; }
+  .main { display:grid; grid-template-columns:minmax(365px,38%) 8px 1fr; min-height:0; } .divider { border-left:1px solid #c8c7c3; border-right:1px solid #c8c7c3; background:#dfdeda; }
+  .files { min-height:0; display:flex; flex-direction:column; padding:11px; background:#f8f8f6; } .pane-head { display:flex; align-items:center; gap:8px; padding-bottom:9px; border-bottom:1px solid #d4d3cf; } .pane-head h2 { flex:1; margin:0; font-size:14px; } .count { color:var(--muted); font-size:11px; }
+  .filter { display:flex; gap:6px; padding:8px 0; } .filter input { flex:1; } .list { min-height:0; flex:1; overflow:auto; border:1px solid var(--line); border-radius:5px; background:#fff; }
+  .row { display:grid; grid-template-columns:23px 34px 1fr auto; align-items:center; gap:7px; min-height:47px; padding:5px 8px; border-bottom:1px solid #ecece8; cursor:pointer; } .row:hover { background:#f5f9fc; } .row.selected { background:#e5f0fb; } .row.active { box-shadow:inset 3px 0 var(--blue); } .row .check { width:15px; height:15px; accent-color:var(--blue); }
+  .thumb { width:34px; height:30px; border-radius:3px; border:1px solid #8d9b91; background:linear-gradient(145deg,var(--sky) 0 45%,var(--sand) 45% 60%,var(--ground) 60%); box-shadow:inset 0 0 10px #0002; } .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:590; } .meta { color:var(--muted); font-size:11px; } .marker { width:9px; height:9px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 3px var(--orange-soft); }
+  .bottom { display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-top:1px solid #d3d1cc; background:#f0efea; color:#59635f; font-size:11px; }
+  .detail { min-width:0; min-height:0; padding:15px; background:#fbfbfa; } .detail-card { height:100%; overflow:auto; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
+  .variant { display:none; height:100%; } .variant.active { display:block; } .section { padding:14px; border-bottom:1px solid #deded9; } .section:last-child { border-bottom:0; } h3 { margin:0 0 7px; font-size:14px; } .eyebrow { color:#51605a; font-size:10px; font-weight:750; letter-spacing:.07em; text-transform:uppercase; } .hint { color:var(--muted); font-size:12px; }
+  .photo { height:178px; border:1px solid #a9aaa5; border-radius:4px; background:linear-gradient(145deg,#8eb2c3 0 43%,#ead19e 43% 59%,#e8ecee 59% 67%,#527b69 67%); box-shadow:inset 0 0 55px #0002; } .tag-list { display:flex; flex-wrap:wrap; gap:5px; margin:9px 0; } .tag { padding:3px 7px; border:1px solid #c7d2d9; border-radius:12px; background:#f1f6f9; color:#294d68; } .tag.missing { border-style:dashed; color:#81786e; background:#faf8f4; }
+  .add { display:flex; gap:6px; margin-top:10px; } .add input { flex:1; } .callout { margin:10px 0; padding:9px 10px; border-left:3px solid var(--blue); border-radius:0 5px 5px 0; background:var(--blue-soft); } .warning { border-color:var(--orange); background:var(--orange-soft); } .success { border-color:var(--green); background:#e9f7ef; }
+  /* A: preserve active-photo detail, but spell out the batch target beside the action. */
+  .a-target { display:flex; align-items:center; gap:9px; padding:8px 10px; border:1px solid #b6cee2; border-radius:5px; background:#f3f8fd; } .a-target b { color:#164e80; } .a-target button { margin-left:auto; }
+  /* B: selection turns the detail pane into an explicit batch review, not an active-photo editor. */
+  .b-summary { display:grid; grid-template-columns:84px 1fr; gap:12px; align-items:center; } .stack { display:grid; grid-template-columns:repeat(3,28px); } .stack .thumb { grid-row:1; grid-column:1; width:54px; height:48px; } .stack .thumb:nth-child(2) { transform:translate(12px,6px); } .stack .thumb:nth-child(3) { transform:translate(24px,12px); } .batch-grid { display:grid; grid-template-columns:1fr 1fr; gap:9px; margin-top:11px; } .batch-cell { padding:9px; border:1px solid #d2d4d1; border-radius:5px; } .batch-cell b { display:block; margin-bottom:5px; } .actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:10px; }
+  /* C: selection is a separate, persistent tray; inspection and batch target never share a meaning. */
+  .tray { display:flex; gap:6px; overflow:auto; padding:8px; border:1px solid #b8cee0; border-radius:5px; background:#f4f9fd; } .tray-photo { position:relative; flex:0 0 62px; } .tray-photo .thumb { width:62px; height:48px; } .tray-photo button { position:absolute; top:-6px; right:-6px; width:18px; height:18px; padding:0; border-radius:50%; background:#fff; } .tray-name { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#52615c; font-size:10px; }
+  /* D: operation/result ledger treats partial failure as first-class batch work. */
+  .ledger { display:grid; gap:7px; } .ledger-row { display:grid; grid-template-columns:28px 1fr auto; align-items:center; gap:8px; padding:7px; border:1px solid #d8d8d3; border-radius:4px; } .ledger-row.failed { border-color:#dfb185; background:#fff9f2; } .status-ok { color:var(--green); font-weight:700; } .status-fail { color:#9a4b0b; font-weight:700; } .retry-bar { display:flex; align-items:center; gap:8px; padding:10px; border:1px solid #e2b88f; border-radius:5px; background:var(--orange-soft); }
+  .switcher { position:fixed; z-index:2; bottom:17px; left:50%; display:flex; align-items:center; gap:6px; padding:6px; transform:translateX(-50%); border:1px solid #56616a; border-radius:999px; color:#fff; background:#232c32; box-shadow:0 8px 24px #0006; } .switcher button { min-width:31px; padding:5px 8px; border:0; border-radius:50%; color:white; background:#3f4c55; } .switcher button:hover { background:#596a74; } .switcher strong { min-width:210px; text-align:center; font-size:11px; }
+  .state { position:fixed; right:16px; bottom:18px; max-width:400px; padding:7px 10px; border:1px solid #b7c9c0; border-radius:6px; color:#315547; background:#f2f8f5; box-shadow:0 4px 14px #0002; font-size:11px; }
+  @media (max-width:800px) { .app { width:calc(100vw - 12px); margin-top:6px; } .main { grid-template-columns:minmax(300px,45%) 7px 1fr; } .detail { padding:8px; } .state { display:none; } .row { grid-template-columns:20px 28px 1fr auto; gap:5px; } .thumb { width:28px; } }
+</style>
+</head>
+<body>
+<main class="app">
+  <header class="title"><span class="dots">● ● ●</span><b>TAGGER</b><span>Multi-photo tagging prototype — fake in-memory photos</span></header>
+  <div class="main">
+    <aside class="files">
+      <div class="pane-head"><h2>Files</h2><span class="count" id="selected-count"></span><button class="quiet" id="select-all">Select shown</button></div>
+      <div class="filter"><input aria-label="Filter fake photos" id="filter" placeholder="Filter filenames (demo only)"><button id="clear-selection">Clear selection</button></div>
+      <div class="list" id="file-list"></div>
+    </aside>
+    <div class="divider"></div>
+    <section class="detail"><div class="detail-card">
+      <div class="variant" id="variant-A"></div><div class="variant" id="variant-B"></div><div class="variant" id="variant-C"></div><div class="variant" id="variant-D"></div>
+    </div></section>
+  </div>
+  <footer class="bottom"><span id="footer">Ready</span><span>Click rows to select · click name area to make active · shift-click toggles selection</span></footer>
+</main>
+<nav class="switcher" aria-label="Prototype variant switcher"><button id="previous" aria-label="Previous design">←</button><strong id="switch-label"></strong><button id="next" aria-label="Next design">→</button></nav>
+<output class="state" id="state"></output>
+<script>
+  // Everything below is intentionally fake, ephemeral data in this page's memory.
+  const photos = [
+    ["iceberg-beach-001.jpg", ["beach", "iceland", "ice"], "#8eb2c3", "#ead19e", "#527b69"],
+    ["iceberg-beach-002.jpg", ["beach", "iceland"], "#9cb6c5", "#e3cf9e", "#628773"],
+    ["glacier-lagoon.jpg", ["iceland", "glacier"], "#91b2c2", "#d7c68f", "#466f68"],
+    ["black-sand-beach.jpg", ["beach", "iceland"], "#859cad", "#73736b", "#434e4d"],
+    ["coast-drive-019.jpg", ["roadtrip"], "#a4bdc1", "#d4bd7b", "#577864"],
+    ["ice-cave-approach.jpeg", ["ice", "cave"], "#a7c3cf", "#ced9d1", "#5b7d75"],
+    ["reykjavik-window.jpg", ["city"], "#b6c3c4", "#d1b48a", "#70806f"]
+  ].map(([name,tags,sky,sand,ground], i) => ({id:i,name,tags,sky,sand,ground,failed:false}));
+  const variants = { A:"A — Active photo + explicit target", B:"B — Batch review replaces detail", C:"C — Persistent selection tray", D:"D — Batch-result ledger" };
+  const keys = Object.keys(variants); let current = new URLSearchParams(location.search).get("variant") || "A"; if (!variants[current]) current="A";
+  let selected = new Set([0,1,2]); let active=0; let query=""; let lastOperation=null;
+  const selectedPhotos=()=>photos.filter(p=>selected.has(p.id)); const activePhoto=()=>photos.find(p=>p.id===active) || selectedPhotos()[0];
+  const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+  const thumb=p=>`<span class="thumb" style="--sky:${p.sky};--sand:${p.sand};--ground:${p.ground}"></span>`;
+  const tags=(values, missing=false)=>values.map(t=>`<span class="tag ${missing?"missing":""}">${esc(t)}</span>`).join("");
+  function renderFiles(){
+    const visible=photos.filter(p=>p.name.toLowerCase().includes(query.toLowerCase()));
+    document.querySelector('#selected-count').textContent=`${selected.size} selected · ${visible.length} shown`;
+    document.querySelector('#file-list').innerHTML=visible.map(p=>`<div class="row ${selected.has(p.id)?"selected":""} ${p.id===active?"active":""}" data-id="${p.id}" title="${esc(p.name)}">
+      <input class="check" type="checkbox" ${selected.has(p.id)?"checked":""} aria-label="Select ${esc(p.name)}"><span>${thumb(p)}</span><span><span class="name">${esc(p.name)}</span><span class="meta">${p.tags.join(", ")||"no tags"}</span></span>${p.failed?'<span class="marker" title="Tag changes need attention"></span>':'<span></span>'}
+    </div>`).join("");
+    document.querySelectorAll('.row').forEach(row=>row.addEventListener('click', e=>{
+      const id=Number(row.dataset.id); if(e.target.matches('input') || e.shiftKey){ selected.has(id)?selected.delete(id):selected.add(id); if(!selected.size) active=null; else if(active===null || !selected.has(active)) active=[...selected][0]; }
+      else { active=id; if(!selected.has(id)) selected.add(id); }
+      render();
+    }));
+  }
+  function actionControls(){ return `<div class="add"><input id="tag-input" value="travel" aria-label="Tag to add"><button class="primary" data-action="add">Add tag</button><button class="danger" data-action="partial">Simulate 1 failure</button></div>`; }
+  function targetCopy(){ const n=selected.size; return n===1?"this photo":`${n} selected photos`; }
+  function renderA(){ const p=activePhoto(); const n=selected.size; return `<div class="section"><span class="eyebrow">Active photo</span><h3>${p?esc(p.name):"No photo selected"}</h3>${p?`<div class="photo"></div><div class="tag-list">${tags(p.tags)}</div>`:""}</div>
+    <div class="section"><span class="eyebrow">Batch action</span><div class="a-target"><span><b>${n} selected photo${n===1?"":"s"}</b><br><span class="hint">The active photo remains shown above; this action targets ${targetCopy()}.</span></span><button class="quiet" data-action="show-selected">Review</button></div>${actionControls()}<div class="callout">Best if the current active-photo detail is familiar and the added target banner prevents accidental single-photo assumptions.</div></div>`; }
+  function sharedTags(){ const ps=selectedPhotos(); if(!ps.length)return {all:[],some:[]}; const all=[...new Set(ps.flatMap(p=>p.tags))].filter(t=>ps.every(p=>p.tags.includes(t))); const some=[...new Set(ps.flatMap(p=>p.tags))].filter(t=>!all.includes(t)); return {all,some}; }
+  function renderB(){ const ps=selectedPhotos(), s=sharedTags(); return `<div class="section"><span class="eyebrow">Batch review</span><div class="b-summary"><div class="stack">${ps.slice(0,3).map(thumb).join("")}</div><div><h3>${ps.length} photos selected</h3><span class="hint">No individual photo is being edited in this mode.</span></div></div><div class="batch-grid"><div class="batch-cell"><b>Tags on every selected photo</b>${s.all.length?tags(s.all):'<span class="hint">None</span>'}</div><div class="batch-cell"><b>Tags on some selected photos</b>${s.some.length?tags(s.some,true):'<span class="hint">None</span>'}</div></div>${actionControls()}</div><div class="section"><button data-action="inspect">Inspect active photo: ${activePhoto()?esc(activePhoto().name):"—"}</button><div class="callout">Best if batch intent must be unmistakable: selecting multiple files changes the right pane from inspection to an aggregate review.</div></div>`; }
+  function renderC(){ const ps=selectedPhotos(), p=activePhoto(); return `<div class="section"><span class="eyebrow">Batch tray · ${ps.length} selected</span><h3>Photos queued for the next tag action</h3><div class="tray">${ps.map(p=>`<div class="tray-photo">${thumb(p)}<button data-action="remove" data-id="${p.id}" title="Remove ${esc(p.name)}">×</button><span class="tray-name">${esc(p.name).replace(/\..*/,"")}</span></div>`).join("")||'<span class="hint">Select photos from the Files pane.</span>'}</div>${actionControls()}</div><div class="section"><span class="eyebrow">Inspection stays separate</span><h3>${p?esc(p.name):"No active photo"}</h3>${p?`<div class="photo"></div><div class="tag-list">${tags(p.tags)}</div>`:""}<div class="callout">Best if users build a batch deliberately while still inspecting one photo at a time; the tray is the persistent source of truth for the mutation target.</div></div>`; }
+  function renderD(){ const ps=selectedPhotos(), failed=ps.filter(p=>p.failed); return `<div class="section"><span class="eyebrow">Batch operation</span><h3>${lastOperation?esc(lastOperation):"Ready to change selected photos"}</h3><div class="actions">${actionControls()}<button data-action="clear-failures">Clear demo failures</button></div></div><div class="section"><span class="eyebrow">Per-photo result</span><div class="ledger">${ps.map(p=>`<div class="ledger-row ${p.failed?"failed":""}">${thumb(p)}<span><b>${esc(p.name)}</b><br><span class="hint">${p.failed?"Restored confirmed tags; explicit retry available.":"Confirmed tag state."}</span></span><span class="${p.failed?"status-fail":"status-ok"}">${p.failed?"Needs retry":"Saved"}</span></div>`).join("")||'<span class="hint">Select photos to create an operation.</span>'}</div>${failed.length?`<div class="retry-bar"><b>${failed.length} failure${failed.length===1?"":"s"}</b><span class="hint">Retry only failed photos, or change selection first.</span><button class="primary" data-action="retry">Retry failures</button></div>`:""}<div class="callout ${failed.length?"warning":""}">Best if failures deserve a dedicated, inspectable operation surface rather than a transient status message plus tiny row markers.</div></div>`; }
+  function bindActions(){ document.querySelectorAll('[data-action]').forEach(el=>el.addEventListener('click',e=>{ e.stopPropagation(); const a=el.dataset.action;
+    if(a==='add'||a==='partial'){ const value=(document.querySelector('#tag-input')?.value||'travel').trim(); const ps=selectedPhotos(); ps.forEach((p,i)=>{ if(a==='partial'&&i===ps.length-1){p.failed=true;return;} if(value&&!p.tags.includes(value))p.tags.push(value); p.failed=false; }); lastOperation=a==='partial'?`Added “${value}” to ${Math.max(0,ps.length-1)} photos; 1 photo failed.`:`Added “${value}” to ${ps.length} selected photos.`; document.querySelector('#footer').textContent=lastOperation; }
+    if(a==='retry'){ selectedPhotos().filter(p=>p.failed).forEach(p=>p.failed=false); lastOperation='Retried failed tag changes for selected photos.'; document.querySelector('#footer').textContent=lastOperation; }
+    if(a==='remove'){ selected.delete(Number(el.dataset.id)); if(!selected.has(active)) active=[...selected][0]??null; }
+    if(a==='clear-failures'){ photos.forEach(p=>p.failed=false); lastOperation=null; }
+    if(a==='show-selected'){ current='B'; } if(a==='inspect'){ current='A'; }
+    render();
+  })); }
+  function renderDetail(){ document.querySelectorAll('.variant').forEach(x=>x.classList.remove('active')); const root=document.querySelector(`#variant-${current}`); root.classList.add('active'); root.innerHTML=({A:renderA,B:renderB,C:renderC,D:renderD})[current](); bindActions(); }
+  function state(){ const names=selectedPhotos().map(p=>p.name).join(', ')||'none'; const failures=photos.filter(p=>p.failed).map(p=>p.name).join(', ')||'none'; document.querySelector('#state').textContent=`In-memory state · selected: ${names} · active: ${activePhoto()?.name||'none'} · failed: ${failures}`; }
+  function show(key){ current=key; const url=new URL(location);url.searchParams.set('variant',key);history.replaceState({},'',url);document.querySelector('#switch-label').textContent=variants[key];render(); }
+  function render(){ renderFiles(); renderDetail(); state(); }
+  document.querySelector('#filter').addEventListener('input',e=>{query=e.target.value;renderFiles();}); document.querySelector('#clear-selection').onclick=()=>{selected.clear();active=null;render();}; document.querySelector('#select-all').onclick=()=>{photos.filter(p=>p.name.toLowerCase().includes(query.toLowerCase())).forEach(p=>selected.add(p.id));active=[...selected][0]??null;render();};
+  document.querySelector('#previous').onclick=()=>show(keys[(keys.indexOf(current)+keys.length-1)%keys.length]); document.querySelector('#next').onclick=()=>show(keys[(keys.indexOf(current)+1)%keys.length]);
+  document.addEventListener('keydown',e=>{const tag=document.activeElement.tagName;if(['INPUT','TEXTAREA'].includes(tag))return;if(e.key==='ArrowLeft')document.querySelector('#previous').click();if(e.key==='ArrowRight')document.querySelector('#next').click();});
+  show(current);
+</script>
+</body>
+</html>
