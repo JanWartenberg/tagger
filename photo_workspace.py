@@ -32,6 +32,7 @@ class PhotoWorkspaceSnapshot:
     filter_view_switched: bool = False
     filename_filter_query: str | None = None
     filename_filter_case_sensitive: bool = False
+    excluded_directory_names: tuple[str, ...] = ()
     has_database_search: bool = False
 
 
@@ -43,6 +44,12 @@ class _FilenameFilter:
 
 @dataclass(frozen=True)
 class _FilenameFilterRestoreState:
+    selected_paths: frozenset[str]
+    active_path: str | None
+
+
+@dataclass(frozen=True)
+class _DirectoryExclusionRestoreState:
     selected_paths: frozenset[str]
     active_path: str | None
 
@@ -85,6 +92,10 @@ class PhotoWorkspace:
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._filename_filter: _FilenameFilter | None = None
         self._filename_filter_restore_state: _FilenameFilterRestoreState | None = None
+        self._excluded_directory_names: list[str] = []
+        self._directory_exclusion_restore_state: (
+            _DirectoryExclusionRestoreState | None
+        ) = None
 
         self._operation = 0
         self._filter_running = False
@@ -138,6 +149,7 @@ class PhotoWorkspace:
             filename_filter_case_sensitive=(
                 filename_filter.case_sensitive if filename_filter else False
             ),
+            excluded_directory_names=tuple(self._excluded_directory_names),
             has_database_search=self.has_database_search,
         )
 
@@ -167,23 +179,102 @@ class PhotoWorkspace:
         self._repair_selection()
         return self.snapshot()
 
+    def add_directory_exclusion(self, name: str) -> PhotoWorkspaceSnapshot:
+        """Exclude every current and future path below an exact directory name."""
+        normalized_name = self._normalize_directory_name(name)
+        if any(
+            self._directory_name_key(existing)
+            == self._directory_name_key(normalized_name)
+            for existing in self._excluded_directory_names
+        ):
+            return self.snapshot()
+        if not self._excluded_directory_names:
+            self._directory_exclusion_restore_state = _DirectoryExclusionRestoreState(
+                frozenset(self._selected), self._active_path
+            )
+        self._excluded_directory_names.append(normalized_name)
+        self._repair_selection()
+        return self.snapshot()
+
+    def clear_directory_exclusion(self, name: str) -> PhotoWorkspaceSnapshot:
+        """Remove one exact directory-name exclusion, if it is active."""
+        normalized_name = self._normalize_directory_name(name)
+        key = self._directory_name_key(normalized_name)
+        self._excluded_directory_names = [
+            existing
+            for existing in self._excluded_directory_names
+            if self._directory_name_key(existing) != key
+        ]
+        if not self._excluded_directory_names:
+            state = self._directory_exclusion_restore_state
+            self._directory_exclusion_restore_state = None
+            if state is not None:
+                self._selected = set(state.selected_paths)
+                self._active_path = state.active_path
+        self._repair_selection()
+        return self.snapshot()
+
+    def clear_all_directory_exclusions(self) -> PhotoWorkspaceSnapshot:
+        """Clear directory exclusions and restore the pre-exclusion context."""
+        if self._excluded_directory_names:
+            self._excluded_directory_names = []
+            state = self._directory_exclusion_restore_state
+            self._directory_exclusion_restore_state = None
+            if state is not None:
+                self._selected = set(state.selected_paths)
+                self._active_path = state.active_path
+        self._repair_selection()
+        return self.snapshot()
+
     def clear_all_filters(self) -> PhotoWorkspaceSnapshot:
         """Return to the folder view with no active filter conditions."""
         self.clear_database_search()
         self.clear_iptc_empty_filter()
-        return self.clear_filename_filter()
+        self.clear_filename_filter()
+        return self.clear_all_directory_exclusions()
 
     def _filtered_visible(self) -> set[str]:
+        visible = self._visible
         filename_filter = self._filename_filter
-        if filename_filter is None:
-            return self._visible
-        query = unicodedata.normalize("NFC", filename_filter.query)
-        if not filename_filter.case_sensitive:
-            query = query.casefold()
+        if filename_filter is not None:
+            query = unicodedata.normalize("NFC", filename_filter.query)
+            if not filename_filter.case_sensitive:
+                query = query.casefold()
+            visible = {
+                path
+                for path in visible
+                if query
+                in self._comparison_basename(path, filename_filter.case_sensitive)
+            }
+        if not self._excluded_directory_names:
+            return visible
+        excluded_keys = {
+            self._directory_name_key(name) for name in self._excluded_directory_names
+        }
         return {
             path
-            for path in self._visible
-            if query in self._comparison_basename(path, filename_filter.case_sensitive)
+            for path in visible
+            if not excluded_keys.intersection(self._ancestor_directory_name_keys(path))
+        }
+
+    @staticmethod
+    def _normalize_directory_name(name: str) -> str:
+        normalized_name = unicodedata.normalize("NFC", name).strip()
+        if not normalized_name:
+            raise ValueError("Folder name required")
+        if "/" in normalized_name or "\\" in normalized_name:
+            raise ValueError("Enter a folder name, not a path")
+        return normalized_name
+
+    @staticmethod
+    def _directory_name_key(name: str) -> str:
+        return unicodedata.normalize("NFC", name).casefold()
+
+    @classmethod
+    def _ancestor_directory_name_keys(cls, path: str) -> set[str]:
+        components = path.replace("\\", "/").split("/")[:-1]
+        return {
+            cls._directory_name_key(component) for component in components if component
         }
 
     @staticmethod
@@ -219,6 +310,8 @@ class PhotoWorkspace:
         self._view_mode = PhotoWorkspaceViewMode.NORMAL
         self._filename_filter = None
         self._filename_filter_restore_state = None
+        self._excluded_directory_names = []
+        self._directory_exclusion_restore_state = None
         self._filter_running = False
         self._batches = []
         self._inflight = None

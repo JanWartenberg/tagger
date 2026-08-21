@@ -799,6 +799,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._stale_result_repairs: dict[str, IndexRefreshRequest] = {}
         self._search_restore_scroll: tuple[str | None, int] | None = None
         self._filename_filter_restore_scroll: tuple[str | None, int] | None = None
+        self._directory_exclusion_restore_scroll: tuple[str | None, int] | None = None
         self._selection_token = 0
         self._files_render_token = 0
         self._files_selection_scroll_anchor: tuple[str | None, int] | None = None
@@ -982,6 +983,24 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filenameCaseSensitiveBtn.toggled.connect(
             self._apply_filename_filter_immediately
         )
+        self.directoryExcludeEdit = QtWidgets.QLineEdit()
+        self.directoryExcludeEdit.setPlaceholderText("Exclude folder")
+        self.directoryExcludeEdit.setToolTip(
+            "Exclude an exact ancestor folder name · Focus: Alt+X"
+        )
+        self.directoryExcludeEdit.returnPressed.connect(self.apply_directory_exclusion)
+        self.directoryExcludeError = QtWidgets.QLabel("")
+        self.directoryExcludeError.setStyleSheet("color: #b91c1c; font-size: 11px;")
+        self.directoryExcludeError.hide()
+        self._exclude_directory_escape_shortcut = QtGui.QShortcut(
+            QtGui.QKeySequence("Escape"), self.directoryExcludeEdit
+        )
+        self._exclude_directory_escape_shortcut.setContext(
+            QtCore.Qt.ShortcutContext.WidgetShortcut
+        )
+        self._exclude_directory_escape_shortcut.activated.connect(
+            self._discard_directory_exclusion_draft
+        )
         self.workspaceCountLabel = QtWidgets.QLabel("0 in workspace")
         self.workspaceCountLabel.setStyleSheet("color: palette(text); font-size: 11px;")
         self.filterSummary = QtWidgets.QWidget()
@@ -1125,6 +1144,8 @@ class MainWindow(QtWidgets.QMainWindow):
         filenameFilterRow.addWidget(self.filenameFilterEdit, 1)
         filenameFilterRow.addWidget(self.filenameCaseSensitiveBtn)
         filesFilterForm.addRow("F\u0332ilename:", filenameFilterRowW)
+        filesFilterForm.addRow("Ex\u0332clude folder:", self.directoryExcludeEdit)
+        filesFilterForm.addRow("", self.directoryExcludeError)
         filesFilterForm.addRow(self.onlyUntagged)
         filesFilterLayout.addLayout(filesFilterForm)
         filesFilterActions = QtWidgets.QHBoxLayout()
@@ -1252,6 +1273,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "addEdit": self.addEdit,
             "dbDateSearchEdit": self.dbDateSearchEdit,
             "filenameFilterEdit": self.filenameFilterEdit,
+            "directoryExcludeEdit": self.directoryExcludeEdit,
             "filesFilterBox": self.filesFilterBox,
             "cmdLine": self.cmdLine,
         }
@@ -1311,6 +1333,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_focus_db_search_select_all": self._focus_db_search_select_all,
             "_focus_date_filter_select_all": self._focus_date_filter_select_all,
             "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
+            "_focus_excluded_directory_select_all": self._focus_excluded_directory_select_all,
             "_toggle_filename_case_sensitive": self._toggle_filename_case_sensitive,
             "clear_db_search": self.clear_db_search,
             "clear_filename_filter": self.clear_filename_filter,
@@ -1347,6 +1370,8 @@ class MainWindow(QtWidgets.QMainWindow):
         return {
             "_command_search": self._command_search,
             "_command_filter_files": self._command_filter_files,
+            "_command_exclude_directory": self._command_exclude_directory,
+            "_command_clear_excluded_directory": self._command_clear_excluded_directory,
         }
 
     def _install_shortcuts_from_actions(self) -> None:
@@ -1448,6 +1473,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.dbSearchEdit,
             self.dbDateSearchEdit,
             self.filenameFilterEdit,
+            self.directoryExcludeEdit,
             self.cmdLine,
         ):
             edit.setStyleSheet(edit_qss)
@@ -2427,12 +2453,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._index_root = None
         self._search_restore_scroll = None
         self._filename_filter_restore_scroll = None
+        self._directory_exclusion_restore_scroll = None
         self._filename_filter_timer.stop()
         self.filenameFilterEdit.blockSignals(True)
         self.filenameCaseSensitiveBtn.blockSignals(True)
         try:
             self.filenameFilterEdit.clear()
             self.filenameCaseSensitiveBtn.setChecked(False)
+            self.directoryExcludeEdit.clear()
+            self._clear_directory_exclusion_error()
         finally:
             self.filenameFilterEdit.blockSignals(False)
             self.filenameCaseSensitiveBtn.blockSignals(False)
@@ -3600,13 +3629,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.on_selection_changed()
         return selection_changed
 
-    def _set_filter_chips(self, conditions: list[str]) -> None:
+    def _set_filter_chips(
+        self, conditions: list[str], excluded_directory_names: tuple[str, ...]
+    ) -> None:
         """Render the compact, active-only filter bubbles in the Files pane."""
         while self.filterChipsLayout.count():
             item = self.filterChipsLayout.takeAt(0)
             if item.widget() is not None:
                 item.widget().deleteLater()
-        if not conditions:
+        if not conditions and not excluded_directory_names:
             self.filterChips.hide()
             return
         prefix = QtWidgets.QLabel("Filters:")
@@ -3626,6 +3657,21 @@ class MainWindow(QtWidgets.QMainWindow):
                 "background: #e7f0fa; border: 1px solid #aac5de; "
                 "border-radius: 8px; color: #315e86; padding: 1px 5px; "
                 "font-size: 10px;"
+            )
+            self.filterChipsLayout.addWidget(chip)
+        for name in excluded_directory_names:
+            chip = QtWidgets.QToolButton()
+            chip.setText(f"Excluded: {name} ×")
+            chip.setAccessibleName(f"Remove exclusion {name}")
+            chip.setToolTip(f"Remove exclusion {name}")
+            chip.setStyleSheet(
+                "QToolButton { background: #e7f0fa; border: 1px solid #aac5de; "
+                "border-radius: 8px; color: #315e86; padding: 1px 5px; "
+                "font-size: 10px; }"
+            )
+            chip.clicked.connect(
+                lambda _checked=False,
+                directory_name=name: self.clear_directory_exclusion(directory_name)
             )
             self.filterChipsLayout.addWidget(chip)
         self.filterChips.show()
@@ -3654,23 +3700,25 @@ class MainWindow(QtWidgets.QMainWindow):
         ):
             conditions.append("No tags")
 
-        self._set_filter_chips(conditions)
+        self._set_filter_chips(conditions, snapshot.excluded_directory_names)
+        has_conditions = bool(conditions) or bool(snapshot.excluded_directory_names)
         if self._active_search_request is not None:
             message = "Searching…"
         elif snapshot.filter_operation_id is not None:
             message = "Filtering…"
-        elif conditions:
+        elif has_conditions:
             message = f"match {len(snapshot.visible_paths)} files"
         else:
             message = ""
         self.filterInfoLabel.setText(message)
         self.filterInfoLabel.setVisible(bool(message))
-        self.filterSummary.setVisible(bool(conditions) or bool(message))
+        self.filterSummary.setVisible(has_conditions or bool(message))
 
     def _update_files_pane_empty_state(self, snapshot: PhotoWorkspaceSnapshot) -> None:
         """Show an unambiguous empty state for completed active conditions."""
         has_condition = (
             snapshot.filename_filter_query is not None
+            or bool(snapshot.excluded_directory_names)
             or snapshot.view_mode is not PhotoWorkspaceViewMode.NORMAL
         )
         if (
@@ -3837,6 +3885,64 @@ class MainWindow(QtWidgets.QMainWindow):
             self.apply_filename_filter()
         self.statusBar().showMessage("Filename filter cleared")
 
+    def apply_directory_exclusion(self) -> None:
+        """Commit the Exclude folder draft as a workspace-local condition."""
+        before_snapshot = self.photo_workspace.snapshot()
+        before = list(before_snapshot.selected_paths)
+        try:
+            snapshot = self.photo_workspace.add_directory_exclusion(
+                self.directoryExcludeEdit.text()
+            )
+        except ValueError as error:
+            self._show_directory_exclusion_error(str(error))
+            return
+        if (
+            not before_snapshot.excluded_directory_names
+            and snapshot.excluded_directory_names
+        ):
+            self._directory_exclusion_restore_scroll = (
+                self._capture_files_scroll_anchor()
+            )
+        self.directoryExcludeEdit.clear()
+        self._clear_directory_exclusion_error()
+        self._render_photo_workspace_snapshot(snapshot, before)
+        self.directoryExcludeEdit.setFocus()
+        self.statusBar().showMessage("Folder exclusion applied")
+
+    def clear_directory_exclusion(self, name: str) -> None:
+        """Remove one active directory exclusion and render the new membership."""
+        before_snapshot = self.photo_workspace.snapshot()
+        before = list(before_snapshot.selected_paths)
+        try:
+            snapshot = self.photo_workspace.clear_directory_exclusion(name)
+        except ValueError as error:
+            self._show_directory_exclusion_error(str(error))
+            return
+        self._clear_directory_exclusion_error()
+        self._render_photo_workspace_snapshot(snapshot, before)
+        if (
+            before_snapshot.excluded_directory_names
+            and not snapshot.excluded_directory_names
+            and self._directory_exclusion_restore_scroll is not None
+        ):
+            self._restore_files_scroll_anchor(self._directory_exclusion_restore_scroll)
+            self._directory_exclusion_restore_scroll = None
+        self.statusBar().showMessage("Folder exclusion cleared")
+
+    def _show_directory_exclusion_error(self, message: str) -> None:
+        self.directoryExcludeError.setText(message)
+        self.directoryExcludeError.show()
+        self.directoryExcludeEdit.setFocus()
+
+    def _clear_directory_exclusion_error(self) -> None:
+        self.directoryExcludeError.clear()
+        self.directoryExcludeError.hide()
+
+    def _discard_directory_exclusion_draft(self) -> None:
+        self.directoryExcludeEdit.clear()
+        self._clear_directory_exclusion_error()
+        self._focus_pane_files()
+
     def clear_all_filters(self) -> None:
         self._filename_filter_timer.stop()
         self.dbSearchEdit.clear()
@@ -3859,6 +3965,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._clear_iptc_empty_refresh_state()
         self._search_restore_scroll = None
         self._filename_filter_restore_scroll = None
+        self._directory_exclusion_restore_scroll = None
+        self.directoryExcludeEdit.clear()
+        self._clear_directory_exclusion_error()
         before = self.selected_file_paths()
         snapshot = self.photo_workspace.clear_all_filters()
         self._render_photo_workspace_snapshot(snapshot, before)
@@ -3897,6 +4006,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filenameFilterEdit.setText(" ".join(args))
         self.filenameFilterEdit.blockSignals(False)
         self.apply_filename_filter()
+
+    def _command_exclude_directory(self, args: list[str]) -> None:
+        self.directoryExcludeEdit.setText(" ".join(args))
+        self.apply_directory_exclusion()
+
+    def _command_clear_excluded_directory(self, args: list[str]) -> None:
+        if not args:
+            self._show_directory_exclusion_error("Folder name required")
+            return
+        self.clear_directory_exclusion(" ".join(args))
 
     def _command_search(self, args: list[str]) -> None:
         query = " ".join(args).strip()
@@ -4231,6 +4350,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _focus_filename_filter_select_all(self) -> None:
         self.filenameFilterEdit.setFocus()
         self.filenameFilterEdit.selectAll()
+
+    def _focus_excluded_directory_select_all(self) -> None:
+        self.directoryExcludeEdit.setFocus()
+        self.directoryExcludeEdit.selectAll()
 
     def _focus_add_edit_select_all(self) -> None:
         self.addEdit.setFocus()

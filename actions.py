@@ -167,6 +167,27 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
+            id="focusexcludedir",
+            description="Focus Exclude folder filter",
+            handler_name="_focus_excluded_directory_select_all",
+            command=CommandBinding("focusexcludedir"),
+            shortcuts=(
+                ShortcutBinding("Alt+X", "filesFilterBox", context=filter_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="excludedir",
+            description="Exclude a folder name from the workspace",
+            handler_name="_command_exclude_directory",
+            command=CommandBinding("excludedir", accepts_arguments=True),
+        ),
+        ActionSpec(
+            id="clearexcludedir",
+            description="Clear one excluded folder name",
+            handler_name="_command_clear_excluded_directory",
+            command=CommandBinding("clearexcludedir", accepts_arguments=True),
+        ),
+        ActionSpec(
             id="togglefilenamematchcase",
             description="Toggle Filename match case",
             handler_name="_toggle_filename_case_sensitive",

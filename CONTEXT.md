@@ -17,6 +17,9 @@ A user-visible predicate that narrows the current Photo Workspace. Active condit
 **Filename filter**:
 A live, workspace-local Photo Workspace filter condition based only on a photo's normalized basename, including its extension. It never searches directories, full paths, or photos outside the current Photo Workspace. It applies after the complete current indexed-search or IPTC-empty source is determined and remains active when those conditions change.
 
+**Directory exclusion**:
+A workspace-local Photo Workspace filter condition that excludes paths below one or more exact normalized ancestor-directory names. Names are NFC-normalized, case-insensitive, insertion-ordered, and compose as AND/NOT conditions with all other filters. It never accepts paths, filename text, or partial names.
+
 **IPTC-empty filter view**:
 The photo set produced by a user-triggered IPTC-empty filter run. Tagging photos afterward must not remove them from this filtered list. The set remains stable after metadata mutations; the user explicitly reactivates the filter to compute a new view from current file metadata.
 

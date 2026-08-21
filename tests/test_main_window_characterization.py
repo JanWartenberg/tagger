@@ -206,6 +206,54 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.files.item(0).isHidden())
         self.assertFalse(self.window.files.item(1).isHidden())
 
+    def test_directory_exclusions_are_committed_as_removable_chips(self) -> None:
+        hidden, kept = self._add_paths("Werkstatt/hidden.jpg", "keep/visible.jpg")
+
+        self.window.directoryExcludeEdit.setText("Werkstatt")
+        QtTest.QTest.keyClick(
+            self.window.directoryExcludeEdit, QtCore.Qt.Key.Key_Return
+        )
+
+        snapshot = self.window.photo_workspace.snapshot()
+        self.assertEqual(snapshot.excluded_directory_names, ("Werkstatt",))
+        self.assertEqual(self.window.selected_file_paths(), [kept])
+        self.assertTrue(self.window._find_item_by_path(hidden).isHidden())
+        self.assertEqual(self.window.directoryExcludeEdit.text(), "")
+        self.assertIs(self.window.focusWidget(), self.window.directoryExcludeEdit)
+        chip = self.window.filterChips.findChild(QtWidgets.QToolButton)
+        self.assertIsNotNone(chip)
+        self.assertEqual(chip.accessibleName(), "Remove exclusion Werkstatt")
+
+        chip.click()
+
+        self.assertEqual(
+            self.window.photo_workspace.snapshot().excluded_directory_names, ()
+        )
+        self.assertFalse(self.window._find_item_by_path(hidden).isHidden())
+
+    def test_directory_exclusion_validation_and_commands(self) -> None:
+        self._add_paths("keep/visible.jpg")
+
+        self.window._dispatch_command("excludedir", ["not/a/name"])
+
+        self.assertTrue(self.window.directoryExcludeError.isVisible())
+        self.assertEqual(
+            self.window.directoryExcludeError.text(), "Enter a folder name, not a path"
+        )
+        self.assertIs(self.window.focusWidget(), self.window.directoryExcludeEdit)
+
+        self.window._dispatch_command("excludedir", ["Werkstatt"])
+        self.window._dispatch_command("excludedir", ["alles"])
+        self.window._dispatch_command("clearexcludedir", ["Werkstatt"])
+
+        self.assertEqual(
+            self.window.photo_workspace.snapshot().excluded_directory_names, ("alles",)
+        )
+        self.window._dispatch_command("clearfilters", [])
+        self.assertEqual(
+            self.window.photo_workspace.snapshot().excluded_directory_names, ()
+        )
+
     def test_file_item_lookup_tracks_filter_renders_and_workspace_replacement(
         self,
     ) -> None:
