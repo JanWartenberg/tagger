@@ -578,6 +578,22 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.filterInfoLabel.isVisible())
         self.assertTrue(self.window.files.isEnabled())
 
+    def test_no_tags_keeps_folder_discovery_paths_alphabetical(self) -> None:
+        folder = "/unordered-folder"
+        alpha = normalize_path(f"{folder}/Alpha/a.jpg")
+        middle = normalize_path(f"{folder}/Middle/m.jpg")
+        zulu = normalize_path(f"{folder}/Zulu/z.jpg")
+        self.discovery.results[folder] = [zulu, alpha, middle]
+        FakePhotoIndex.iptc_empty_results = {zulu, alpha, middle}
+
+        self._choose_folder(folder)
+        self.discovery_runner.run_discovery()
+        self._wait_for_ui(lambda: self.window.files.count() == 3)
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(self.window.onlyUntagged.isChecked)
+
+        self.assertEqual(self.window.all_file_paths(), [alpha, middle, zulu])
+
     def test_folder_discovery_renders_large_path_sets_in_event_loop_batches(
         self,
     ) -> None:

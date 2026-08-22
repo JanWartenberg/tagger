@@ -170,7 +170,7 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
             event_sink=self.events.append,
         )
 
-    def test_current_folder_replacement_emits_its_normalized_ordered_paths(
+    def test_current_folder_replacement_emits_normalized_alphabetical_paths(
         self,
     ) -> None:
         root = fixture_path("/photos")
@@ -188,8 +188,8 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
                     request_id=request.request_id,
                     root=root,
                     paths=(
-                        fixture_path("/photos/b.jpg"),
                         fixture_path("/photos/a.jpg"),
+                        fixture_path("/photos/b.jpg"),
                     ),
                     drop_sequence=None,
                 )

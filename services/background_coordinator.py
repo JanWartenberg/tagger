@@ -591,8 +591,13 @@ class BackgroundCoordinator:
         def work() -> None:
             try:
                 paths = tuple(
-                    _normalize_path(path)
-                    for path in self._discovery.discover(request.root)
+                    sorted(
+                        (
+                            _normalize_path(path)
+                            for path in self._discovery.discover(request.root)
+                        ),
+                        key=str.casefold,
+                    )
                 )
             except Exception as error:
                 event: DiscoveryEvent = DiscoveryFailed(
