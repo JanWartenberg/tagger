@@ -1,6 +1,6 @@
 # Directory Exclusion Filter
 
-Status: needs-triage
+Status: completed
 Priority: medium
 
 ## Problem Statement
