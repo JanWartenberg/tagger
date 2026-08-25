@@ -1,9 +1,11 @@
 <!doctype html>
 <!--
   THROWAWAY UI PROTOTYPE — not production UI.
-  Question: Which surface best makes a TAGGER multi-photo mutation, its active
-  photo, and partial failures understandable? Four variants, switchable via
-  ?variant=A|B|C|D. All photos, tags, selection, writes, and failures live only
+  Question: Which right-side surface best makes a TAGGER multi-photo mutation,
+  its active photo, and partial failures understandable? Four variants,
+  switchable via ?variant=A|B|C|D. Files-pane interaction is intentionally not
+  prototyped: production selection behavior remains unchanged. All photos, tags,
+  selection, writes, and failures live only
   in JavaScript memory; no files, metadata, or network requests are used.
   Run: python -m http.server 8000 --directory /workspace/tagger/prototype
   Then open: http://localhost:8000/multi-photo-tagging-variants.html
@@ -24,7 +26,7 @@
   .main { display:grid; grid-template-columns:minmax(365px,38%) 8px 1fr; min-height:0; } .divider { border-left:1px solid #c8c7c3; border-right:1px solid #c8c7c3; background:#dfdeda; }
   .files { min-height:0; display:flex; flex-direction:column; padding:11px; background:#f8f8f6; } .pane-head { display:flex; align-items:center; gap:8px; padding-bottom:9px; border-bottom:1px solid #d4d3cf; } .pane-head h2 { flex:1; margin:0; font-size:14px; } .count { color:var(--muted); font-size:11px; }
   .filter { display:flex; gap:6px; padding:8px 0; } .filter input { flex:1; } .list { min-height:0; flex:1; overflow:auto; border:1px solid var(--line); border-radius:5px; background:#fff; }
-  .row { display:grid; grid-template-columns:23px 34px 1fr auto; align-items:center; gap:7px; min-height:47px; padding:5px 8px; border-bottom:1px solid #ecece8; cursor:pointer; } .row:hover { background:#f5f9fc; } .row.selected { background:#e5f0fb; } .row.active { box-shadow:inset 3px 0 var(--blue); } .row .check { width:15px; height:15px; accent-color:var(--blue); }
+  .row { display:grid; grid-template-columns:34px 1fr auto; align-items:center; gap:7px; min-height:47px; padding:5px 8px; border-bottom:1px solid #ecece8; cursor:pointer; } .row:hover { background:#f5f9fc; } .row.selected { background:#e5f0fb; } .row.active { box-shadow:inset 3px 0 var(--blue); }
   .thumb { width:34px; height:30px; border-radius:3px; border:1px solid #8d9b91; background:linear-gradient(145deg,var(--sky) 0 45%,var(--sand) 45% 60%,var(--ground) 60%); box-shadow:inset 0 0 10px #0002; } .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:590; } .meta { color:var(--muted); font-size:11px; } .marker { width:9px; height:9px; border-radius:50%; background:var(--orange); box-shadow:0 0 0 3px var(--orange-soft); }
   .bottom { display:flex; align-items:center; justify-content:space-between; padding:0 12px; border-top:1px solid #d3d1cc; background:#f0efea; color:#59635f; font-size:11px; }
   .detail { min-width:0; min-height:0; padding:15px; background:#fbfbfa; } .detail-card { height:100%; overflow:auto; border:1px solid var(--line); border-radius:7px; background:var(--panel); }
@@ -41,7 +43,7 @@
   .ledger { display:grid; gap:7px; } .ledger-row { display:grid; grid-template-columns:28px 1fr auto; align-items:center; gap:8px; padding:7px; border:1px solid #d8d8d3; border-radius:4px; } .ledger-row.failed { border-color:#dfb185; background:#fff9f2; } .status-ok { color:var(--green); font-weight:700; } .status-fail { color:#9a4b0b; font-weight:700; } .retry-bar { display:flex; align-items:center; gap:8px; padding:10px; border:1px solid #e2b88f; border-radius:5px; background:var(--orange-soft); }
   .switcher { position:fixed; z-index:2; bottom:17px; left:50%; display:flex; align-items:center; gap:6px; padding:6px; transform:translateX(-50%); border:1px solid #56616a; border-radius:999px; color:#fff; background:#232c32; box-shadow:0 8px 24px #0006; } .switcher button { min-width:31px; padding:5px 8px; border:0; border-radius:50%; color:white; background:#3f4c55; } .switcher button:hover { background:#596a74; } .switcher strong { min-width:210px; text-align:center; font-size:11px; }
   .state { position:fixed; right:16px; bottom:18px; max-width:400px; padding:7px 10px; border:1px solid #b7c9c0; border-radius:6px; color:#315547; background:#f2f8f5; box-shadow:0 4px 14px #0002; font-size:11px; }
-  @media (max-width:800px) { .app { width:calc(100vw - 12px); margin-top:6px; } .main { grid-template-columns:minmax(300px,45%) 7px 1fr; } .detail { padding:8px; } .state { display:none; } .row { grid-template-columns:20px 28px 1fr auto; gap:5px; } .thumb { width:28px; } }
+  @media (max-width:800px) { .app { width:calc(100vw - 12px); margin-top:6px; } .main { grid-template-columns:minmax(300px,45%) 7px 1fr; } .detail { padding:8px; } .state { display:none; } .row { grid-template-columns:28px 1fr auto; gap:5px; } .thumb { width:28px; } }
 </style>
 </head>
 <body>
@@ -49,8 +51,8 @@
   <header class="title"><span class="dots">● ● ●</span><b>TAGGER</b><span>Multi-photo tagging prototype — fake in-memory photos</span></header>
   <div class="main">
     <aside class="files">
-      <div class="pane-head"><h2>Files</h2><span class="count" id="selected-count"></span><button class="quiet" id="select-all">Select shown</button></div>
-      <div class="filter"><input aria-label="Filter fake photos" id="filter" placeholder="Filter filenames (demo only)"><button id="clear-selection">Clear selection</button></div>
+      <div class="pane-head"><h2>Files</h2></div>
+      <div class="filter"><input aria-label="Filter fake photos" id="filter" placeholder="Filter filenames (demo only)"></div>
       <div class="list" id="file-list"></div>
     </aside>
     <div class="divider"></div>
@@ -58,7 +60,7 @@
       <div class="variant" id="variant-A"></div><div class="variant" id="variant-B"></div><div class="variant" id="variant-C"></div><div class="variant" id="variant-D"></div>
     </div></section>
   </div>
-  <footer class="bottom"><span id="footer">Ready</span><span>Click rows to select · click name area to make active · shift-click toggles selection</span></footer>
+  <footer class="bottom"><span id="footer">Ready</span><span>Files-pane selection interaction is not part of this prototype.</span></footer>
 </main>
 <nav class="switcher" aria-label="Prototype variant switcher"><button id="previous" aria-label="Previous design">←</button><strong id="switch-label"></strong><button id="next" aria-label="Next design">→</button></nav>
 <output class="state" id="state"></output>
@@ -74,7 +76,7 @@
     ["reykjavik-window.jpg", ["city"], "#b6c3c4", "#d1b48a", "#70806f"]
   ].map(([name,tags,sky,sand,ground], i) => ({id:i,name,tags,sky,sand,ground,failed:false}));
   const variants = { A:"A — Active photo + explicit target", B:"B — Batch review replaces detail", C:"C — Persistent selection tray", D:"D — Batch-result ledger" };
-  const keys = Object.keys(variants); let current = new URLSearchParams(location.search).get("variant") || "A"; if (!variants[current]) current="A";
+  const keys = Object.keys(variants); let current = new URLSearchParams(location.search).get("variant") || "B"; if (!variants[current]) current="B";
   let selected = new Set([0,1,2]); let active=0; let query=""; let lastOperation=null;
   const selectedPhotos=()=>photos.filter(p=>selected.has(p.id)); const activePhoto=()=>photos.find(p=>p.id===active) || selectedPhotos()[0];
   const esc=s=>s.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
@@ -82,15 +84,9 @@
   const tags=(values, missing=false)=>values.map(t=>`<span class="tag ${missing?"missing":""}">${esc(t)}</span>`).join("");
   function renderFiles(){
     const visible=photos.filter(p=>p.name.toLowerCase().includes(query.toLowerCase()));
-    document.querySelector('#selected-count').textContent=`${selected.size} selected · ${visible.length} shown`;
     document.querySelector('#file-list').innerHTML=visible.map(p=>`<div class="row ${selected.has(p.id)?"selected":""} ${p.id===active?"active":""}" data-id="${p.id}" title="${esc(p.name)}">
-      <input class="check" type="checkbox" ${selected.has(p.id)?"checked":""} aria-label="Select ${esc(p.name)}"><span>${thumb(p)}</span><span><span class="name">${esc(p.name)}</span><span class="meta">${p.tags.join(", ")||"no tags"}</span></span>${p.failed?'<span class="marker" title="Tag changes need attention"></span>':'<span></span>'}
+      <span>${thumb(p)}</span><span><span class="name">${esc(p.name)}</span><span class="meta">${p.tags.join(", ")||"no tags"}</span></span>${p.failed?'<span class="marker" title="Tag changes need attention"></span>':'<span></span>'}
     </div>`).join("");
-    document.querySelectorAll('.row').forEach(row=>row.addEventListener('click', e=>{
-      const id=Number(row.dataset.id); if(e.target.matches('input') || e.shiftKey){ selected.has(id)?selected.delete(id):selected.add(id); if(!selected.size) active=null; else if(active===null || !selected.has(active)) active=[...selected][0]; }
-      else { active=id; if(!selected.has(id)) selected.add(id); }
-      render();
-    }));
   }
   function actionControls(){ return `<div class="add"><input id="tag-input" value="travel" aria-label="Tag to add"><button class="primary" data-action="add">Add tag</button><button class="danger" data-action="partial">Simulate 1 failure</button></div>`; }
   function targetCopy(){ const n=selected.size; return n===1?"this photo":`${n} selected photos`; }
@@ -112,7 +108,7 @@
   function state(){ const names=selectedPhotos().map(p=>p.name).join(', ')||'none'; const failures=photos.filter(p=>p.failed).map(p=>p.name).join(', ')||'none'; document.querySelector('#state').textContent=`In-memory state · selected: ${names} · active: ${activePhoto()?.name||'none'} · failed: ${failures}`; }
   function show(key){ current=key; const url=new URL(location);url.searchParams.set('variant',key);history.replaceState({},'',url);document.querySelector('#switch-label').textContent=variants[key];render(); }
   function render(){ renderFiles(); renderDetail(); state(); }
-  document.querySelector('#filter').addEventListener('input',e=>{query=e.target.value;renderFiles();}); document.querySelector('#clear-selection').onclick=()=>{selected.clear();active=null;render();}; document.querySelector('#select-all').onclick=()=>{photos.filter(p=>p.name.toLowerCase().includes(query.toLowerCase())).forEach(p=>selected.add(p.id));active=[...selected][0]??null;render();};
+  document.querySelector('#filter').addEventListener('input',e=>{query=e.target.value;renderFiles();});
   document.querySelector('#previous').onclick=()=>show(keys[(keys.indexOf(current)+keys.length-1)%keys.length]); document.querySelector('#next').onclick=()=>show(keys[(keys.indexOf(current)+1)%keys.length]);
   document.addEventListener('keydown',e=>{const tag=document.activeElement.tagName;if(['INPUT','TEXTAREA'].includes(tag))return;if(e.key==='ArrowLeft')document.querySelector('#previous').click();if(e.key==='ArrowRight')document.querySelector('#next').click();});
   show(current);
