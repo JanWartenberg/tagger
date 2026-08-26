@@ -26,6 +26,7 @@ from photo_workspace import (
     PhotoWorkspaceViewMode,
 )
 from services.error_history import SessionErrorHistory
+from services.batch_tag_summary import BatchTagSummary, summarize_batch_tags
 from services.background_coordinator import (
     BackgroundCoordinator,
     BackgroundRunner,
@@ -767,6 +768,8 @@ class MainWindow(QtWidgets.QMainWindow):
             event_sink=self._handle_tag_mutation_lifecycle,
         )
         self._keywords_cache: dict[str, KeywordState] = {}
+        self._batch_summary_generation = 0
+        self._batch_summary_selection: tuple[str, ...] = ()
         self._index_root: str | None = None
         self._index_sync_inflight: set[str] = set()
         self._recent_tags_snapshot = load_recent_tags()
@@ -916,6 +919,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self.keywordsList.setToolTip(
             "Focus: l / Alt+3 / Ctrl+W L · Insert: i · Yank: Ctrl+C · Paste: Ctrl+V"
         )
+        self.batchOverview = QtWidgets.QWidget()
+        self.batchOverview.setObjectName("batchTagOverview")
+        batchLayout = QtWidgets.QVBoxLayout(self.batchOverview)
+        batchLayout.setContentsMargins(0, 0, 0, 0)
+        self.batchRepresentativeLabel = QtWidgets.QLabel()
+        self.batchCountLabel = QtWidgets.QLabel()
+        self.batchSummaryStatus = QtWidgets.QLabel()
+        self.batchSummaryStatus.setStyleSheet("color: #315a7e;")
+        self.batchSharedTagsList = QtWidgets.QListWidget()
+        self.batchSharedTagsList.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
+        self.batchPartialTagsLabel = QtWidgets.QLabel()
+        self.batchRemoveBtn = QtWidgets.QPushButton("Remove shared tag")
+        self.batchRemoveBtn.setEnabled(False)
+        self.batchRemoveBtn.clicked.connect(self.remove_shared_batch_tag)
+        batchLayout.addWidget(self.batchRepresentativeLabel)
+        batchLayout.addWidget(self.batchCountLabel)
+        batchLayout.addWidget(self.batchSummaryStatus)
+        batchLayout.addWidget(QtWidgets.QLabel("Tags on every selected photo"))
+        batchLayout.addWidget(self.batchSharedTagsList, 1)
+        batchLayout.addWidget(self.batchRemoveBtn)
+        batchLayout.addWidget(self.batchPartialTagsLabel)
+        self.batchOverview.hide()
 
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
@@ -1067,8 +1094,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         imageLayout = QtWidgets.QVBoxLayout(self.imageBox)
 
-        previewBox = QtWidgets.QWidget()
-        previewLayout = QtWidgets.QVBoxLayout(previewBox)
+        self.previewBox = QtWidgets.QWidget()
+        previewLayout = QtWidgets.QVBoxLayout(self.previewBox)
         previewLayout.setContentsMargins(0, 0, 0, 0)
         previewLayout.addWidget(self.selectedLabel)
         dateRowW = QtWidgets.QWidget()
@@ -1089,8 +1116,10 @@ class MainWindow(QtWidgets.QMainWindow):
         mismatchRow.addWidget(self.resolveBtn)
         tagsLayout.addWidget(self.mutationStatusLabel)
         tagsLayout.addWidget(mismatchRowW)
+        tagsLayout.addWidget(self.batchOverview, 1)
 
-        tagsLayout.addWidget(QtWidgets.QLabel("Tags on image"))
+        self.tagsOnImageLabel = QtWidgets.QLabel("Tags on image")
+        tagsLayout.addWidget(self.tagsOnImageLabel)
         tagsLayout.addWidget(self.keywordsList, 1)
 
         addRow = QtWidgets.QHBoxLayout()
@@ -1101,7 +1130,7 @@ class MainWindow(QtWidgets.QMainWindow):
         tagsLayout.addWidget(self.keepBackup)
 
         rightSplitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
-        rightSplitter.addWidget(previewBox)
+        rightSplitter.addWidget(self.previewBox)
         rightSplitter.addWidget(tagsBox)
         rightSplitter.setStretchFactor(0, 2)
         rightSplitter.setStretchFactor(1, 1)
@@ -2299,7 +2328,18 @@ class MainWindow(QtWidgets.QMainWindow):
         menu.addAction("Open in GIMP", self._open_selected_photos_in_gimp)
         menu.addAction("Copy file path", self._copy_selected_photo_paths)
         menu.addAction("Reveal in Explorer", self._reveal_active_photo)
+        directory_name = Path(item.text()).parent.name
+        if directory_name:
+            menu.addAction(
+                f'Exclude folders named "{directory_name}"',
+                lambda: self._exclude_containing_folder(directory_name),
+            )
         menu.popup(self.files.viewport().mapToGlobal(pos))
+
+    def _exclude_containing_folder(self, directory_name: str) -> None:
+        """Add the clicked photo's containing folder name as an exclusion."""
+        self.directoryExcludeEdit.setText(directory_name)
+        self.apply_directory_exclusion()
 
     def _yank_current_file_tags(self) -> None:
         files = self.selected_file_paths()
@@ -2445,6 +2485,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._active_replacement_discovery = None
             self._pending_additive_discoveries.clear()
         self._tag_mutation_coordinator.replace_workspace(normalized_paths)
+        self._batch_summary_generation += 1
         # Cancel in-flight async work that would render stale UI.
         self._selection_token += 1
         self._preview_token += 1
@@ -3328,6 +3369,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._metadata_read_timer.stop()
         sel = list(snapshot.selected_paths)
         if not sel:
+            self._hide_batch_overview()
             self._preview_token += 1
             self._pending_preview_load = None
             self._preview_load_timer.stop()
@@ -3344,6 +3386,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.refresh_known_tags()
             return
 
+        if len(sel) >= 2:
+            self._preview_token += 1
+            self._pending_preview_load = None
+            self._preview_load_timer.stop()
+            self._discard_queued_previews()
+            self._show_batch_overview(tuple(sel))
+            return
+
+        self._hide_batch_overview()
         current = snapshot.active_path
         if current is None:
             return
@@ -3477,6 +3528,143 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             pm = QtGui.QPixmap.fromImage(img)
         self.previewLabel.setPixmap(pm)
+
+    def _show_batch_overview(self, selection: tuple[str, ...]) -> None:
+        """Render a batch target immediately, then fill its IPTC summary off-thread."""
+        self._batch_summary_generation += 1
+        generation = self._batch_summary_generation
+        self._batch_summary_selection = selection
+        self.previewBox.hide()
+        self.mutationStatusLabel.hide()
+        self.mismatchLabel.hide()
+        self.resolveBtn.hide()
+        self.tagsOnImageLabel.hide()
+        self.keywordsList.hide()
+        self.removeBtn.hide()
+        self.batchOverview.show()
+        representatives = [f"▣ {Path(path).name}" for path in selection[:3]]
+        if len(selection) > 3:
+            representatives.append("▣ …")
+        self.batchRepresentativeLabel.setText(
+            "Representative photos:\n" + "\n".join(representatives)
+        )
+        self.batchCountLabel.setText(f"{len(selection)} photos selected")
+        self.batchSummaryStatus.setText("Reading canonical IPTC tags…")
+        self.batchSharedTagsList.clear()
+        self.batchPartialTagsLabel.setText("")
+        self.batchRemoveBtn.setEnabled(False)
+
+        states: dict[str, KeywordState] = {}
+        missing: list[str] = []
+        for path in selection:
+            state = self._tag_mutation_coordinator.metadata_for(path)
+            if state is None:
+                state = self._keywords_cache.get(path)
+            if state is None:
+                missing.append(path)
+            else:
+                states[path] = state
+        if not missing:
+            self._render_batch_summary(
+                selection, summarize_batch_tags(selection, states)
+            )
+            return
+
+        workspace_generation = self._tag_mutation_coordinator.workspace_generation
+        worker = Worker(self.exif.read_keywords_many, missing)
+
+        def _ok(read_states: dict[str, KeywordState]) -> None:
+            if (
+                generation != self._batch_summary_generation
+                or selection != self._batch_summary_selection
+                or workspace_generation
+                != self._tag_mutation_coordinator.workspace_generation
+            ):
+                return
+            if set(read_states) != set(missing):
+                self._render_batch_summary(selection, BatchTagSummary(len(selection)))
+                return
+            self._tag_mutation_coordinator.remember_confirmed(read_states)
+            self._keywords_cache.update(read_states)
+            self._update_index_states(read_states)
+            states.update(read_states)
+            self._render_batch_summary(
+                selection, summarize_batch_tags(selection, states)
+            )
+
+        def _err(_message: str) -> None:
+            if (
+                generation == self._batch_summary_generation
+                and selection == self._batch_summary_selection
+                and workspace_generation
+                == self._tag_mutation_coordinator.workspace_generation
+            ):
+                self._render_batch_summary(selection, BatchTagSummary(len(selection)))
+
+        worker.signals.finished.connect(_ok)
+        worker.signals.error.connect(_err)
+        self.pool.start(worker, METADATA_READ_PRIORITY)
+
+    def _hide_batch_overview(self) -> None:
+        self._batch_summary_generation += 1
+        self._batch_summary_selection = ()
+        self.batchOverview.hide()
+        self.previewBox.show()
+        self.mutationStatusLabel.show()
+        self.mismatchLabel.show()
+        self.resolveBtn.show()
+        self.tagsOnImageLabel.show()
+        self.keywordsList.show()
+        self.removeBtn.show()
+
+    def _render_batch_summary(
+        self, selection: tuple[str, ...], summary: BatchTagSummary
+    ) -> None:
+        if selection != tuple(self.selected_file_paths()):
+            return
+        self.batchSharedTagsList.clear()
+        if not summary.complete:
+            self.batchSummaryStatus.setText(
+                "Tag summary incomplete; shared-tag removal is unavailable."
+            )
+            self.batchPartialTagsLabel.setText("")
+            self.batchRemoveBtn.setEnabled(False)
+            return
+        self.batchSummaryStatus.setText("")
+        self.batchSharedTagsList.addItems(summary.shared_tags)
+        partial = ", ".join(summary.partial_tags) or "None"
+        self.batchPartialTagsLabel.setText(f"Tags on some selected photos: {partial}")
+        self.batchRemoveBtn.setEnabled(bool(summary.shared_tags))
+
+    def _refresh_batch_summary(self) -> None:
+        selection = tuple(self.selected_file_paths())
+        if len(selection) >= 2:
+            self._show_batch_overview(selection)
+
+    def remove_shared_batch_tag(self) -> None:
+        items = self.batchSharedTagsList.selectedItems()
+        if not items:
+            self.statusBar().showMessage("Select a shared tag to remove")
+            return
+        files = self.selected_file_paths()
+        if len(files) < 2:
+            return
+        tag = items[0].text()
+        pending_mutation = self._begin_pending_tag_mutation(
+            files, [TagIntent.remove(tag)]
+        )
+        self.statusBar().showMessage(f"Queued remove '{tag}' from {len(files)} file(s)")
+        self._enqueue_tag_mutation(
+            files,
+            lambda paths: self.tag_mutations.remove_tags(
+                paths,
+                {tag.casefold()},
+                keep_backup=self.keepBackup.isChecked(),
+                load_state=self.exif.read_keywords,
+            ),
+            pending_mutation,
+            f"Removed '{tag}' from {len(files)} file(s)",
+        )
 
     def _render_keywords(self, st: KeywordState) -> None:
         self._vim_visual_keywords = False
@@ -3773,6 +3961,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 [path for path, _state in event.displayed_states]
             )
             self._refresh_current_keywords_view_from_cache()
+            self._refresh_batch_summary()
             return
 
         if event.kind is TagMutationLifecycleKind.COMPLETED:
@@ -3799,6 +3988,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 + list(event.failed_paths)
             )
             self._refresh_current_keywords_view_from_cache()
+            self._refresh_batch_summary()
             self._apply_filter_visibility_changes(dict(event.emptiness_by_path))
             if event.failed_paths:
                 self.statusBar().showMessage(
@@ -3817,6 +4007,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._keywords_cache.update(restored_states)
         self._refresh_file_mutation_indicators(list(restored_states))
         self._refresh_current_keywords_view_from_cache()
+        self._refresh_batch_summary()
         self.statusBar().showMessage("Error")
         self._show_error(detail, source="Tag mutation")
 
@@ -3986,6 +4177,7 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.clear_database_search()
         if had_search:
             self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
+            self._batch_summary_generation += 1
         selection_changed = self._render_photo_workspace_snapshot(snapshot, before)
         if had_search and self._search_restore_scroll is not None:
             self._restore_files_scroll_anchor(self._search_restore_scroll)
@@ -4121,6 +4313,7 @@ class MainWindow(QtWidgets.QMainWindow):
             normalize_path(path) for path in matches
         )
         self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
+        self._batch_summary_generation += 1
         self._render_photo_workspace_snapshot(snapshot, before)
         if snapshot.active_path is not None:
             self.files.setFocus()

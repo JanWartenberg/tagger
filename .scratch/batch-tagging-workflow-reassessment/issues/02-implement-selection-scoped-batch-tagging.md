@@ -1,6 +1,6 @@
 # 02 — Implement Selection-Scoped Batch Tagging
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 Category: feature
 Milestone: M-Future — Unscheduled opportunities
@@ -44,15 +44,15 @@ The module owns case-insensitive identity comparison, NFC/keyword normalization,
 
 ## Acceptance Criteria
 
-- [ ] A pure-module test covers: all-shared tags, partially shared tags, case/Unicode-equivalent identities, deterministic display spelling/order, empty tags, missing state, and unreadable IPTC state.
-- [ ] Selecting two or more photos displays the loading batch overview without changing Files-pane selection, controls, or selection semantics; returning to zero/one restores existing detail behavior.
-- [ ] Cached facts render a complete summary without a metadata read; uncached facts use one background bulk read and never block the Qt event loop.
-- [ ] A changed selection or replaced Photo Workspace prevents an earlier summary completion from rendering.
-- [ ] Loading, incomplete, and error states never expose a removable shared tag. A complete summary exposes removals only for tags canonical-IPTC-shared by every current target.
-- [ ] `i`, autocomplete, Enter, selection retention, input-focus retention, and sequential addition work for a multi-photo selection. The existing one-photo flow remains unchanged.
-- [ ] Removing a shared tag sends the existing reliable mutation flow to every current selected photo; pending/partial-failure/retry outcomes remain correct and the summary refreshes without stale claims.
-- [ ] Offscreen tests cover a representative stack/count, shared vs partial tags, loading/error state, stale completion, add, and shared removal.
-- [ ] No synchronous filesystem, SQLite, ExifTool, or image work is added to selection handling or batch-summary rendering.
+- [x] A pure-module test covers: all-shared tags, partially shared tags, case/Unicode-equivalent identities, deterministic display spelling/order, empty tags, missing state, and unreadable IPTC state.
+- [x] Selecting two or more photos displays the loading batch overview without changing Files-pane selection, controls, or selection semantics; returning to zero/one restores existing detail behavior.
+- [x] Cached facts render a complete summary without a metadata read; uncached facts use one background bulk read and never block the Qt event loop.
+- [x] A changed selection or replaced Photo Workspace prevents an earlier summary completion from rendering.
+- [x] Loading, incomplete, and error states never expose a removable shared tag. A complete summary exposes removals only for tags canonical-IPTC-shared by every current target.
+- [x] `i`, autocomplete, Enter, selection retention, input-focus retention, and sequential addition work for a multi-photo selection. The existing one-photo flow remains unchanged.
+- [x] Removing a shared tag sends the existing reliable mutation flow to every current selected photo; pending/partial-failure/retry outcomes remain correct and the summary refreshes without stale claims.
+- [x] Offscreen tests cover a representative stack/count, shared vs partial tags, loading/error state, stale completion, add, and shared removal.
+- [x] No synchronous filesystem, SQLite, ExifTool, or image work is added to selection handling or batch-summary rendering.
 
 ## Suggested Test Locations
 

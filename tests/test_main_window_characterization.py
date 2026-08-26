@@ -1100,6 +1100,88 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.mutationStatusLabel.text(), "")
         self.assertNotEqual(first, second)
 
+    def test_batch_overview_summarizes_and_removes_only_shared_iptc_tags(self) -> None:
+        first = normalize_path(str(Path("C:/photos") / "one.jpg"))
+        second = normalize_path(str(Path("C:/photos") / "two.jpg"))
+        FakeExifTool.states_by_path[first] = KeywordState(["shared", "first"], [])
+        FakeExifTool.states_by_path[second] = KeywordState(["shared", "second"], [])
+        self._add_paths("one.jpg", "two.jpg")
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self.app.processEvents()
+
+        self.assertTrue(self.window.batchOverview.isVisible())
+        self._wait_until(
+            lambda: [
+                self.window.batchSharedTagsList.item(index).text()
+                for index in range(self.window.batchSharedTagsList.count())
+            ]
+            == ["shared"]
+        )
+        self.assertIn("first", self.window.batchPartialTagsLabel.text())
+        self.assertIn("second", self.window.batchPartialTagsLabel.text())
+        self.assertTrue(self.window.addEdit.isVisible())
+
+        self.window.batchSharedTagsList.setCurrentRow(0)
+        self.window.remove_shared_batch_tag()
+        self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
+
+        self.assertEqual(
+            {path for path, tags in FakeExifTool.write_calls if "shared" not in tags},
+            {first, second},
+        )
+
+    def test_batch_summary_read_failure_disables_shared_removal(self) -> None:
+        _first, _second = self._add_paths("one.jpg", "two.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.metadata_read_error = RuntimeError("metadata unavailable")
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+
+        self._wait_until(
+            lambda: "incomplete" in self.window.batchSummaryStatus.text().lower()
+        )
+
+        self.assertTrue(self.window.batchOverview.isVisible())
+        self.assertFalse(self.window.batchRemoveBtn.isEnabled())
+        self.assertEqual(self.window.batchSharedTagsList.count(), 0)
+
+    def test_stale_batch_summary_does_not_replace_a_single_photo_detail(self) -> None:
+        _first, _second, third = self._add_paths("one.jpg", "two.jpg", "three.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        FakeExifTool.read_delay_seconds = 0.1
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        self._wait_until(FakeExifTool.metadata_read_started.is_set)
+
+        self.window.files.setCurrentItem(
+            self.window.files.item(2),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self._wait_until(lambda: self.window.selectedLabel.text() == third)
+        self._wait_until(lambda: not self.window.batchOverview.isVisible())
+
+        self.assertEqual(self.window.active_file_path(), third)
+        self.assertFalse(self.window.batchOverview.isVisible())
+
     def test_partial_batch_marks_only_failed_photo_and_retry_resubmits_only_it(
         self,
     ) -> None:
@@ -1126,7 +1208,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(
             FakePhotoIndex.states_by_path[first].merged, ["added", "confirmed"]
         )
-        self.assertNotIn(second, FakePhotoIndex.states_by_path)
+        self.assertEqual(FakePhotoIndex.states_by_path[second].merged, ["confirmed"])
         self.assertIn("1 succeeded, 1 failed", self.window.statusBar().currentMessage())
 
         with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
@@ -1645,13 +1727,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                     self.window.files.viewport().mapToGlobal(third_rect.center()),
                 ),
             )
-            self._wait_until(lambda: self.window.selectedLabel.text() == third)
-            self._wait_until(
-                lambda: bool(ImageReader.started_paths)
-                and ImageReader.started_paths[-1] == third
-            )
+            self._wait_until(lambda: self.window.batchOverview.isVisible())
 
         self.assertEqual(self.window.active_file_path(), third)
+        self.assertTrue(self.window.batchOverview.isVisible())
+        self.assertNotIn(third, ImageReader.started_paths)
         self.assertNotEqual(first, second)
 
     def test_file_pane_context_menu_selects_the_clicked_photo_and_preserves_or_extends_selection(
@@ -1677,7 +1757,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(
             [action.text() for action in menu.actions()],
-            ["Open", "Open in GIMP", "Copy file path", "Reveal in Explorer"],
+            [
+                "Open",
+                "Open in GIMP",
+                "Copy file path",
+                "Reveal in Explorer",
+                'Exclude folders named "photos"',
+            ],
         )
         menu.actions()[2].trigger()
         self.assertEqual(self.file_actions.copy_calls, [(second,)])
@@ -1719,6 +1805,39 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertEqual(self.window.selected_file_paths(), [first, second])
         self.assertEqual(self.window.active_file_path(), second)
+
+    def test_context_menu_excludes_the_clicked_photos_containing_folder_name(
+        self,
+    ) -> None:
+        self._add_paths("one.jpg")
+        rect = self.window.files.visualItemRect(self.window.files.item(0))
+        QtWidgets.QApplication.sendEvent(
+            self.window.files.viewport(),
+            QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Reason.Mouse,
+                rect.center(),
+                self.window.files.viewport().mapToGlobal(rect.center()),
+            ),
+        )
+        self.app.processEvents()
+        menu = next(
+            menu
+            for menu in self.window.findChildren(QtWidgets.QMenu)
+            if menu.isVisible()
+        )
+        exclude = next(
+            action
+            for action in menu.actions()
+            if action.text() == 'Exclude folders named "photos"'
+        )
+
+        exclude.trigger()
+        self.app.processEvents()
+
+        snapshot = self.window.photo_workspace.snapshot()
+        self.assertEqual(snapshot.excluded_directory_names, ("photos",))
+        self.assertEqual(snapshot.visible_paths, ())
+        self.assertEqual(self.window.directoryExcludeEdit.text(), "")
 
     def test_unreadable_iptc_empty_candidate_has_an_unverified_marker(self) -> None:
         (path,) = self._add_paths("unknown.jpg")
