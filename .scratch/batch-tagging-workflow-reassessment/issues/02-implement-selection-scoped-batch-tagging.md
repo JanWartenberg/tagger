@@ -66,6 +66,12 @@ The module owns case-insensitive identity comparison, NFC/keyword normalization,
 - `QT_QPA_PLATFORM=offscreen python3 -m unittest tests.test_batch_tag_summary tests.test_main_window_characterization -v`
 - `git diff --check`
 
+## Manual Acceptance
+
+- Confirmed: adding tags and removing shared tags work for an explicit multi-photo selection.
+- Confirmed: the overview correctly distinguishes tags shared by all selected photos from tags present on only some selected photos.
+- Observation: the "Updating" indicator can remain visible while file access completes; no actionable duration regression was confirmed.
+
 ## Constraints
 
 - Do not change `PhotoWorkspace` membership, selection, active-photo, filter, restoration, or Files-pane interaction rules.

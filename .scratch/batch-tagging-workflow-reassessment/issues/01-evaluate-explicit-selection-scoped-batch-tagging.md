@@ -42,4 +42,4 @@ Created after real use contradicted the earlier decision to defer multi-photo ta
 
 ## Completion
 
-Product decisions and implementation handoff are recorded above. [02 — Implement Selection-Scoped Batch Tagging](02-implement-selection-scoped-batch-tagging.md) is ready for implementation.
+Product decisions, implementation, and manual acceptance are complete. [02 — Implement Selection-Scoped Batch Tagging](02-implement-selection-scoped-batch-tagging.md) records the implementation scope and validation.

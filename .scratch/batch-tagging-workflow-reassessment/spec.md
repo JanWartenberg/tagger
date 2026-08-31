@@ -1,6 +1,6 @@
 # Batch Tagging Workflow Reassessment
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -30,11 +30,11 @@ Make the smallest evidence-backed change that lets a user confidently select the
 - A batch overview must show a loading state until its tag summary is complete. It must state incomplete or failed reads rather than infer shared tags from partial data.
 - Keep the existing no-modal approach; target selection plus overview and mutation feedback are sufficient acknowledgement.
 
-## Remaining Engineering Questions
+## Implementation Outcome
 
-- The current cache is populated primarily for the active photo. Determine the bounded asynchronous batch-read path for uncached selected photos, including progress, errors, cancellation, and latest-selection-wins delivery; never read all selected metadata on the Qt UI thread.
-- Define the exact rendering and focus restoration when selection changes or the Photo Workspace is replaced while a batch summary is loading.
-- Validate the summary and mutation flow with real small selections, whole-folder selections, and filtered views.
+- The bounded asynchronous batch-read, latest-selection-wins delivery, rendering, and focus-restoration behavior are implemented in [02 — Implement Selection-Scoped Batch Tagging](issues/02-implement-selection-scoped-batch-tagging.md).
+- Manual acceptance confirmed adding and removing tags, plus the distinction between tags shared by all selected photos and tags present on only some selected photos.
+- "Updating" can remain visible while file access completes; no actionable duration regression was confirmed in this acceptance pass.
 
 ## Constraints
 
@@ -45,7 +45,7 @@ Make the smallest evidence-backed change that lets a user confidently select the
 
 ## Implementation
 
-Implementation is ready in [02 — Implement Selection-Scoped Batch Tagging](issues/02-implement-selection-scoped-batch-tagging.md). It defines the asynchronous canonical-IPTC summary seam, stale-result rules, and validation scope.
+Implemented in [02 — Implement Selection-Scoped Batch Tagging](issues/02-implement-selection-scoped-batch-tagging.md). It defines the asynchronous canonical-IPTC summary seam, stale-result rules, and validation scope.
 
 ## Prototype
 
