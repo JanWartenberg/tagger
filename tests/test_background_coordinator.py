@@ -133,8 +133,8 @@ class FakeIndex:
         self.calls.append(("search", root, query))
         return self.search_results.get((root, query), [])
 
-    def load_iptc_empty(self, root: str) -> object:
-        self.calls.append(("iptc_empty", root, None))
+    def load_iptc_empty(self, root: str, candidate_paths: tuple[str, ...]) -> object:
+        self.calls.append(("iptc_empty", root, tuple(candidate_paths)))
         return self.iptc_empty_results.get(root, ())
 
     def load_known_tags(self, root: str) -> set[str]:
@@ -488,12 +488,16 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         result = object()
         self.index.iptc_empty_results[root] = result
 
-        request = self.coordinator.load_iptc_empty(root, workspace_generation=4)
+        candidates = [fixture_path("/photos/one.jpg")]
+        request = self.coordinator.load_iptc_empty(
+            root, candidates, workspace_generation=4
+        )
         self.runner.run()
 
         self.assertEqual(
             self.events, [IptcEmptyIndexCompleted(request=request, result=result)]
         )
+        self.assertIn(("iptc_empty", root, tuple(candidates)), self.index.calls)
 
     def test_superseded_known_tag_refresh_does_not_emit_a_result(self) -> None:
         first_root = fixture_path("/first")

@@ -48,6 +48,29 @@ class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):
             self.assertEqual(index.search_photos("tag:XMP only"), [])
             self.assertEqual(index.search_photos("tag:café"), [path])
 
+    def test_iptc_empty_query_is_scoped_to_workspace_candidates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            included = root / "workspace-empty.jpg"
+            excluded = root / "outside-workspace-empty.jpg"
+            tagged = root / "workspace-tagged.jpg"
+            for photo in (included, excluded, tagged):
+                photo.touch()
+            index = PhotoIndex(root)
+            index.update_states(
+                {
+                    normalize_path(included): KeywordState([], []),
+                    normalize_path(excluded): KeywordState([], []),
+                    normalize_path(tagged): KeywordState(["bird"], ["bird"]),
+                }
+            )
+
+            result = index.load_iptc_empty_photos(
+                [normalize_path(included), normalize_path(tagged)]
+            )
+
+            self.assertEqual(result.paths, (normalize_path(included),))
+
     def test_iptc_empty_query_includes_unreadable_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -68,7 +91,7 @@ class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):
                 }
             )
 
-            result = index.load_iptc_empty_photos()
+            result = index.load_iptc_empty_photos(list(paths.values()))
 
             self.assertEqual(result.paths, (paths["empty.jpg"], paths["unknown.jpg"]))
             self.assertEqual(result.unknown_paths, {paths["unknown.jpg"]})
@@ -155,6 +178,21 @@ class PhotoIndexConnectionLifecycleTests(unittest.TestCase):
 
 
 class PhotoIndexPathBatchingTests(unittest.TestCase):
+    def test_large_workspace_iptc_empty_query_is_batched(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            paths = []
+            for number in range(_PATH_QUERY_BATCH_SIZE + 2):
+                path = root / f"photo-{number:04}.jpg"
+                path.touch()
+                paths.append(normalize_path(path))
+            index = PhotoIndex(root)
+            index.update_states({path: KeywordState([], []) for path in paths})
+
+            result = index.load_iptc_empty_photos(paths)
+
+            self.assertEqual(result.paths, tuple(paths))
+
     def test_large_path_sets_preserve_membership_and_sync_lookup_results(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -305,7 +343,8 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
 
             self.assertEqual(exif.calls, 3)
             self.assertEqual(
-                index.load_iptc_empty_photos().unknown_paths, {normalize_path(photo)}
+                index.load_iptc_empty_photos([normalize_path(photo)]).unknown_paths,
+                {normalize_path(photo)},
             )
 
     def test_cancel_discards_durable_recovery_state(self) -> None:

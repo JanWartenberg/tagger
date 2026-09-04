@@ -43,7 +43,7 @@ class IndexAdapter(Protocol):
 
     def search(self, root: str, query: str) -> Sequence[str]: ...
 
-    def load_iptc_empty(self, root: str) -> object: ...
+    def load_iptc_empty(self, root: str, candidate_paths: Sequence[str]) -> object: ...
 
     def load_known_tags(self, root: str) -> set[str]: ...
 
@@ -192,6 +192,7 @@ class IndexReadRequest:
     workspace_generation: int
     root: str
     query: str | None = None
+    candidate_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -488,11 +489,18 @@ class BackgroundCoordinator:
         return request
 
     def load_iptc_empty(
-        self, root: str | Path, *, workspace_generation: int
+        self,
+        root: str | Path,
+        candidate_paths: Sequence[str | Path],
+        *,
+        workspace_generation: int,
     ) -> IndexReadRequest:
-        """Read SQLite IPTC-empty candidates, superseding older such reads."""
+        """Read workspace-scoped IPTC-empty candidates, superseding older reads."""
         request = self._new_index_read_request(
-            IndexReadKind.IPTC_EMPTY, root, workspace_generation
+            IndexReadKind.IPTC_EMPTY,
+            root,
+            workspace_generation,
+            candidate_paths=tuple(_normalize_path(path) for path in candidate_paths),
         )
         with self._lock:
             self._current_iptc_empty_request_id = request.request_id
@@ -570,6 +578,7 @@ class BackgroundCoordinator:
         root: str | Path,
         workspace_generation: int,
         query: str | None = None,
+        candidate_paths: tuple[str, ...] = (),
     ) -> IndexReadRequest:
         with self._lock:
             request_id = self._next_index_read_request_id
@@ -580,6 +589,7 @@ class BackgroundCoordinator:
             workspace_generation=workspace_generation,
             root=_normalize_path(root),
             query=query,
+            candidate_paths=candidate_paths,
         )
 
     def _new_request_id(self) -> int:
@@ -650,7 +660,8 @@ class BackgroundCoordinator:
                 event: IndexEvent = IndexSearchCompleted(request, tuple(paths))
             elif request.kind is IndexReadKind.IPTC_EMPTY:
                 event = IptcEmptyIndexCompleted(
-                    request, self._index.load_iptc_empty(request.root)
+                    request,
+                    self._index.load_iptc_empty(request.root, request.candidate_paths),
                 )
             else:
                 event = KnownTagsCompleted(

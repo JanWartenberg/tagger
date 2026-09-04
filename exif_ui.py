@@ -735,8 +735,10 @@ class PhotoIndexAdapter:
     def search(self, root: str, query: str) -> Sequence[str]:
         return PhotoIndex(root).search_photos(query)
 
-    def load_iptc_empty(self, root: str) -> IptcEmptyIndexResult:
-        return PhotoIndex(root).load_iptc_empty_photos()
+    def load_iptc_empty(
+        self, root: str, candidate_paths: Sequence[str]
+    ) -> IptcEmptyIndexResult:
+        return PhotoIndex(root).load_iptc_empty_photos(candidate_paths)
 
     def load_known_tags(self, root: str) -> set[str]:
         return PhotoIndex(root).load_tags_for_root()
@@ -2707,6 +2709,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.iptcEmptyRefreshOffer.hide()
         self._iptc_empty_refresh_check_request = self._background_coordinator.load_iptc_empty(
             root,
+            self.photo_workspace.snapshot().paths,
             workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
 
@@ -3805,6 +3808,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._render_photo_workspace_snapshot(snapshot, before)
         self._iptc_empty_filter_request = self._background_coordinator.load_iptc_empty(
             root,
+            workspace_snapshot.paths,
             workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
         self.statusBar().showMessage("Filtering IPTC-empty…")
@@ -4541,6 +4545,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.iptcEmptyRefreshOffer.hide()
         self._iptc_empty_refresh_apply_request = self._background_coordinator.load_iptc_empty(
             root,
+            self.photo_workspace.snapshot().paths,
             workspace_generation=self._tag_mutation_coordinator.workspace_generation,
         )
         self.statusBar().showMessage("Refreshing IPTC-empty results…")

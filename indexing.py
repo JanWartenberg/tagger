@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 import sqlite3
 import time
@@ -481,19 +481,32 @@ class PhotoIndex:
             ).fetchall()
             return [str(row[0]) for row in rows]
 
-    def load_iptc_empty_photos(self) -> IptcEmptyIndexResult:
-        """Return empty canonical-IPTC rows, retaining unreadable candidates."""
+    def load_iptc_empty_photos(
+        self, candidate_paths: Sequence[str]
+    ) -> IptcEmptyIndexResult:
+        """Return empty canonical-IPTC rows among the supplied workspace paths."""
+        normalized = list(
+            dict.fromkeys(normalize_path(path) for path in candidate_paths)
+        )
+        rows = []
         with self._connection() as conn:
-            rows = conn.execute(
-                """
-                SELECT p.path, p.iptc_readable
-                FROM photos p
-                WHERE NOT EXISTS (
-                  SELECT 1 FROM photo_tags pt WHERE pt.photo_path = p.path
+            for offset in range(0, len(normalized), _PATH_QUERY_BATCH_SIZE):
+                batch = normalized[offset : offset + _PATH_QUERY_BATCH_SIZE]
+                placeholders = ",".join("?" for _ in batch)
+                rows.extend(
+                    conn.execute(
+                        f"""
+                        SELECT p.path, p.iptc_readable
+                        FROM photos p
+                        WHERE p.path IN ({placeholders})
+                          AND NOT EXISTS (
+                            SELECT 1 FROM photo_tags pt WHERE pt.photo_path = p.path
+                          )
+                        """,
+                        batch,
+                    ).fetchall()
                 )
-                ORDER BY p.path
-                """
-            ).fetchall()
+        rows.sort(key=lambda row: str(row["path"]))
         existing_rows = []
         for row in rows:
             try:

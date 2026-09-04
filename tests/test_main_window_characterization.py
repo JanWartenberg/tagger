@@ -633,6 +633,16 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window.filterInfoLabel.isVisible())
         self.assertTrue(self.window.files.isEnabled())
 
+    def test_no_tags_queries_only_current_photo_workspace_paths(self) -> None:
+        paths = self._add_paths("one.jpg", "two.jpg")
+        FakePhotoIndex.iptc_empty_results = set(paths)
+
+        self.window.onlyUntagged.setChecked(True)
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.iptc_empty_candidate_reads, [tuple(paths)])
+
     def test_no_tags_keeps_folder_discovery_paths_alphabetical(self) -> None:
         folder = "/unordered-folder"
         alpha = normalize_path(f"{folder}/Alpha/a.jpg")
@@ -2884,6 +2894,7 @@ class FakePhotoIndex:
     search_results: set[str] = set()
     iptc_empty_results: set[str] = set()
     iptc_empty_unknown_paths: set[str] = set()
+    iptc_empty_candidate_reads: list[tuple[str, ...]] = []
     iptc_empty_error: Exception | None = None
     search_queries: list[str] = []
     search_roots: list[str] = []
@@ -2902,6 +2913,7 @@ class FakePhotoIndex:
         cls.search_results = set()
         cls.iptc_empty_results = set()
         cls.iptc_empty_unknown_paths = set()
+        cls.iptc_empty_candidate_reads = []
         cls.iptc_empty_error = None
         cls.search_queries = []
         cls.search_roots = []
@@ -2966,12 +2978,17 @@ class FakePhotoIndex:
         type(self).search_roots.append(self.root)
         return self.search_results
 
-    def load_iptc_empty_photos(self) -> IptcEmptyIndexResult:
+    def load_iptc_empty_photos(
+        self, candidate_paths: list[str]
+    ) -> IptcEmptyIndexResult:
+        candidates = tuple(candidate_paths)
+        type(self).iptc_empty_candidate_reads.append(candidates)
         if type(self).iptc_empty_error is not None:
             raise type(self).iptc_empty_error
+        candidate_set = set(candidates)
         return IptcEmptyIndexResult(
-            tuple(sorted(type(self).iptc_empty_results)),
-            frozenset(type(self).iptc_empty_unknown_paths),
+            tuple(sorted(type(self).iptc_empty_results & candidate_set)),
+            frozenset(type(self).iptc_empty_unknown_paths & candidate_set),
         )
 
 
