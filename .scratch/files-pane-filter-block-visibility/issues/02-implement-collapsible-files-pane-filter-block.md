@@ -1,6 +1,6 @@
 # 02 — Implement Collapsible Files-Pane Filter Block
 
-Status: ready
+Status: completed
 Priority: medium
 Category: feature
 Milestone: M5 — Composable workspace filtering
@@ -28,16 +28,16 @@ Let the user collapse the Files-pane filter inputs to reclaim space without hidi
 
 ## Acceptance Criteria
 
-- [ ] Initial state is open even after restarting the application; no visibility setting is read or written.
-- [ ] Button, `:togglefilters`, and `Ctrl+Shift+F` toggle the same state and update arrow, tooltip, and accessible name.
-- [ ] A Photo Workspace replacement preserves the current in-session visibility.
-- [ ] Collapsing hides only filter inputs/actions; active chips, counts/status, progress, and empty-result messages remain visible.
-- [ ] Collapsing from a focused child moves focus to the unchanged photo selection; each global field-focus action reopens and focuses its target.
-- [ ] Escape behavior, hidden drafts/errors, filename debounce, and running background work are preserved.
-- [ ] Every active condition can be removed independently by mouse, Enter, or Space; combined Tags/Date search preserves the component not removed.
-- [ ] Chip focus advances deterministically after removal and reaches the photo list after the last chip.
-- [ ] The toggle remains visible and usable under narrow-window and offscreen test layouts.
-- [ ] No synchronous filesystem, SQLite, ExifTool, or image work is added.
+- [x] Initial state is open even after restarting the application; no visibility setting is read or written.
+- [x] Button, `:togglefilters`, and `Ctrl+Shift+F` toggle the same state and update arrow, tooltip, and accessible name.
+- [x] A Photo Workspace replacement preserves the current in-session visibility.
+- [x] Collapsing hides only filter inputs/actions; active chips, counts/status, progress, and empty-result messages remain visible.
+- [x] Collapsing from a focused child moves focus to the unchanged photo selection; each global field-focus action reopens and focuses its target.
+- [x] Escape behavior, hidden drafts/errors, filename debounce, and running background work are preserved.
+- [x] Every active condition can be removed independently by mouse, Enter, or Space; combined Tags/Date search preserves the component not removed.
+- [x] Chip focus advances deterministically after removal and reaches the photo list after the last chip.
+- [x] The toggle remains visible and usable under narrow-window and offscreen test layouts.
+- [x] No synchronous filesystem, SQLite, ExifTool, or image work is added.
 
 ## Suggested Test Locations
 
@@ -55,3 +55,7 @@ Let the user collapse the Files-pane filter inputs to reclaim space without hidi
 - Do not persist visibility or move it into `PhotoWorkspace`.
 - Do not change query grammar, matching semantics, index schema, discovery, or filter-condition persistence.
 - Do not conceal an active condition or require a mouse to recover or remove it.
+
+## Completion
+
+Implemented and accepted in `aad1ec8`. The follow-up NoTags query performance fix was accepted in `7ef8243`. Full validation passed with 234 tests.

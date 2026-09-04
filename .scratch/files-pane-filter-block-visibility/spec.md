@@ -1,6 +1,6 @@
 # Files-Pane Filter Block Visibility
 
-Status: ready
+Status: completed
 Priority: medium
 
 ## Problem Statement
@@ -32,3 +32,7 @@ Define whether and how the Files-pane filter block can be collapsed while preser
 - Do not change query grammar, filter matching semantics, SQLite behavior, filesystem discovery, or persisted filter conditions.
 - Keep keyboard-driven use fully supported and do not introduce a mouse-only recovery path.
 - Do not block the Qt UI thread.
+
+## Completion
+
+The collapsible Files-pane filter block and individually removable active-condition chips were implemented and accepted in `aad1ec8`. Workspace-scoped NoTags querying was subsequently accepted in `7ef8243`.
