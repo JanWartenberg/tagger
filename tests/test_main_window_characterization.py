@@ -150,14 +150,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "knownFilter"))
         self.assertTrue(
             any(
-                label.text() == "Tags: second"
-                for label in self.window.filterChips.findChildren(QtWidgets.QLabel)
+                chip.text() == "Tags: second ×"
+                for chip in self.window.filterChips.findChildren(QtWidgets.QToolButton)
             )
         )
         self.assertTrue(
             any(
-                label.text() == "Date: 2024-01"
-                for label in self.window.filterChips.findChildren(QtWidgets.QLabel)
+                chip.text() == "Date: 2024-01 ×"
+                for chip in self.window.filterChips.findChildren(QtWidgets.QToolButton)
             )
         )
 
@@ -166,6 +166,61 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dbSearchEdit.text(), "")
         self.assertEqual(self.window.dbDateSearchEdit.text(), "")
         self.assertFalse(self.window.onlyUntagged.isChecked())
+
+    def test_files_filter_block_toggle_preserves_workspace_and_reopens_fields(
+        self,
+    ) -> None:
+        (photo,) = self._add_paths("photo.jpg")
+        self.assertTrue(self.window.filesFilterBox.isVisible())
+        self.assertEqual(self.window.filesFilterToggleBtn.toolTip(), "Hide filters")
+
+        self.window.filenameFilterEdit.setText("draft")
+        self.window.filenameFilterEdit.setFocus()
+        self.window._dispatch_action("togglefilters")
+
+        self.assertFalse(self.window.filesFilterBox.isVisible())
+        self.assertIs(self.window.focusWidget(), self.window.files)
+        self.assertEqual(self.window.filenameFilterEdit.text(), "draft")
+        self.assertEqual(self.window.selected_file_paths(), [photo])
+        self.assertEqual(self.window.filesFilterToggleBtn.toolTip(), "Show filters")
+        self.assertEqual(
+            self.window._actions_by_id["togglefilters"].command.name, "togglefilters"
+        )
+        self.assertEqual(
+            self.window._actions_by_id["togglefilters"].shortcuts[0].sequence,
+            "Ctrl+Shift+F",
+        )
+
+        self.window._dispatch_action("focusfilenamefilter")
+
+        self.assertTrue(self.window.filesFilterBox.isVisible())
+        self.assertIs(self.window.focusWidget(), self.window.filenameFilterEdit)
+
+    def test_filter_chips_are_keyboard_removable_and_preserve_other_search_part(
+        self,
+    ) -> None:
+        _first, second = self._add_paths("first.jpg", "second.jpg")
+        FakePhotoIndex.search_results = {second}
+        self.window.dbSearchEdit.setText("second")
+        self.window.dbDateSearchEdit.setText("2024-01")
+        self.window.apply_db_search()
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        tags_chip = next(
+            chip
+            for chip in self.window.filterChips.findChildren(QtWidgets.QToolButton)
+            if chip.text() == "Tags: second ×"
+        )
+        tags_chip.setFocus()
+        QtTest.QTest.keyClick(tags_chip, QtCore.Qt.Key.Key_Space)
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.dbSearchEdit.text(), "")
+        self.assertEqual(self.window.dbDateSearchEdit.text(), "2024-01")
+        self.assertTrue(self.window.photo_workspace.has_database_search)
+        self.assertEqual(self.window.focusWidget().text(), "Date: 2024-01 ×")
 
     def test_known_tag_cache_supplies_add_keyword_autocomplete_without_a_pane(
         self,

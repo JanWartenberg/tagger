@@ -188,6 +188,13 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("clearexcludedir", accepts_arguments=True),
         ),
         ActionSpec(
+            id="togglefilters",
+            description="Show or hide Files-pane filters",
+            handler_name="toggle_files_filter_block",
+            command=CommandBinding("togglefilters"),
+            shortcuts=(ShortcutBinding("Ctrl+Shift+F"),),
+        ),
+        ActionSpec(
             id="togglefilenamematchcase",
             description="Toggle Filename match case",
             handler_name="_toggle_filename_case_sensitive",

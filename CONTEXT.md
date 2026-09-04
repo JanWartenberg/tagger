@@ -14,6 +14,10 @@ The selected Photo Workspace photo that drives the detail pane, preview, and act
 **Photo Workspace filter condition**:
 A user-visible predicate that narrows the current Photo Workspace. Active conditions combine with logical AND. The current filename and IPTC-empty conditions are independent; future composition may add conditions, but OR/NOT semantics are not yet defined.
 
+**Files-pane filter block**:
+The group of input controls used to create and clear Photo Workspace filter conditions. Its visibility is presentation state and is distinct from the active conditions, which remain visible and individually removable when the block is collapsed.
+_Avoid_: Filter pane, filter state
+
 **Filename filter**:
 A live, workspace-local Photo Workspace filter condition based only on a photo's normalized basename, including its extension. It never searches directories, full paths, or photos outside the current Photo Workspace. It applies after the complete current indexed-search or IPTC-empty source is determined and remains active when those conditions change.
 

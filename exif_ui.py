@@ -1146,6 +1146,16 @@ class MainWindow(QtWidgets.QMainWindow):
         filesWorkspaceRow.setContentsMargins(7, 0, 0, 0)
         filesWorkspaceRow.addWidget(self.addFolderBtn)
         filesWorkspaceRow.addWidget(self.workspaceCountLabel)
+        self.filesFilterToggleBtn = QtWidgets.QToolButton()
+        self.filesFilterToggleBtn.setObjectName("filesFilterToggleBtn")
+        self.filesFilterToggleBtn.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonIconOnly
+        )
+        self.filesFilterToggleBtn.clicked.connect(self.toggle_files_filter_block)
+        self.filesFilterToggleBtn.setArrowType(QtCore.Qt.ArrowType.DownArrow)
+        self.filesFilterToggleBtn.setToolTip("Hide filters")
+        self.filesFilterToggleBtn.setAccessibleName("Hide filters")
+        filesWorkspaceRow.addWidget(self.filesFilterToggleBtn)
         filesWorkspaceRow.addStretch(1)
         filesLayout.addWidget(filesWorkspaceRowW)
 
@@ -1304,6 +1314,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "filenameFilterEdit": self.filenameFilterEdit,
             "directoryExcludeEdit": self.directoryExcludeEdit,
             "filesFilterBox": self.filesFilterBox,
+            "filesFilterToggleBtn": self.filesFilterToggleBtn,
             "cmdLine": self.cmdLine,
         }
 
@@ -1363,6 +1374,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "_focus_date_filter_select_all": self._focus_date_filter_select_all,
             "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
             "_focus_excluded_directory_select_all": self._focus_excluded_directory_select_all,
+            "toggle_files_filter_block": self.toggle_files_filter_block,
             "_toggle_filename_case_sensitive": self._toggle_filename_case_sensitive,
             "clear_db_search": self.clear_db_search,
             "clear_filename_filter": self.clear_filename_filter,
@@ -3818,58 +3830,96 @@ class MainWindow(QtWidgets.QMainWindow):
         return selection_changed
 
     def _set_filter_chips(
-        self, conditions: list[str], excluded_directory_names: tuple[str, ...]
+        self,
+        conditions: list[tuple[str, str, str]],
+        excluded_directory_names: tuple[str, ...],
     ) -> None:
-        """Render the compact, active-only filter bubbles in the Files pane."""
+        """Render keyboard-removable active filter conditions in the Files pane."""
         while self.filterChipsLayout.count():
             item = self.filterChipsLayout.takeAt(0)
-            if item.widget() is not None:
-                item.widget().deleteLater()
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
         if not conditions and not excluded_directory_names:
             self.filterChips.hide()
             return
         prefix = QtWidgets.QLabel("Filters:")
-        prefix.setSizePolicy(
+        prefix.setStyleSheet("color: palette(text); font-size: 11px;")
+        self.filterChipsLayout.addWidget(prefix)
+        for kind, label, value in conditions:
+            self._add_filter_chip(kind, label, value)
+        for name in excluded_directory_names:
+            self._add_filter_chip("directory", f"Excluded: {name}", name)
+        self.filterChips.show()
+
+    def _add_filter_chip(self, kind: str, label: str, value: str = "") -> None:
+        chip = QtWidgets.QToolButton()
+        chip.setText(f"{label} ×")
+        accessible_label = (
+            f"Remove exclusion {value}"
+            if kind == "directory"
+            else f"Remove {label} filter"
+        )
+        chip.setAccessibleName(accessible_label)
+        chip.setToolTip(accessible_label)
+        chip.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Maximum,
             QtWidgets.QSizePolicy.Policy.Fixed,
         )
-        prefix.setStyleSheet("color: palette(text); font-size: 11px;")
-        self.filterChipsLayout.addWidget(prefix)
-        for condition in conditions:
-            chip = QtWidgets.QLabel(condition)
-            chip.setSizePolicy(
-                QtWidgets.QSizePolicy.Policy.Maximum,
-                QtWidgets.QSizePolicy.Policy.Fixed,
+        chip.setStyleSheet(
+            "QToolButton { background: #e7f0fa; border: 1px solid #aac5de; "
+            "border-radius: 8px; color: #315e86; padding: 1px 5px; font-size: 10px; }"
+        )
+        chip.clicked.connect(
+            lambda _checked=False, chip_kind=kind, chip_value=value: (
+                self._remove_filter_chip(chip_kind, chip_value)
             )
-            chip.setStyleSheet(
-                "background: #e7f0fa; border: 1px solid #aac5de; "
-                "border-radius: 8px; color: #315e86; padding: 1px 5px; "
-                "font-size: 10px;"
-            )
-            self.filterChipsLayout.addWidget(chip)
-        for name in excluded_directory_names:
-            chip = QtWidgets.QToolButton()
-            chip.setText(f"Excluded: {name} ×")
-            chip.setAccessibleName(f"Remove exclusion {name}")
-            chip.setToolTip(f"Remove exclusion {name}")
-            chip.setStyleSheet(
-                "QToolButton { background: #e7f0fa; border: 1px solid #aac5de; "
-                "border-radius: 8px; color: #315e86; padding: 1px 5px; "
-                "font-size: 10px; }"
-            )
-            chip.clicked.connect(
-                lambda _checked=False,
-                directory_name=name: self.clear_directory_exclusion(directory_name)
-            )
-            self.filterChipsLayout.addWidget(chip)
-        self.filterChips.show()
+        )
+        self.filterChipsLayout.addWidget(chip)
+
+    def _remove_filter_chip(self, kind: str, value: str) -> None:
+        chips = [
+            self.filterChipsLayout.itemAt(index).widget()
+            for index in range(self.filterChipsLayout.count())
+        ]
+        focused_chip = self.focusWidget()
+        chip_index = chips.index(focused_chip) if focused_chip in chips else 1
+        if kind in {"tags", "date"}:
+            self._clear_database_search_component(kind)
+        elif kind == "filename":
+            self.clear_filename_filter()
+        elif kind == "iptc-empty":
+            self.onlyUntagged.setChecked(False)
+        elif kind == "directory":
+            self.clear_directory_exclusion(value)
+        QtCore.QTimer.singleShot(
+            0, lambda: self._focus_filter_chip_or_files(chip_index)
+        )
+
+    def _focus_filter_chip_or_files(self, preferred_index: int) -> None:
+        chips = self.filterChips.findChildren(QtWidgets.QToolButton)
+        if chips:
+            chips[min(preferred_index - 1, len(chips) - 1)].setFocus()
+        else:
+            self.files.setFocus()
+
+    def _clear_database_search_component(self, component: str) -> None:
+        if component == "tags":
+            self.dbSearchEdit.clear()
+        else:
+            self.dbDateSearchEdit.clear()
+        if self._database_search_query():
+            self.apply_db_search()
+        else:
+            self.clear_db_search()
 
     def _update_view_indicator(self, snapshot: PhotoWorkspaceSnapshot) -> None:
         """Render workspace count, active filter bubbles, and the match count."""
         self.workspaceCountLabel.setText(
             f"{self.photo_workspace.workspace_path_count} in workspace"
         )
-        conditions: list[str] = []
+        conditions: list[tuple[str, str, str]] = []
         has_db_search = (
             self._active_search_request is not None or snapshot.has_database_search
         )
@@ -3877,16 +3927,18 @@ class MainWindow(QtWidgets.QMainWindow):
             tag_query = self.dbSearchEdit.text().strip()
             date_query = self.dbDateSearchEdit.text().strip()
             if tag_query:
-                conditions.append(f"Tags: {tag_query}")
+                conditions.append(("tags", f"Tags: {tag_query}", tag_query))
             if date_query:
-                conditions.append(f"Date: {date_query}")
+                conditions.append(("date", f"Date: {date_query}", date_query))
         if snapshot.filename_filter_query is not None:
-            conditions.append(f"Filename: {snapshot.filename_filter_query}")
+            conditions.append(
+                ("filename", f"Filename: {snapshot.filename_filter_query}", "")
+            )
         if (
             snapshot.filter_operation_id is not None
             or snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
         ):
-            conditions.append("No tags")
+            conditions.append(("iptc-empty", "No tags", ""))
 
         self._set_filter_chips(conditions, snapshot.excluded_directory_names)
         has_conditions = bool(conditions) or bool(snapshot.excluded_directory_names)
@@ -4529,11 +4581,38 @@ class MainWindow(QtWidgets.QMainWindow):
             key=str.casefold,
         )
 
+    def toggle_files_filter_block(self) -> None:
+        """Toggle session-local Files-pane filter input visibility."""
+        show_filters = not self.filesFilterBox.isVisible()
+        focus = self.focusWidget()
+        if (
+            not show_filters
+            and focus is not None
+            and self.filesFilterBox.isAncestorOf(focus)
+        ):
+            self.files.setFocus()
+        self.filesFilterBox.setVisible(show_filters)
+        arrow = (
+            QtCore.Qt.ArrowType.DownArrow
+            if show_filters
+            else QtCore.Qt.ArrowType.RightArrow
+        )
+        action = "Hide filters" if show_filters else "Show filters"
+        self.filesFilterToggleBtn.setArrowType(arrow)
+        self.filesFilterToggleBtn.setToolTip(action)
+        self.filesFilterToggleBtn.setAccessibleName(action)
+
+    def _show_files_filter_block(self) -> None:
+        if not self.filesFilterBox.isVisible():
+            self.toggle_files_filter_block()
+
     def _focus_db_search_select_all(self) -> None:
+        self._show_files_filter_block()
         self.dbSearchEdit.setFocus()
         self.dbSearchEdit.selectAll()
 
     def _focus_date_filter_select_all(self) -> None:
+        self._show_files_filter_block()
         self.dbDateSearchEdit.setFocus()
         self.dbDateSearchEdit.selectAll()
 
@@ -4541,10 +4620,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.filenameCaseSensitiveBtn.toggle()
 
     def _focus_filename_filter_select_all(self) -> None:
+        self._show_files_filter_block()
         self.filenameFilterEdit.setFocus()
         self.filenameFilterEdit.selectAll()
 
     def _focus_excluded_directory_select_all(self) -> None:
+        self._show_files_filter_block()
         self.directoryExcludeEdit.setFocus()
         self.directoryExcludeEdit.selectAll()
 
