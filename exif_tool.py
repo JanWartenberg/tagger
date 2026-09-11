@@ -67,24 +67,27 @@ class ExifTool:
             self.exe = exe
 
     def _run(self, args: list[str]) -> str:
+        # ExifTool's Windows command-line decoding can corrupt Unicode paths.
+        # Its argument-file protocol accepts explicit UTF-8 bytes, one argument
+        # per line, without shell quoting or Windows command-line length limits.
+        if any("\n" in arg or "\r" in arg for arg in args):
+            raise ExifToolError("ExifTool arguments must not contain line breaks.")
         try:
             p = subprocess.run(
-                [self.exe, *args],
+                [self.exe, "-charset", "filename=UTF8", "-@", "-"],
+                input=("\n".join(args) + "\n").encode("utf-8"),
                 capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
             )
         except FileNotFoundError as e:
             raise ExifToolError(
                 "exiftool not found on PATH. Install it and ensure `exiftool -ver` works."
             ) from e
         if p.returncode != 0:
-            stderr = (p.stderr or "").strip()
+            stderr = p.stderr.decode("utf-8", errors="replace").strip()
             raise ExifToolError(
                 stderr or f"exiftool failed with exit code {p.returncode}"
             )
-        return p.stdout
+        return p.stdout.decode("utf-8", errors="replace")
 
     def read_keywords(self, file_path: str) -> KeywordState:
         file_path = normalize_path(file_path)

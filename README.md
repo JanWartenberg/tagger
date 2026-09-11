@@ -43,5 +43,20 @@ Run
 python tagger.py
 ```
 
+Relocating the photo folder
+---------------------------
+TAGGER stores the SQLite index in `<photo-folder>\\.tagger\\index.sqlite`. The
+actual tags remain in the photo metadata; the migration script only rewrites
+the cached absolute paths. Close TAGGER first, make sure the photos are already
+at the new location, then run a dry run followed by the migration:
+
+```bat
+python migrate_index.py "D:\\Fotos" "C:\\Users\\janwa\\Pictures\\Fotos" --database "C:\\Users\\janwa\\Pictures\\Fotos\\.tagger\\index.sqlite" --dry-run
+python migrate_index.py "D:\\Fotos" "C:\\Users\\janwa\\Pictures\\Fotos" --database "C:\\Users\\janwa\\Pictures\\Fotos\\.tagger\\index.sqlite"
+```
+
+The second command creates a timestamped `index.sqlite.before-migration-*`
+backup. Afterwards start TAGGER and run `:reindex` once to verify the index.
+
 Notes
 - TAGGER disables exiftool `*_original` backups by default. Enable the checkbox when a backup is wanted.
