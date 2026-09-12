@@ -616,7 +616,13 @@ class PhotoIndex:
     def upsert_state(
         self, conn: sqlite3.Connection, photo_path: str, state: KeywordState
     ) -> None:
-        photo_path = normalize_path(photo_path)
+        """Upsert a state, normalizing a caller-supplied path at this public boundary."""
+        self._upsert_state_normalized(conn, normalize_path(photo_path), state)
+
+    def _upsert_state_normalized(
+        self, conn: sqlite3.Connection, photo_path: str, state: KeywordState
+    ) -> None:
+        """Upsert a state when the caller owns the normalized-path invariant."""
         stat = Path(photo_path).stat()
         conn.execute(
             """
@@ -928,7 +934,7 @@ class PhotoIndex:
                 deleted += 1
                 continue
             try:
-                self.upsert_state(conn, path, state)
+                self._upsert_state_normalized(conn, path, state)
             except FileNotFoundError:
                 conn.execute("DELETE FROM photos WHERE path = ?", (path,))
                 deleted += 1
@@ -1010,7 +1016,7 @@ class PhotoIndex:
                     state = states.get(photo_path) or self._unreadable_state(photo_path)
                     if state is None:
                         continue
-                    self.upsert_state(conn, photo_path, state)
+                    self._upsert_state_normalized(conn, photo_path, state)
                     updated_count += 1
 
             db_paths = {

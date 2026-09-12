@@ -48,6 +48,23 @@ class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):
             self.assertEqual(index.search_photos("tag:XMP only"), [])
             self.assertEqual(index.search_photos("tag:café"), [path])
 
+    def test_sync_normalizes_unicode_and_redundant_absolute_path_segments(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            photo_dir = root / "Fotos ü"
+            photo_dir.mkdir()
+            photo = photo_dir / "bild-é.jpg"
+            photo.touch()
+            raw_path = root / "Fotos ü" / ".." / "Fotos ü" / "bild-é.jpg"
+            normalized = normalize_path(photo)
+            index = PhotoIndex(root)
+
+            result = index.sync_paths(FakeExifTool(), [str(raw_path)], force=True)
+
+            self.assertEqual(result.scanned_count, 1)
+            self.assertEqual(index.has_photos([str(raw_path)]), {normalized})
+            self.assertEqual(index.search_photos("tag:indexed"), [normalized])
+
     def test_iptc_empty_query_is_scoped_to_workspace_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

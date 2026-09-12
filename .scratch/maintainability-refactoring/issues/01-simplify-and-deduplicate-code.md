@@ -12,6 +12,16 @@ Review the current code and tests, then record a bounded cleanup shortlist with
 concrete duplicated logic, unnecessarily complex control flow, or unclear
 responsibilities. Start with the clearest behavior-preserving improvements.
 
+## Interim Checkpoint
+
+The shared M6 profiling reconnaissance has started in the
+[performance ticket](../../loading-saving-indexing-performance/issues/01-profile-and-optimize-core-workflows.md).
+A synthetic Windows 30,000-file baseline exists for discovery, sync, refresh,
+and workspace operations. One behavior-preserving indexing cleanup has been
+implemented and measured there: avoiding redundant internal path normalization.
+No broad maintainability refactor has started yet, so the remaining cleanup
+shortlist must be selected against the recorded performance baseline.
+
 ## Acceptance Criteria
 
 - Record the selected scope and rationale before implementation.
