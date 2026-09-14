@@ -1,16 +1,16 @@
 import sqlite3
 import tempfile
-from contextlib import closing
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
 from exif_tool import KeywordState
 from indexing import (
+    _PATH_QUERY_BATCH_SIZE,
     DateQueryError,
     IndexRefreshProgress,
     IndexSyncResult,
-    _PATH_QUERY_BATCH_SIZE,
     PhotoIndex,
 )
 from utils import normalize_path
@@ -340,6 +340,66 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
             self.assertEqual(completed.updated_count, 1_001)
             self.assertFalse(index.is_refresh_stale())
             self.assertFalse(index.cancel_refresh())
+
+    def test_refresh_reconciliation_detects_file_added_after_directory_discovery(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_photo = root / "first.jpg"
+            first_photo.touch()
+            index = PhotoIndex(root)
+            exif = FakeExifTool()
+
+            self.assertIsInstance(index.refresh_step(exif), IndexRefreshProgress)
+            added_photo = root / "added.jpg"
+            added_photo.touch()
+
+            self.assertIsInstance(index.refresh_step(exif), IndexRefreshProgress)
+            completed = index.refresh_step(exif)
+
+            self.assertIsInstance(completed, IndexSyncResult)
+            self.assertEqual(completed.scanned_count, 2)
+            self.assertEqual(
+                index.has_photos([str(first_photo), str(added_photo)]),
+                {normalize_path(first_photo), normalize_path(added_photo)},
+            )
+
+    def test_refresh_reconciliation_detects_file_added_during_directory_scan(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first_photo = root / "first.jpg"
+            added_photo = root / "added-during-scan.jpg"
+            first_photo.touch()
+            index = PhotoIndex(root)
+            exif = FakeExifTool()
+            original_iterdir = Path.iterdir
+
+            def add_photo_after_enumeration(path: Path):
+                children = original_iterdir(path)
+                if path == root:
+                    children = list(children)
+                    added_photo.touch()
+                    return iter(children)
+                return children
+
+            with patch.object(
+                Path, "iterdir", autospec=True, side_effect=add_photo_after_enumeration
+            ):
+                index.refresh_step(exif)
+
+            completed: IndexRefreshProgress | IndexSyncResult = index.refresh_step(exif)
+            while isinstance(completed, IndexRefreshProgress):
+                completed = index.refresh_step(exif)
+
+            self.assertIsInstance(completed, IndexSyncResult)
+            self.assertEqual(completed.scanned_count, 2)
+            self.assertEqual(
+                index.has_photos([str(first_photo), str(added_photo)]),
+                {normalize_path(first_photo), normalize_path(added_photo)},
+            )
 
     def test_third_subgroup_failure_keeps_existing_photo_as_unknown(self) -> None:
         class FailingExifTool:

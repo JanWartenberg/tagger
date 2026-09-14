@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
 import sqlite3
 import time
 import unicodedata
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
 from exif_tool import ExifTool, KeywordState
 from utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
-
 
 # SQLite commonly permits 999 bind variables. Keep path-set queries comfortably below
 # that limit so supported builds with the default limit can index large workspaces.
@@ -257,7 +256,8 @@ class PhotoIndex:
               indexed_count INTEGER NOT NULL,
               updated_count INTEGER NOT NULL,
               deleted_count INTEGER NOT NULL,
-              resumed INTEGER NOT NULL DEFAULT 0
+              resumed INTEGER NOT NULL DEFAULT 0,
+              manifest_version INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS refresh_directories(
@@ -266,6 +266,15 @@ class PhotoIndex:
 
             CREATE TABLE IF NOT EXISTS refresh_paths(
               path TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_seen_paths(
+              path TEXT PRIMARY KEY
+            );
+
+            CREATE TABLE IF NOT EXISTS refresh_directory_state(
+              path TEXT PRIMARY KEY,
+              mtime_ns INTEGER NOT NULL
             );
             """
         )
@@ -277,6 +286,11 @@ class PhotoIndex:
             conn.execute(
                 "ALTER TABLE refresh_checkpoint "
                 "ADD COLUMN resumed INTEGER NOT NULL DEFAULT 0"
+            )
+        if "manifest_version" not in refresh_columns:
+            conn.execute(
+                "ALTER TABLE refresh_checkpoint "
+                "ADD COLUMN manifest_version INTEGER NOT NULL DEFAULT 0"
             )
 
         photo_columns = {
@@ -416,6 +430,8 @@ class PhotoIndex:
             ).fetchone()
             conn.execute("DELETE FROM refresh_directories")
             conn.execute("DELETE FROM refresh_paths")
+            conn.execute("DELETE FROM refresh_seen_paths")
+            conn.execute("DELETE FROM refresh_directory_state")
             conn.execute("DELETE FROM refresh_checkpoint")
         return present is not None
 
@@ -665,18 +681,16 @@ class PhotoIndex:
     def update_states(self, updated_states: dict[str, KeywordState]) -> None:
         if not updated_states:
             return
-        with self._connection() as conn:
-            with conn:
-                for photo_path, state in updated_states.items():
-                    self.upsert_state(conn, photo_path, state)
+        with self._connection() as conn, conn:
+            for photo_path, state in updated_states.items():
+                self.upsert_state(conn, photo_path, state)
 
     def mark_initialized(self) -> None:
-        with self._connection() as conn:
-            with conn:
-                conn.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                    ("initialized", "1"),
-                )
+        with self._connection() as conn, conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                ("initialized", "1"),
+            )
 
     def remove_photo(self, photo_path: str) -> bool:
         """Remove one indexed photo and any tag vocabulary it leaves unused."""
@@ -726,8 +740,8 @@ class PhotoIndex:
                     """
                     INSERT INTO refresh_checkpoint(
                       singleton, phase, started_at, discovered_count, indexed_count,
-                      updated_count, deleted_count
-                    ) VALUES (1, 'discovering', ?, 0, 0, 0, 0)
+                      updated_count, deleted_count, manifest_version
+                    ) VALUES (1, 'discovering', ?, 0, 0, 0, 0, 1)
                     """,
                     (now,),
                 )
@@ -791,12 +805,10 @@ class PhotoIndex:
                 )
 
         # Reconciliation deliberately happens once, after streamed discovery.  It
-        # observes additions, removals, and mtime/size changes made during the run.
-        paths = [
-            str(path)
-            for path in self.root.rglob("*")
-            if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
-        ]
+        # observes mtime/size changes in every discovered file and rescans only
+        # directories whose state changed during the run.  This preserves the
+        # concurrent-addition guarantee without traversing an unchanged root twice.
+        paths = self._refresh_reconciliation_paths()
         reconciled = self._sync_paths(
             exif,
             paths,
@@ -827,7 +839,56 @@ class PhotoIndex:
     def _clear_refresh_checkpoint(self, conn: sqlite3.Connection) -> None:
         conn.execute("DELETE FROM refresh_directories")
         conn.execute("DELETE FROM refresh_paths")
+        conn.execute("DELETE FROM refresh_seen_paths")
+        conn.execute("DELETE FROM refresh_directory_state")
         conn.execute("DELETE FROM refresh_checkpoint")
+
+    def _refresh_reconciliation_paths(self) -> list[str]:
+        """Return discovered files plus files in directories changed mid-refresh."""
+        with self._connection() as conn:
+            checkpoint = conn.execute(
+                "SELECT manifest_version FROM refresh_checkpoint WHERE singleton = 1"
+            ).fetchone()
+            manifest_ready = checkpoint is not None and int(checkpoint[0]) == 1
+            seen = {
+                str(row[0])
+                for row in conn.execute("SELECT path FROM refresh_seen_paths")
+            }
+            directory_states = [
+                (str(row[0]), int(row[1]))
+                for row in conn.execute(
+                    "SELECT path, mtime_ns FROM refresh_directory_state"
+                )
+            ]
+
+        # An old checkpoint predating the durable seen-path manifest cannot be
+        # narrowed safely, so retain the original full traversal as a fallback.
+        if not manifest_ready or not seen:
+            return [
+                str(path)
+                for path in self.root.rglob("*")
+                if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+            ]
+
+        paths = {
+            path
+            for path in seen
+            if Path(path).is_file() and Path(path).suffix.lower() in SUPPORTED_EXTS
+        }
+        for directory, recorded_mtime_ns in directory_states:
+            directory_path = Path(directory)
+            try:
+                changed = directory_path.stat().st_mtime_ns != recorded_mtime_ns
+            except OSError:
+                continue
+            if not changed:
+                continue
+            paths.update(
+                str(path)
+                for path in directory_path.rglob("*")
+                if path.is_file() and path.suffix.lower() in SUPPORTED_EXTS
+            )
+        return sorted(paths)
 
     def _take_refresh_path_batch(
         self, conn: sqlite3.Connection
@@ -852,6 +913,12 @@ class PhotoIndex:
                 "DELETE FROM refresh_directories WHERE path = ?", (str(directory_path),)
             )
             try:
+                scan_start_mtime_ns: int | None = directory_path.stat().st_mtime_ns
+            except OSError:
+                # Enumeration may still succeed, but without a baseline mtime we
+                # must fall back to a full reconciliation for safety.
+                scan_start_mtime_ns = None
+            try:
                 children = list(directory_path.iterdir())
             except (FileNotFoundError, PermissionError, OSError):
                 continue
@@ -863,13 +930,32 @@ class PhotoIndex:
                             (normalize_path(child),),
                         )
                     elif child.is_file() and child.suffix.lower() in SUPPORTED_EXTS:
+                        normalized_child = normalize_path(child)
                         cursor = conn.execute(
                             "INSERT OR IGNORE INTO refresh_paths(path) VALUES (?)",
-                            (normalize_path(child),),
+                            (normalized_child,),
+                        )
+                        conn.execute(
+                            "INSERT OR IGNORE INTO refresh_seen_paths(path) VALUES (?)",
+                            (normalized_child,),
                         )
                         discovered += cursor.rowcount
                 except OSError:
                     continue
+            if scan_start_mtime_ns is None:
+                conn.execute(
+                    "UPDATE refresh_checkpoint SET manifest_version = 0 "
+                    "WHERE singleton = 1"
+                )
+            else:
+                # Record the pre-scan state. If the directory changes while it is
+                # being enumerated, reconciliation will observe that difference
+                # and rescan it instead of missing a concurrent addition.
+                conn.execute(
+                    "INSERT OR REPLACE INTO refresh_directory_state(path, mtime_ns) "
+                    "VALUES (?, ?)",
+                    (normalize_path(directory_path), scan_start_mtime_ns),
+                )
 
         rows = conn.execute(
             "SELECT path FROM refresh_paths ORDER BY path LIMIT ?",

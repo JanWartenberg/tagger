@@ -1,7 +1,7 @@
 # Loading, Saving, and Indexing Performance
 
 Status: ready-for-agent
-Priority: medium
+Priority: low
 
 ## Goal
 

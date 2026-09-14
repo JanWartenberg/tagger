@@ -1,19 +1,17 @@
 # 01 — Profile and Optimize Core Workflows
 
 Status: ready-for-agent
-Priority: medium
+Priority: low
 Category: performance
 Milestone: M6 — Maintainability and performance
 Blocked by: None
 
 ## Next Action
 
-Investigate the remaining refresh cost without changing behavior: compare the
-30 discovery queue steps with the final full-root reconciliation and identify
-whether the second traversal can be avoided or narrowed while preserving
-concurrent-change detection, checkpoint recovery, and cancellation. Do not
-change UI logic. A separate real-ExifTool/photo-copy run remains required where
-available.
+Deferred. Later, complete the remaining concurrent deletion and
+recovery/cancellation validation, review the diff, and decide whether to close
+this ticket or move remaining real-ExifTool/photo-copy validation to the
+follow-up. Do not change UI logic.
 
 ## Current Checkpoint
 
@@ -24,8 +22,9 @@ available.
   indexing regression suite pass.
 - The refresh queue batching experiment was reverted after no meaningful
   end-to-end improvement.
-- Current investigation target: refresh's durable discovery queue versus its
-  second full-root reconciliation traversal.
+- The refresh reconciliation now reuses a durable discovered-path manifest and
+  rescans only directories whose mtime changed during the run; unchanged roots
+  no longer receive a second full recursive traversal.
 
 ### Session 5 — Windows sync after normalized upsert change
 
@@ -264,6 +263,68 @@ queue writes, metadata/upsert work, and final reconciliation as separate
 optimization candidates. The next bounded candidate is batching queue SQLite
 writes while preserving checkpoint and cancellation semantics.
 
+### Session 7 — Narrowed refresh reconciliation
+
+The refresh checkpoint now retains discovered photo paths and the mtime of each
+visited directory. Final reconciliation stats the retained paths, rescanning
+only directories whose mtime changed during the refresh. This preserves
+concurrent additions and removals while avoiding a second full-root traversal on
+unchanged trees. The manifest and directory state are cleared on completion,
+cancellation, and checkpoint restart; old checkpoints without the manifest fall
+back to the original full traversal.
+
+A regression test covers a photo added after its root directory was discovered.
+The indexing tests pass (20 tests), the full suite passes (246 tests), and Ruff
+passes for the changed files. A local Linux timing-only 30,000-file run measured
+3.637 s end to end, with 0.908 s for final reconciliation; this is not a
+Windows baseline and is not compared quantitatively with the existing Windows
+runs.
+
+The user then ran five timing-only 30,000-file Windows 11 measurements at
+revision `4b09bc7de18ec5acc8f71c062c865fc34597cc05`, with Windows 11 25H2
+(OS build `10.0.26200.9445`), Python 3.14.7, ExifTool 13.59, and the 30-level
+synthetic fixture.
+The end-to-end refresh times were 12.828 s, 12.150 s, 12.800 s, 12.050 s, and
+12.109 s: mean 12.387 s, standard deviation 0.391 s, minimum 12.050 s, and
+maximum 12.828 s. Final reconciliation averaged 3.135 s. Internal means were
+3.462 s for durable queue batches, 4.112 s for metadata batches, and 2.566 s
+for reconciliation. All runs processed 30,000 files in 150 synthetic ExifTool
+calls and 243,073 SQLite statements.
+
+Against the earlier 14.316 s single-run baseline, the current mean is about
+13.5% lower. This is encouraging but not a matched repeated before/after
+comparison; real-ExifTool/photo-copy validation remains open.
+
+### Session 8 — Windows synthetic timing-only run
+
+The user supplied a timing-only run at revision
+`4b09bc7de18ec5acc8f71c062c865fc34597cc05` using Windows 11 25H2 (OS build
+`10.0.26200.9445`), Python 3.14.7, and ExifTool 13.59. These environment
+versions are fixed for this ticket. Command:
+
+`python perf\\profile_core.py --scenario all --photos 30000 --depth 30 --no-profile --json-out perf\\results\\core-30000-real-timing.json`
+
+Results:
+
+| Scenario | Elapsed | Counters |
+| --- | ---: | --- |
+| Discovery | 0.719 s | 30,000 discovered |
+| Sync | 5.846 s | 30,000 indexed; 1 ExifTool call; 150,067 SQLite statements |
+| Refresh | 10.424 s | 30,000 indexed; 150 ExifTool calls; 243,073 SQLite statements |
+| Workspace | 0.109 s | 30,000 workspace paths; 1,000 visible after filename filtering |
+
+Refresh internal timings were 3.113 s for durable queue batches, 3.298 s for
+metadata batches, and 2.371 s for reconciliation. The supplied JSON does not
+record repeat count or cold/warm state. Despite the installed ExifTool version
+being recorded, this harness run uses the synthetic ExifTool adapter; real
+ExifTool/photo-copy validation remains open in the follow-up ticket.
+
+Windows validation also reports 20 passing indexing tests and 246 passing full-suite
+tests in 13.94 s. Ruff reports nine pre-existing findings in unchanged code and
+tests (three `BLE001`/`S110` findings in `indexing.py` and six `SIM117` findings
+in `tests/test_indexing.py`); the current reconciliation additions introduce no
+reported Ruff findings.
+
 ### Session 6 — Batched refresh queue writes: rejected
 
 A temporary change collected discovered directories and photo paths and inserted
@@ -287,6 +348,9 @@ unchanged. This is a documented negative result, not an open implementation.
   correctness and check UI responsiveness as well as throughput.
 - Test writes only on photo copies; run relevant regression tests and Ruff.
 - Clearly distinguish locally measured results from pending Windows validation.
+- Windows synthetic validation is now recorded; real-ExifTool/photo-copy
+  validation remains pending and is deferred to the separate
+  [performance follow-up](../../performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md).
 
 ## Comments
 
