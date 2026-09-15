@@ -12,6 +12,7 @@ from indexing import (
     IndexRefreshProgress,
     IndexSyncResult,
     PhotoIndex,
+    resolve_index_root,
 )
 from utils import normalize_path
 
@@ -23,6 +24,32 @@ class FakeExifTool:
     def read_keywords_many(self, paths: list[str]) -> dict[str, KeywordState]:
         self.read_batches.append(paths)
         return {path: KeywordState(["indexed"], ["indexed"]) for path in paths}
+
+
+class ResolveIndexRootTests(unittest.TestCase):
+    def test_uses_highest_ancestor_with_tagger_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "Fotos"
+            nested = library / "Themen" / "Vögel" / "2026-02"
+            nested.mkdir(parents=True)
+            (library / ".tagger").mkdir()
+            (nested / ".tagger").mkdir()
+            photo = nested / "bird.jpg"
+            photo.touch()
+
+            self.assertEqual(resolve_index_root([photo]), library.resolve())
+
+    def test_uses_preferred_root_when_no_marker_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "Fotos"
+            nested = library / "2026-02"
+            nested.mkdir(parents=True)
+            photo = nested / "bird.jpg"
+            photo.touch()
+
+            self.assertEqual(
+                resolve_index_root([photo], preferred_root=library), library.resolve()
+            )
 
 
 class PhotoIndexCanonicalKeywordFactTests(unittest.TestCase):

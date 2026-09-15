@@ -45,8 +45,11 @@ python tagger.py
 
 Relocating the photo folder
 ---------------------------
-TAGGER stores the SQLite index in `<photo-folder>\\.tagger\\index.sqlite`. The
-actual tags remain in the photo metadata; the migration script only rewrites
+TAGGER stores the SQLite index in `<photo-folder>\\.tagger\\index.sqlite`. When
+photos are opened from a subfolder, TAGGER walks up to the highest ancestor that
+already contains `.tagger` and reuses that index. If no such marker exists, it
+uses the configured/default root when applicable, or the common photo-folder.
+The actual tags remain in the photo metadata; the migration script only rewrites
 the cached absolute paths. Close TAGGER first, make sure the photos are already
 at the new location, then run a dry run followed by the migration:
 

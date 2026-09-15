@@ -40,6 +40,27 @@ def resolve_index_root(
             return pref if pref.exists() else None
         return None
 
+    try:
+        common = Path(os.path.commonpath([str(p) for p in candidates])).resolve()
+    except Exception:
+        common = candidates[0].parent if candidates[0].is_file() else candidates[0]
+    if common.is_file():
+        common = common.parent
+
+    # A marker in an existing ancestor identifies the library root. Walk all the
+    # way up rather than stopping at the first marker, so a nested accidental
+    # index cannot shadow the database belonging to the photo library.
+    index_root: Path | None = None
+    current = common
+    while True:
+        if (current / ".tagger").is_dir():
+            index_root = current
+        if current.parent == current:
+            break
+        current = current.parent
+    if index_root is not None:
+        return index_root
+
     if preferred_root is not None:
         pref = _normalize_root(preferred_root)
         if pref.exists():
@@ -52,11 +73,7 @@ def resolve_index_root(
             except Exception:
                 pass
 
-    try:
-        common = Path(os.path.commonpath([str(p) for p in candidates])).resolve()
-    except Exception:
-        common = candidates[0].parent if candidates[0].is_file() else candidates[0]
-    return common.parent if common.is_file() else common
+    return common
 
 
 def _date_taken_from_state(state: KeywordState) -> str:
