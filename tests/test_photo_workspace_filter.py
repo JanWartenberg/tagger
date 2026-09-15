@@ -78,6 +78,26 @@ class IptcEmptyFilterTests(unittest.TestCase):
         self.assertEqual(completed.selected_paths, ("one.jpg",))
         self.assertEqual(completed.active_path, "one.jpg")
 
+    def test_membership_exposes_unfiltered_completed_iptc_empty_source(self) -> None:
+        self.workspace.set_filename_filter("one")
+        started = self.workspace.start_indexed_iptc_empty_filter()
+
+        self.assertIsNone(self.workspace.iptc_empty_membership)
+
+        snapshot = self.workspace.accept_indexed_iptc_empty_filter(
+            started.filter_operation_id or -1, ["one.jpg", "two.jpg"]
+        )
+
+        self.assertEqual(snapshot.visible_paths, ("one.jpg",))
+        self.assertEqual(
+            self.workspace.iptc_empty_membership,
+            frozenset({"one.jpg", "two.jpg"}),
+        )
+
+        self.workspace.clear_iptc_empty_filter()
+
+        self.assertIsNone(self.workspace.iptc_empty_membership)
+
     def test_empty_final_result_hides_all_photos(self) -> None:
         self.workspace.start_iptc_empty_filter(3, 3)
         batch = self.workspace.next_iptc_empty_filter_batch()

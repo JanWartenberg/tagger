@@ -788,7 +788,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_refresh_apply_request: IndexReadRequest | None = None
         self._iptc_empty_filter_operation_id: int | None = None
         self._iptc_empty_root: str | None = None
-        self._iptc_empty_membership: frozenset[str] | None = None
         self._iptc_empty_unknown_paths: set[str] = set()
         self._iptc_empty_refresh_available = False
         self._last_refresh_status_at = 0.0
@@ -1529,6 +1528,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._position_files_pane_message()
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.MouseButtonPress:
             self._capture_files_selection_scroll_anchor()
+        if obj is self.files.viewport() and et == QtCore.QEvent.Type.MouseButtonRelease:
+            self._schedule_files_selection_scroll_anchor_restore()
         if et in (
             QtCore.QEvent.Type.DragEnter,
             QtCore.QEvent.Type.DragMove,
@@ -2685,7 +2686,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_refresh_apply_request = None
         self._iptc_empty_filter_operation_id = None
         self._iptc_empty_root = None
-        self._iptc_empty_membership = None
         self._iptc_empty_unknown_paths.clear()
         self._iptc_empty_refresh_available = False
         if hasattr(self, "iptcEmptyRefreshOffer"):
@@ -2695,7 +2695,7 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self.photo_workspace.snapshot()
         return (
             self._iptc_empty_root == root
-            and self._iptc_empty_membership is not None
+            and self.photo_workspace.iptc_empty_membership is not None
             and root == self._index_root
             and snapshot.view_mode is PhotoWorkspaceViewMode.IPTC_EMPTY
             and snapshot.filter_operation_id is None
@@ -2748,7 +2748,6 @@ class MainWindow(QtWidgets.QMainWindow):
             membership = self.photo_workspace.iptc_empty_membership
             if membership is None:
                 return
-            self._iptc_empty_membership = membership
             self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
                 membership
             )
@@ -2767,7 +2766,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             if (
                 frozenset(event.result.paths) & frozenset(snapshot.paths)
-                != self._iptc_empty_membership
+                != self.photo_workspace.iptc_empty_membership
             ):
                 self._iptc_empty_refresh_available = True
                 self.iptcEmptyRefreshOffer.show()
@@ -2789,7 +2788,6 @@ class MainWindow(QtWidgets.QMainWindow):
         membership = self.photo_workspace.iptc_empty_membership
         if membership is None:
             return
-        self._iptc_empty_membership = membership
         self._iptc_empty_unknown_paths = set(event.result.unknown_paths) & set(
             membership
         )
@@ -3702,18 +3700,21 @@ class MainWindow(QtWidgets.QMainWindow):
             self.resolveBtn.setEnabled(False)
 
     def _capture_files_selection_scroll_anchor(self) -> None:
-        """Keep a mouse click from moving a filtered Files-pane viewport."""
-        self._queue_files_selection_scroll_anchor_restore(
-            self._capture_files_scroll_anchor()
-        )
+        """Capture the viewport before a Files-pane mouse selection."""
+        self._files_selection_scroll_anchor = self._capture_files_scroll_anchor()
+
+    def _schedule_files_selection_scroll_anchor_restore(self) -> None:
+        """Restore after the mouse selection has queued its viewport changes."""
+        if self._files_selection_scroll_anchor is not None:
+            self._files_selection_scroll_restore_timer.start(0)
 
     def _queue_files_selection_scroll_anchor_restore(
         self, anchor: tuple[str | None, int]
     ) -> None:
         self._files_selection_scroll_anchor = anchor
-        # Run after QListWidget's selection and ensure-visible events. An owned
-        # timer is deleted with MainWindow, unlike a singleShot lambda.
-        self._files_selection_scroll_restore_timer.start(1)
+        # Programmatic selection signals have returned, so zero-delay work that
+        # they queued runs before this owned restoration timer.
+        self._files_selection_scroll_restore_timer.start(0)
 
     def _restore_pending_files_selection_scroll_anchor(self) -> None:
         anchor = self._files_selection_scroll_anchor

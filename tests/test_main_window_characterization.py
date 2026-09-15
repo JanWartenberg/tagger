@@ -85,7 +85,18 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
     def _close_window(self) -> None:
         FakeExifTool.release_writes()
-        self.window.pool.waitForDone(2000)
+        # Prevent a pending debounce from starting new pooled work after the
+        # first wait has already reported an idle pool.
+        self.window._pending_metadata_read = None
+        self.window._metadata_read_timer.stop()
+        self.window._pending_preview_load = None
+        self.window._preview_load_timer.stop()
+        self.window._discard_queued_previews()
+        self.assertTrue(self.window.pool.waitForDone(5000))
+        self.app.processEvents()
+        self.window._metadata_read_timer.stop()
+        self.window._preview_load_timer.stop()
+        self.assertTrue(self.window.pool.waitForDone(5000))
         self.app.processEvents()
         self.window.close()
 
@@ -689,7 +700,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             timeout=3,
         )
         self.assertFalse(self.window.filesPaneLoadingIcon.isVisible())
-        self._wait_for_ui(lambda: self.window.files.count() == len(paths), timeout=3)
+        # Completion time varies with native widget and paint scheduling. This
+        # test checks incremental progress, not a three-second performance budget.
+        self._wait_for_ui(lambda: self.window.files.count() == len(paths), timeout=10)
 
     def test_files_render_progress_animates_before_discovery_count_is_known(
         self,
