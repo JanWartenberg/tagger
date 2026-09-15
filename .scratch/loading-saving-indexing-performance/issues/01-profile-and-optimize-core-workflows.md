@@ -1,6 +1,6 @@
 # 01 — Profile and Optimize Core Workflows
 
-Status: ready-for-agent
+Status: completed
 Priority: low
 Category: performance
 Milestone: M6 — Maintainability and performance
@@ -8,10 +8,10 @@ Blocked by: None
 
 ## Next Action
 
-Deferred. Later, complete the remaining concurrent deletion and
-recovery/cancellation validation, review the diff, and decide whether to close
-this ticket or move remaining real-ExifTool/photo-copy validation to the
-follow-up. Do not change UI logic.
+Completed. The bounded refresh reconciliation optimization and its concurrent-
+addition race fix are implemented, reviewed, tested, and committed. Real
+ExifTool/photo-copy validation remains deferred to the follow-up ticket. Do not
+change UI logic in this ticket.
 
 ## Current Checkpoint
 
