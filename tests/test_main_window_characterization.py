@@ -1609,7 +1609,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         exclude_action = self.window._actions_by_id["focusexcludedir"]
         self.assertEqual(exclude_action.shortcuts[0].sequence, "Alt+X")
-        self.assertIsNone(exclude_action.shortcuts[0].widget_ref)
+        self.assertEqual(exclude_action.shortcuts[0].widget_ref, "window")
 
         self.window._dispatch_action("focusdatefilter")
 
@@ -2326,6 +2326,34 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.selected_file_paths(), [second])
         self.assertEqual(self.window.selectedLabel.text(), second)
+
+    def test_shift_j_and_k_extend_and_reverse_file_selection(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(4)))
+        self.window.files.setFocus()
+
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_J,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        self.assertEqual(self.window.selected_file_paths(), paths[:2])
+        self.assertEqual(self.window.active_file_path(), paths[1])
+
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_J,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        self.assertEqual(self.window.selected_file_paths(), paths[:3])
+        self.assertEqual(self.window.active_file_path(), paths[2])
+
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_K,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        self.assertEqual(self.window.selected_file_paths(), paths[:2])
+        self.assertEqual(self.window.active_file_path(), paths[1])
 
     def test_no_tags_j_and_k_keep_an_already_visible_selection_in_place(self) -> None:
         paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))

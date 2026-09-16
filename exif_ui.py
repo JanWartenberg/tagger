@@ -807,6 +807,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._selection_token = 0
         self._files_render_token = 0
         self._files_selection_scroll_anchor: tuple[str | None, int] | None = None
+        self._files_shift_selection_anchor: int | None = None
         self._files_selection_scroll_restore_timer = QtCore.QTimer(self)
         self._files_selection_scroll_restore_timer.setSingleShot(True)
         self._files_selection_scroll_restore_timer.timeout.connect(
@@ -1390,6 +1391,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "_focus_pane_right": self._focus_pane_right,
             "_action_list_down": self._action_list_down,
             "_action_list_up": self._action_list_up,
+            "_action_list_down_extend": self._action_list_down_extend,
+            "_action_list_up_extend": self._action_list_up_extend,
             "_action_list_top": self._action_list_top,
             "_action_list_bottom": self._action_list_bottom,
             "_toggle_visual_keywords": self._toggle_visual_keywords,
@@ -1527,6 +1530,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.Resize:
             self._position_files_pane_message()
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.MouseButtonPress:
+            self._files_shift_selection_anchor = None
             self._capture_files_selection_scroll_anchor()
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.MouseButtonRelease:
             self._schedule_files_selection_scroll_anchor_restore()
@@ -1591,6 +1595,14 @@ class MainWindow(QtWidgets.QMainWindow):
             return "Space"
         if event.text() == ":":
             return ":"
+        if event.key() == QtCore.Qt.Key.Key_J and (
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "Shift+J"
+        if event.key() == QtCore.Qt.Key.Key_K and (
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "Shift+K"
         if (
             event.key() == QtCore.Qt.Key.Key_G
             and event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
@@ -1604,8 +1616,16 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.Qt.Key.Key_T: "t",
             QtCore.Qt.Key.Key_F: "f",
             QtCore.Qt.Key.Key_G: "g",
-            QtCore.Qt.Key.Key_J: "j",
-            QtCore.Qt.Key.Key_K: "k",
+            QtCore.Qt.Key.Key_J: (
+                "Shift+J"
+                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                else "j"
+            ),
+            QtCore.Qt.Key.Key_K: (
+                "Shift+K"
+                if event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+                else "k"
+            ),
             QtCore.Qt.Key.Key_Y: "y",
             QtCore.Qt.Key.Key_P: "p",
         }
@@ -1806,7 +1826,9 @@ class MainWindow(QtWidgets.QMainWindow):
         allowed = QtCore.Qt.KeyboardModifier.ShiftModifier
         return (mods & ~allowed) == QtCore.Qt.KeyboardModifier.NoModifier
 
-    def _move_list_selection(self, lst: QtWidgets.QListWidget, delta: int) -> None:
+    def _move_list_selection(
+        self, lst: QtWidgets.QListWidget, delta: int, *, extend: bool = False
+    ) -> None:
         if lst.count() == 0:
             return
         row = lst.currentRow()
@@ -1820,10 +1842,34 @@ class MainWindow(QtWidgets.QMainWindow):
             row = self._next_visible_row(lst, row, delta)
         if row is None:
             return
-        if lst is self.keywordsList and self._vim_visual_keywords:
+        if lst is self.files and extend:
+            if self._files_shift_selection_anchor is None:
+                self._files_shift_selection_anchor = lst.currentRow()
+            anchor = self._files_shift_selection_anchor
+            visible_rows = self._visible_file_rows()
+            anchor_index = visible_rows.index(anchor)
+            row_index = visible_rows.index(row)
+            low, high = sorted((anchor_index, row_index))
+            lst.blockSignals(True)
+            try:
+                lst.clearSelection()
+                for selected_row in visible_rows[low : high + 1]:
+                    item = lst.item(selected_row)
+                    if item is not None:
+                        item.setSelected(True)
+                lst.setCurrentItem(
+                    lst.item(row),
+                    QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
+                )
+            finally:
+                lst.blockSignals(False)
+            self.on_selection_changed()
+        elif lst is self.keywordsList and self._vim_visual_keywords:
             self._select_list_range(lst, self._vim_visual_anchor, row)
             lst.setCurrentRow(row)
         else:
+            if lst is self.files:
+                self._files_shift_selection_anchor = None
             if lst is self.keywordsList:
                 self._set_single_list_selection(lst, row)
             elif lst is self.files:
@@ -2148,6 +2194,14 @@ class MainWindow(QtWidgets.QMainWindow):
         lst = self._resolve_current_list_widget()
         if lst is not None:
             self._move_list_selection(lst, -1)
+
+    def _action_list_down_extend(self) -> None:
+        if self.files.hasFocus():
+            self._move_list_selection(self.files, +1, extend=True)
+
+    def _action_list_up_extend(self) -> None:
+        if self.files.hasFocus():
+            self._move_list_selection(self.files, -1, extend=True)
 
     def _action_list_top(self) -> None:
         lst = self._resolve_current_list_widget()

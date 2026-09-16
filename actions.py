@@ -331,6 +331,22 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             native_triggers=(NativeTrigger("Up"),),
         ),
         ActionSpec(
+            id="listdownextend",
+            description="Extend selection down",
+            handler_name="_action_list_down_extend",
+            key_routes=(
+                KeyRoute(kind="single", sequence=("Shift+J",), scope="list_widgets"),
+            ),
+        ),
+        ActionSpec(
+            id="listupextend",
+            description="Extend selection up",
+            handler_name="_action_list_up_extend",
+            key_routes=(
+                KeyRoute(kind="single", sequence=("Shift+K",), scope="list_widgets"),
+            ),
+        ),
+        ActionSpec(
             id="listtop",
             description="Jump to top of list",
             handler_name="_action_list_top",
