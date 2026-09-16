@@ -3726,9 +3726,18 @@ class MainWindow(QtWidgets.QMainWindow):
             self._restore_files_scroll_anchor(anchor)
 
     def _capture_files_scroll_anchor(self) -> tuple[str | None, int]:
-        top_item = self.files.itemAt(0, 0)
-        if top_item is None:
+        viewport = self.files.viewport().rect()
+        visible_items = []
+        for index in range(self.files.count()):
+            item = self.files.item(index)
+            if item is None or item.isHidden():
+                continue
+            rect = self.files.visualItemRect(item)
+            if rect.intersects(viewport):
+                visible_items.append((rect.top(), item))
+        if not visible_items:
             return None, 0
+        _top, top_item = min(visible_items, key=lambda value: value[0])
         return (
             normalize_path(top_item.text()),
             self.files.visualItemRect(top_item).top(),
@@ -3750,23 +3759,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _preserve_files_scroll(self, fn) -> None:
         view = self.files
         sb = view.verticalScrollBar()
-        top_item = view.itemAt(0, 0)
-        top_path = normalize_path(top_item.text()) if top_item is not None else None
-        top_offset = view.visualItemRect(top_item).top() if top_item is not None else 0
-        top_row = view.row(top_item) if top_item is not None else 0
+        top_path, top_offset = self._capture_files_scroll_anchor()
 
         fn()
 
         if top_path:
             item = self._find_item_by_path(top_path)
-            if item is None or item.isHidden():
-                item = None
-                for i in range(max(0, top_row), view.count()):
-                    cand = view.item(i)
-                    if cand is not None and not cand.isHidden():
-                        item = cand
-                        break
-            if item is not None:
+            if item is not None and not item.isHidden():
                 view.scrollToItem(
                     item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
                 )
@@ -3835,6 +3834,7 @@ class MainWindow(QtWidgets.QMainWindow):
         selection_changed = list(snapshot.selected_paths) != previous_selection
         if selection_changed:
             self.on_selection_changed()
+            self._ensure_list_item_visible(self.files, self.files.currentItem())
         return selection_changed
 
     def _set_filter_chips(

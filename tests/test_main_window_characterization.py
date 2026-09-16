@@ -297,6 +297,36 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertFalse(self.window._find_item_by_path(hidden).isHidden())
 
+    def test_directory_exclusion_preserves_scroll_when_clicking_afterward(self) -> None:
+        paths = self._add_paths(
+            "keep/photo-000.jpg",
+            *(f"org/photo-{index:03}.jpg" for index in range(1, 100)),
+            *(f"keep/photo-{index:03}.jpg" for index in range(100, 200)),
+        )
+        self.window.files.scrollToItem(
+            self.window.files.item(100),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+
+        self.window.directoryExcludeEdit.setText("org")
+        QtTest.QTest.keyClick(
+            self.window.directoryExcludeEdit, QtCore.Qt.Key.Key_Return
+        )
+        QtTest.QTest.qWait(10)
+        anchor = self.window.files.verticalScrollBar().value()
+        rect = self.window.files.visualItemRect(self.window.files.item(101))
+        QtTest.QTest.mouseClick(
+            self.window.files.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=rect.center(),
+        )
+        self._wait_for_ui(lambda: self.window.files.currentRow() == 101)
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(self.window.active_file_path(), paths[101])
+        self.assertEqual(self.window.files.verticalScrollBar().value(), anchor)
+
     def test_directory_exclusion_validation_and_commands(self) -> None:
         self._add_paths("keep/visible.jpg")
 
@@ -355,6 +385,28 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(self.window.selected_file_paths(), [first])
         self._wait_until(lambda: self.window.selected_file_paths() == [second])
+
+    def test_filtering_to_a_new_active_photo_keeps_it_visible(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(100)))
+        target = paths[90]
+        self.window.files.setCurrentItem(
+            self.window.files.item(40),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.scrollToItem(
+            self.window.files.item(40),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+
+        self.window.filenameFilterEdit.setText("photo-90")
+        self.window.apply_filename_filter()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [target])
+        self.assertLessEqual(
+            abs(self.window.files.visualItemRect(self.window.files.item(90)).top()), 1
+        )
 
     def test_clearing_a_pending_filename_filter_does_not_rebuild_the_files_pane(
         self,
@@ -1555,10 +1607,25 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window._actions_by_id["toggleemptyiptc"].shortcuts[0].sequence,
             "Ctrl+E",
         )
+        exclude_action = self.window._actions_by_id["focusexcludedir"]
+        self.assertEqual(exclude_action.shortcuts[0].sequence, "Alt+X")
+        self.assertIsNone(exclude_action.shortcuts[0].widget_ref)
 
         self.window._dispatch_action("focusdatefilter")
 
         self.assertIs(self.window.focusWidget(), self.window.dbDateSearchEdit)
+
+    def test_alt_x_focuses_exclude_folder_from_the_files_pane(self) -> None:
+        self._add_paths("photo.jpg")
+        self.window.files.setFocus()
+
+        QtTest.QTest.keyClick(
+            self.window,
+            QtCore.Qt.Key.Key_X,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+
+        self.assertIs(self.window.focusWidget(), self.window.directoryExcludeEdit)
 
     def test_file_filter_shortcuts_focus_and_toggle_controls(self) -> None:
         (photo,) = self._add_paths("photo.jpg")

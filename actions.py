@@ -171,9 +171,10 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Focus Exclude folder filter",
             handler_name="_focus_excluded_directory_select_all",
             command=CommandBinding("focusexcludedir"),
-            shortcuts=(
-                ShortcutBinding("Alt+X", "filesFilterBox", context=filter_shortcut),
-            ),
+            # Keep this window-wide: Alt+X should focus the field even when the
+            # Files pane has focus, and it avoids relying on Windows text-edit
+            # shortcut routing.
+            shortcuts=(ShortcutBinding("Alt+X"),),
         ),
         ActionSpec(
             id="excludedir",
