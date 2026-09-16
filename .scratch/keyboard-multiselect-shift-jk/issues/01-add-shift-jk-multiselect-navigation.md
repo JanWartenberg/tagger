@@ -1,6 +1,6 @@
 # 01 — Add Shift-J/K Multi-Selection Navigation
 
-Status: ready-for-agent
+Status: completed
 Category: bug
 Priority: high
 Blocked by: None
@@ -18,16 +18,16 @@ the current multi-selection in the same way as `Shift+Down` and `Shift+Up`.
 
 ## Acceptance Criteria
 
-- [ ] `Shift+j` extends the current Files-pane selection toward the next file.
-- [ ] `Shift+k` extends the current Files-pane selection toward the previous file.
-- [ ] Selection direction and anchor behavior match the existing Shift+Up/Down
+- [x] `Shift+j` extends the current Files-pane selection toward the next file.
+- [x] `Shift+k` extends the current Files-pane selection toward the previous file.
+- [x] Selection direction and anchor behavior match the existing Shift+Up/Down
       behavior, including reversing the extension.
-- [ ] Plain `j` and `k` retain their existing single-selection navigation.
-- [ ] The shortcuts work with filtered files and at selection boundaries without
+- [x] Plain `j` and `k` retain their existing single-selection navigation.
+- [x] The shortcuts work with filtered files and at selection boundaries without
       selecting hidden or out-of-range rows.
-- [ ] Add deterministic regression coverage for both shortcuts and direction
+- [x] Add deterministic regression coverage for both shortcuts and direction
       reversal.
-- [ ] Existing Files-pane navigation and multi-selection tests continue to pass.
+- [x] Existing Files-pane navigation and multi-selection tests continue to pass.
 
 ## Constraints
 
@@ -38,5 +38,5 @@ the current multi-selection in the same way as `Shift+Down` and `Shift+Up`.
 
 ## Validation
 
-- Run the focused Files-pane keyboard and selection tests.
-- Run the full test suite and Ruff for modified files.
+- Focused and full test suite pass (255 tests on Windows).
+- Ruff passes for modified files.
