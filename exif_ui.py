@@ -3706,7 +3706,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _schedule_files_selection_scroll_anchor_restore(self) -> None:
         """Restore after the mouse selection has queued its viewport changes."""
         if self._files_selection_scroll_anchor is not None:
-            self._files_selection_scroll_restore_timer.start(0)
+            # Let the native QListWidget finish its deferred ensure-visible work
+            # before restoring the pre-click viewport. A zero-delay timer can run
+            # first on Windows, so the native scroll wins afterward.
+            self._files_selection_scroll_restore_timer.start(1)
 
     def _queue_files_selection_scroll_anchor_restore(
         self, anchor: tuple[str | None, int]

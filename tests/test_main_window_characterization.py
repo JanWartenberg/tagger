@@ -2321,6 +2321,38 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(scroll_bar.value(), anchor)
 
+    def test_date_and_no_tags_click_keeps_the_existing_scroll_anchor(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
+        FakePhotoIndex.search_results = set(paths[:150])
+        self.window.dbDateSearchEdit.setText("2025-01-01..2026-10-01")
+        self.window.apply_db_search()
+        self._wait_until(lambda: self.window.filterInfoLabel.text() == "match 150 files")
+
+        FakePhotoIndex.iptc_empty_results = set(paths[:150])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: self.window.statusBar().currentMessage()
+            == "IPTC-empty results ready"
+        )
+
+        self.window.files.scrollToItem(
+            self.window.files.item(0),
+            QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop,
+        )
+        self.app.processEvents()
+        scroll_bar = self.window.files.verticalScrollBar()
+        anchor = scroll_bar.value()
+        rect = self.window.files.visualItemRect(self.window.files.item(2))
+        QtTest.QTest.mouseClick(
+            self.window.files.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=rect.center(),
+        )
+        self._wait_for_ui(lambda: self.window.files.currentRow() == 2)
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(scroll_bar.value(), anchor)
+
     def test_file_pane_arrow_keys_change_the_active_photo(self) -> None:
         first, second, _duplicate = self._add_paths(
             "first.jpg", "second.jpg", "first.jpg"
