@@ -1288,8 +1288,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._actions_by_id: dict[str, ActionSpec] = {}
         self._commands_by_name: dict[str, ActionSpec] = {}
         self._listed_actions: list[ActionSpec] = []
-        self._action_handlers: dict[str, Callable[[], None]] = {}
-        self._command_argument_handlers: dict[str, Callable[[list[str]], None]] = {}
         self._widget_refs: dict[str, QtCore.QObject] = {}
         self._init_actions()
 
@@ -1300,8 +1298,6 @@ class MainWindow(QtWidgets.QMainWindow):
             spec for spec in specs if spec.command is not None and spec.show_in_help
         ]
         self._widget_refs = self._build_widget_refs()
-        self._action_handlers = self._build_action_handlers()
-        self._command_argument_handlers = self._build_command_argument_handlers()
         self._commands_by_name = {}
         self._install_shortcuts_from_actions()
         self._index_commands_from_actions()
@@ -1358,67 +1354,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _index_missing_paths(self, root: str, paths: list[str]) -> None:
         self._background_coordinator.index_missing_paths(root, paths)
 
-    def _build_action_handlers(self) -> dict[str, Callable[[], None]]:
-        return {
-            "_cmd_list_commands": lambda: self._cmd_list_commands(),
-            "_cmd_quit": lambda: self._cmd_quit(),
-            "add_folder_dialog": self.add_folder_dialog,
-            "reindex_active_root": self.reindex_active_root,
-            "refresh_iptc_empty_view": self.refresh_iptc_empty_view,
-            "cancel_active_refresh": self.cancel_active_refresh,
-            "show_error_history": self.show_error_history,
-            "retry_failed_tag_mutations": self.retry_failed_tag_mutations,
-            "retry_all_failed_tag_mutations": self.retry_all_failed_tag_mutations,
-            "resolve_mismatch": self.resolve_mismatch,
-            "add_keyword_from_input": self.add_keyword_from_input,
-            "remove_selected_keywords": self.remove_selected_keywords,
-            "_focus_db_search_select_all": self._focus_db_search_select_all,
-            "_focus_date_filter_select_all": self._focus_date_filter_select_all,
-            "_focus_filename_filter_select_all": self._focus_filename_filter_select_all,
-            "_focus_excluded_directory_select_all": self._focus_excluded_directory_select_all,
-            "toggle_files_filter_block": self.toggle_files_filter_block,
-            "_toggle_filename_case_sensitive": self._toggle_filename_case_sensitive,
-            "clear_db_search": self.clear_db_search,
-            "clear_filename_filter": self.clear_filename_filter,
-            "clear_all_filters": self.clear_all_filters,
-            "_focus_add_edit_select_all": self._focus_add_edit_select_all,
-            "_focus_pane_files": self._focus_pane_files,
-            "_focus_pane_keywords": self._focus_pane_keywords,
-            "_toggle_keep_backup": self._toggle_keep_backup,
-            "_toggle_only_iptc_empty": self._toggle_only_iptc_empty,
-            "_focus_next_pane": self._focus_next_pane,
-            "_focus_pane_left": self._focus_pane_left,
-            "_focus_pane_right": self._focus_pane_right,
-            "_action_list_down": self._action_list_down,
-            "_action_list_up": self._action_list_up,
-            "_action_list_down_extend": self._action_list_down_extend,
-            "_action_list_up_extend": self._action_list_up_extend,
-            "_action_list_top": self._action_list_top,
-            "_action_list_bottom": self._action_list_bottom,
-            "_toggle_visual_keywords": self._toggle_visual_keywords,
-            "_yank_selected_tags": self._yank_selected_tags,
-            "_yank_current_file_tags": self._yank_current_file_tags,
-            "_paste_yanked_tags": self._paste_yanked_tags,
-            "_open_selected_photos": self._open_selected_photos,
-            "_open_selected_photos_in_gimp": self._open_selected_photos_in_gimp,
-            "_copy_selected_photo_paths": self._copy_selected_photo_paths,
-            "_reveal_active_photo": self._reveal_active_photo,
-            "_escape_action": self._escape_action,
-            "_open_command_line": self._open_command_line,
-            "_tab_complete_command_line": self._tab_complete_command_line,
-            "_tab_complete_add_edit": self._tab_complete_add_edit,
-        }
-
-    def _build_command_argument_handlers(
-        self,
-    ) -> dict[str, Callable[[list[str]], None]]:
-        return {
-            "_command_search": self._command_search,
-            "_command_filter_files": self._command_filter_files,
-            "_command_exclude_directory": self._command_exclude_directory,
-            "_command_clear_excluded_directory": self._command_clear_excluded_directory,
-        }
-
     def _install_shortcuts_from_actions(self) -> None:
         self._shortcuts = []
         for spec in self._actions_by_id.values():
@@ -1448,20 +1383,20 @@ class MainWindow(QtWidgets.QMainWindow):
         spec = self._actions_by_id.get(action_id)
         if spec is None:
             raise RuntimeError(f"Unknown action: {action_id}")
-        if spec.command is not None and spec.command.accepts_arguments:
-            handler = self._command_argument_handlers.get(spec.handler_name)
-            if handler is None:
+        accepts_arguments = spec.command is not None and spec.command.accepts_arguments
+        handler = getattr(self, spec.handler_name, None)
+        if not callable(handler):
+            if accepts_arguments:
                 raise RuntimeError(
                     f"Missing argument handler for action: {spec.id} "
                     f"({spec.handler_name})"
                 )
-            handler(command_args or [])
-            return
-        handler = self._action_handlers.get(spec.handler_name)
-        if handler is None:
             raise RuntimeError(
                 f"Missing handler for action: {spec.id} ({spec.handler_name})"
             )
+        if accepts_arguments:
+            handler(command_args or [])
+            return
         handler()
 
     def _dispatch_command(self, name: str, args: list[str]) -> None:

@@ -13,6 +13,7 @@ import threading
 import time
 import unittest
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -1695,6 +1696,62 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(clear.command.aliases, ("clear", "back"))
         self.assertEqual(clear.shortcuts[0].sequence, "Ctrl+Shift+X")
 
+    def test_action_dispatch_resolves_the_catalogue_handler_name(self) -> None:
+        calls = []
+        self.window._test_action_handler = lambda: calls.append("called")
+        self.window._actions_by_id["focusfiles"] = replace(
+            self.window._actions_by_id["focusfiles"],
+            handler_name="_test_action_handler",
+        )
+
+        self.window._dispatch_action("focusfiles")
+
+        self.assertEqual(calls, ["called"])
+
+    def test_argument_action_dispatch_resolves_the_catalogue_handler_name(
+        self,
+    ) -> None:
+        calls = []
+        self.window._test_argument_handler = lambda args: calls.append(args)
+        self.window._actions_by_id["search"] = replace(
+            self.window._actions_by_id["search"],
+            handler_name="_test_argument_handler",
+        )
+
+        self.window._dispatch_action("search", command_args=["tag:bird"])
+
+        self.assertEqual(calls, [["tag:bird"]])
+
+    def test_action_dispatch_preserves_unknown_and_missing_handler_errors(
+        self,
+    ) -> None:
+        with self.assertRaises(RuntimeError) as unknown:
+            self.window._dispatch_action("not-an-action")
+        self.assertEqual(str(unknown.exception), "Unknown action: not-an-action")
+
+        self.window._not_callable = object()
+        self.window._actions_by_id["focusfiles"] = replace(
+            self.window._actions_by_id["focusfiles"],
+            handler_name="_not_callable",
+        )
+        with self.assertRaises(RuntimeError) as missing:
+            self.window._dispatch_action("focusfiles")
+        self.assertEqual(
+            str(missing.exception),
+            "Missing handler for action: focusfiles (_not_callable)",
+        )
+
+        self.window._actions_by_id["search"] = replace(
+            self.window._actions_by_id["search"],
+            handler_name="_missing_argument_handler",
+        )
+        with self.assertRaises(RuntimeError) as missing_argument:
+            self.window._dispatch_action("search", command_args=["tag:bird"])
+        self.assertEqual(
+            str(missing_argument.exception),
+            "Missing argument handler for action: search (_missing_argument_handler)",
+        )
+
     def test_file_pane_actions_are_catalogue_backed_and_listed(self) -> None:
         expected = {
             "open": ("open", (), "Space+o"),
@@ -2421,7 +2478,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = set(paths[:150])
         self.window.dbDateSearchEdit.setText("2025-01-01..2026-10-01")
         self.window.apply_db_search()
-        self._wait_until(lambda: self.window.filterInfoLabel.text() == "match 150 files")
+        self._wait_until(
+            lambda: self.window.filterInfoLabel.text() == "match 150 files"
+        )
 
         FakePhotoIndex.iptc_empty_results = set(paths[:150])
         self.window.onlyUntagged.setChecked(True)

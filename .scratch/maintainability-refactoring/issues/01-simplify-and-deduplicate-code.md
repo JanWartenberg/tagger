@@ -1,6 +1,6 @@
 # 01 — Simplify and Deduplicate Code
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 Category: maintenance
 Milestone: M6 — Maintainability and performance
@@ -8,9 +8,8 @@ Blocked by: None
 
 ## Next Action
 
-Remove the duplicated MainWindow action-handler registries. Resolve and validate
-each `ActionSpec.handler_name` at the existing dispatch seam, preserving current
-command, shortcut, key-route, and error behavior.
+Completed. Both selected M6 cleanups are implemented and validated; no further
+implementation is planned for this ticket.
 
 ## Selected Cleanup Scope
 
@@ -19,12 +18,12 @@ command, shortcut, key-route, and error behavior.
    and refresh comparisons. The Qt adapter retains only its presentation and
    request state. A focused characterization test covers the public membership
    interface while a filename condition narrows visible results.
-2. **Remove the duplicated action-handler registries.** Every `ActionSpec`
-   records a `handler_name`, while `MainWindow` repeats the same names in separate
-   no-argument and argument-handler dictionaries. Resolve and validate the named
-   callable at the existing dispatch seam so adding an action has one source of
-   handler truth. Preserve unknown-action and missing-handler errors and all
-   command, shortcut, and key-route behavior.
+2. **Implemented — remove the duplicated action-handler registries.** Every
+   `ActionSpec` records a `handler_name`; `MainWindow` now resolves and validates
+   that named callable at the existing dispatch seam. The separate no-argument
+   and argument-handler dictionaries are removed, so adding an action has one
+   source of handler truth. Focused characterization tests cover both invocation
+   shapes and preserve exact unknown-action and missing-handler errors.
 
 Broad MainWindow extraction, index-refresh control-flow changes, storage-format
 cleanup, and tiny one-off helper deduplication are deferred: they either overlap
@@ -46,6 +45,14 @@ found no regression. After fixing three test-harness timing issues exposed by
 stress runs—scroll-restoration ordering, worker teardown, and an overly strict
 large-render completion timeout—the repeated 112-test Windows MainWindow
 characterization loop completed successfully.
+
+The second cleanup removes 51 repeated handler mappings and their two registry
+builders without adding another module or changing the action catalogue. The
+full 258-test Linux offscreen suite passes, along with Ruff lint, Ruff formatting,
+and `git diff --check`. An existing preview-debounce timing test failed
+intermittently during stress validation but passed in the final full run; the
+action dispatch path does not participate in that workflow. The user reports
+that pytest and the Windows acceptance check pass for the second cleanup.
 
 ## Acceptance Criteria
 
