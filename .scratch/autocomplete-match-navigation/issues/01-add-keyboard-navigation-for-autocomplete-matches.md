@@ -3,6 +3,7 @@
 Status: ready-for-agent
 Category: feature
 Priority: medium
+Milestone: M7 — Startup correctness and autocomplete navigation
 Blocked by: None
 
 ## Problem

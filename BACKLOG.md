@@ -2,24 +2,23 @@
 
 ## Current milestone
 
-**M6 — Maintainability and performance** is active. It contains exactly two tickets:
+**M7 — Startup correctness and autocomplete navigation** is active. It contains
+exactly two tickets, in priority order:
 
-- [Refactor for maintainability](.scratch/maintainability-refactoring/issues/01-simplify-and-deduplicate-code.md)
-- [Profile and optimize loading, saving, and indexing](.scratch/loading-saving-indexing-performance/issues/01-profile-and-optimize-core-workflows.md)
+- [Prevent incorrect empty IPTC filter results during startup](.scratch/iptc-empty-filter-startup-race/issues/01-prevent-empty-startup-iptc-filter-result.md) — high priority
+- [Add keyboard navigation for autocomplete matches](.scratch/autocomplete-match-navigation/issues/01-add-keyboard-navigation-for-autocomplete-matches.md) — medium priority
 
-Capture the performance baseline before substantial refactoring; then use small,
-reviewable refactoring and optimization steps. These are two workstreams, not a
-requirement to finish all refactoring before beginning performance work.
+Diagnose and fix the startup race first, then implement autocomplete navigation.
 
 ## Future milestone
 
-**M-Future — Unscheduled opportunities** means sometime after M6, without a target date.
+**M-Future — Unscheduled opportunities** means sometime after M7, without a target date.
 
-- [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M6.
+- [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M7.
 
 ## Historical milestones
 
-M1 was confirmed by the maintainer as the initial MVP. M2–M5 names are recorded
+M1 was confirmed by the maintainer as the initial MVP. M2–M6 names are recorded
 in existing ticket metadata; their tickets have terminal dispositions (completed
 or wontfix). This is not a list of active work.
 
@@ -30,6 +29,7 @@ or wontfix). This is not a list of active work.
 | M3 | Metadata integrity and cache-backed IPTC workflow |
 | M4 | Faster photo-finding and tagging workflows |
 | M5 | Composable workspace filtering |
+| M6 | Maintainability and performance |
 
 Specs and individual tickets live in `.scratch/`; this file records milestone
 selection rather than duplicating ticket status.

@@ -3,7 +3,7 @@
 Status: needs-triage
 Category: bug
 Priority: high
-Milestone: M3 — Metadata integrity and cache-backed IPTC workflow
+Milestone: M7 — Startup correctness and autocomplete navigation
 Blocked by: None
 
 ## Problem

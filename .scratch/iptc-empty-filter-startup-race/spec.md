@@ -1,6 +1,8 @@
 # IPTC-Empty Filter Startup Race
 
 Status: needs-triage
+Priority: high
+Milestone: M7 — Startup correctness and autocomplete navigation
 
 Opening a large folder and immediately pressing `Ctrl+E` can show zero IPTC-empty matches while the folder's SQLite index is still being populated. The filter must not leave a provisional startup result incorrectly empty; after indexing completes, existing untagged photos must be included without requiring the user to toggle the filter again.
 
