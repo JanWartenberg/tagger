@@ -336,6 +336,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_action_list_down_extend",
             key_routes=(
                 KeyRoute(kind="single", sequence=("Shift+J",), scope="list_widgets"),
+                KeyRoute(
+                    kind="widget_specific",
+                    sequence=("Shift+Down",),
+                    scope="widget_exact",
+                    widget_refs=("files",),
+                ),
             ),
         ),
         ActionSpec(
@@ -344,6 +350,12 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="_action_list_up_extend",
             key_routes=(
                 KeyRoute(kind="single", sequence=("Shift+K",), scope="list_widgets"),
+                KeyRoute(
+                    kind="widget_specific",
+                    sequence=("Shift+Up",),
+                    scope="widget_exact",
+                    widget_refs=("files",),
+                ),
             ),
         ),
         ActionSpec(

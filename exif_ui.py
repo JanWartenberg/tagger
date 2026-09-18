@@ -788,6 +788,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_refresh_apply_request: IndexReadRequest | None = None
         self._iptc_empty_filter_operation_id: int | None = None
         self._iptc_empty_root: str | None = None
+        self._iptc_empty_waiting_for_index = False
         self._iptc_empty_unknown_paths: set[str] = set()
         self._iptc_empty_refresh_available = False
         self._last_refresh_status_at = 0.0
@@ -1538,6 +1539,14 @@ class MainWindow(QtWidgets.QMainWindow):
             event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
         ):
             return "Shift+K"
+        if event.key() == QtCore.Qt.Key.Key_Down and (
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "Shift+Down"
+        if event.key() == QtCore.Qt.Key.Key_Up and (
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "Shift+Up"
         if (
             event.key() == QtCore.Qt.Key.Key_G
             and event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
@@ -1778,6 +1787,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if row is None:
             return
         if lst is self.files and extend:
+            target_item = lst.item(row)
+            if target_item is None:
+                return
+            target_was_visible = lst.visualItemRect(target_item).intersects(
+                lst.viewport().rect()
+            )
+            scroll_anchor = (
+                self._capture_files_scroll_anchor() if target_was_visible else None
+            )
             if self._files_shift_selection_anchor is None:
                 self._files_shift_selection_anchor = lst.currentRow()
             anchor = self._files_shift_selection_anchor
@@ -1793,12 +1811,16 @@ class MainWindow(QtWidgets.QMainWindow):
                     if item is not None:
                         item.setSelected(True)
                 lst.setCurrentItem(
-                    lst.item(row),
+                    target_item,
                     QtCore.QItemSelectionModel.SelectionFlag.NoUpdate,
                 )
             finally:
                 lst.blockSignals(False)
             self.on_selection_changed()
+            if scroll_anchor is not None:
+                self._queue_files_selection_scroll_anchor_restore(scroll_anchor)
+            else:
+                self._ensure_list_item_visible(lst, target_item)
         elif lst is self.keywordsList and self._vim_visual_keywords:
             self._select_list_range(lst, self._vim_visual_anchor, row)
             lst.setCurrentRow(row)
@@ -2642,7 +2664,10 @@ class MainWindow(QtWidgets.QMainWindow):
                         f"{event.result.deleted_count} removed"
                     )
                 self.force_refresh_known_tags()
-                self._check_iptc_empty_results_after_index_update(event.root)
+                if self._iptc_empty_waiting_for_index:
+                    self._start_deferred_iptc_empty_filter(event.root)
+                else:
+                    self._check_iptc_empty_results_after_index_update(event.root)
             elif event.result is None:
                 self._active_index_refresh_request = self._background_coordinator.refresh_if_stale(
                     event.root,
@@ -2675,10 +2700,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_refresh_apply_request = None
         self._iptc_empty_filter_operation_id = None
         self._iptc_empty_root = None
+        self._iptc_empty_waiting_for_index = False
         self._iptc_empty_unknown_paths.clear()
         self._iptc_empty_refresh_available = False
         if hasattr(self, "iptcEmptyRefreshOffer"):
             self.iptcEmptyRefreshOffer.hide()
+
+    def _start_deferred_iptc_empty_filter(self, root: str) -> None:
+        """Start a filter read after its startup index work has completed."""
+        if not self._iptc_empty_waiting_for_index or self._iptc_empty_root != root:
+            return
+        snapshot = self.photo_workspace.snapshot()
+        operation_id = self._iptc_empty_filter_operation_id
+        if operation_id is None or snapshot.filter_operation_id != operation_id:
+            return
+        self._iptc_empty_waiting_for_index = False
+        self._iptc_empty_filter_request = self._background_coordinator.load_iptc_empty(
+            root,
+            snapshot.paths,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
 
     def _has_current_iptc_empty_view(self, root: str) -> bool:
         snapshot = self.photo_workspace.snapshot()
@@ -2816,6 +2857,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 )
                 self.statusBar().showMessage(label)
             return
+        if self._iptc_empty_waiting_for_index:
+            self._start_deferred_iptc_empty_filter(request.root)
         # A fresh automatic check has no refresh result and must not replace
         # ordinary feedback or look like a completed user-visible operation.
         if event.result is None:
@@ -3798,6 +3841,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_root = root
         self._iptc_empty_filter_operation_id = snapshot.filter_operation_id
         self._render_photo_workspace_snapshot(snapshot, before)
+        self._iptc_empty_waiting_for_index = root in self._index_sync_inflight
+        if self._iptc_empty_waiting_for_index:
+            self.statusBar().showMessage(
+                "Waiting for index before filtering IPTC-empty…"
+            )
+            return
         self._iptc_empty_filter_request = self._background_coordinator.load_iptc_empty(
             root,
             workspace_snapshot.paths,

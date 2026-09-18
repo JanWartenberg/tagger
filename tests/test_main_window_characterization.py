@@ -2041,6 +2041,31 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(snapshot.visible_paths, ())
         self.assertEqual(self.window.directoryExcludeEdit.text(), "")
 
+    def test_iptc_empty_started_during_indexing_waits_for_correct_results(self) -> None:
+        path = normalize_path(str(Path("C:/photos") / "untagged.jpg"))
+        FakePhotoIndex.refresh_stale = True
+
+        self.window.add_files([path])
+        self.window.onlyUntagged.setChecked(True)
+
+        # Run an independently scheduled read before the queued index write, if
+        # the UI starts one. It must not become a completed empty filter view.
+        for position, work in enumerate(self.discovery_runner.scheduled):
+            if work.__name__ == "read":
+                self.discovery_runner.run(position)
+                self.app.processEvents()
+                break
+
+        FakePhotoIndex.iptc_empty_results = {path}
+        self.discovery_runner.run_index_work()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.selected_file_paths(), [path])
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "IPTC-empty results ready"
+        )
+        self.assertFalse(self.window.iptcEmptyRefreshOffer.isVisible())
+
     def test_unreadable_iptc_empty_candidate_has_an_unverified_marker(self) -> None:
         (path,) = self._add_paths("unknown.jpg")
         FakePhotoIndex.iptc_empty_results = {path}
@@ -2411,6 +2436,63 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(self.window.selected_file_paths(), paths[:2])
         self.assertEqual(self.window.active_file_path(), paths[1])
+
+    def test_no_tags_shift_j_extends_selection_without_jumping_the_scroll(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
+        FakePhotoIndex.iptc_empty_results = set(paths[:150])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: self.window.statusBar().currentMessage()
+            == "IPTC-empty results ready"
+        )
+        self.window.files.setFocus()
+        scroll_bar = self.window.files.verticalScrollBar()
+        initial_scroll = scroll_bar.value()
+        QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(initial_scroll + 30))
+
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_J,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(self.window.selected_file_paths(), paths[:2])
+        self.assertEqual(scroll_bar.value(), initial_scroll)
+
+    def test_no_tags_shift_arrows_extend_without_jumping_the_scroll(self) -> None:
+        paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
+        FakePhotoIndex.iptc_empty_results = set(paths[:150])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: self.window.statusBar().currentMessage()
+            == "IPTC-empty results ready"
+        )
+        self.window.files.setFocus()
+        scroll_bar = self.window.files.verticalScrollBar()
+        initial_scroll = scroll_bar.value()
+
+        QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(initial_scroll + 30))
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_Down,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(self.window.selected_file_paths(), paths[:2])
+        self.assertEqual(scroll_bar.value(), initial_scroll)
+
+        QtCore.QTimer.singleShot(0, lambda: scroll_bar.setValue(initial_scroll + 30))
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_Up,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        QtTest.QTest.qWait(10)
+
+        self.assertEqual(self.window.selected_file_paths(), paths[:1])
+        self.assertEqual(scroll_bar.value(), initial_scroll)
 
     def test_no_tags_j_and_k_keep_an_already_visible_selection_in_place(self) -> None:
         paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))

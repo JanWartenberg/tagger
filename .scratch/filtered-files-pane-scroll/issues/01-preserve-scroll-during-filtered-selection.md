@@ -21,10 +21,11 @@ The No tags view keeps all workspace rows in `QListWidget` and hides non-matches
 - [x] Scroll keyboard navigation only when its target was outside the prior viewport.
 - [x] Keep `gg`/`G` edge navigation explicitly scrolling to its selected visible edge.
 - [x] Add deterministic offscreen regressions for delayed native-scroll simulation after mouse selection and `j → k → k` in an active No tags view.
+- [x] Preserve the viewport during extended selection with `Shift+J/K` and `Shift+Up/Down`; route both shortcut pairs through the same protected selection path.
 
 ## Validation
 
-- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v` — 213 tests passed.
+- `QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests` — 261 tests passed.
 - `ruff check --no-cache exif_ui.py tests/test_main_window_characterization.py`
 - `ruff format --check --no-cache exif_ui.py tests/test_main_window_characterization.py`
 - `git diff --check`

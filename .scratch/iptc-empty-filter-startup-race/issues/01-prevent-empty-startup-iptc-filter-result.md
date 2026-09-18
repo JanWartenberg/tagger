@@ -1,6 +1,6 @@
 # 01 — Prevent Incorrect Empty IPTC Filter Results During Startup Indexing
 
-Status: needs-triage
+Status: completed
 Category: bug
 Priority: high
 Milestone: M7 — Startup correctness and autocomplete navigation
@@ -38,13 +38,13 @@ This is a suspected startup ordering/race mechanism, not yet a confirmed root ca
 
 ## Acceptance Criteria
 
-- [ ] A deterministic regression test reproduces the early-`Ctrl+E` workflow against an incomplete index.
-- [ ] The regression test fails before the fix and passes after it.
-- [ ] An untagged existing file is included after startup indexing completes, without manually toggling `Ctrl+E` again.
-- [ ] A truly empty ready index still displays zero matches.
-- [ ] Older reads or index updates cannot replace a newer workspace/filter state.
-- [ ] SQLite, filesystem, and metadata operations remain off the Qt UI thread.
-- [ ] Existing IPTC-empty, indexed-search, and startup-loading tests continue to pass.
+- [x] A deterministic regression test reproduces the early-`Ctrl+E` workflow against an incomplete index.
+- [x] The regression test fails before the fix and passes after it.
+- [x] An untagged existing file is included after startup indexing completes, without manually toggling `Ctrl+E` again.
+- [x] A truly empty ready index still displays zero matches.
+- [x] Older reads or index updates cannot replace a newer workspace/filter state.
+- [x] SQLite, filesystem, and metadata operations remain off the Qt UI thread.
+- [x] Existing IPTC-empty, indexed-search, and startup-loading tests continue to pass.
 
 ## Out of Scope
 
@@ -55,3 +55,7 @@ This is a suspected startup ordering/race mechanism, not yet a confirmed root ca
 ## Comments
 
 Created from a user report. The expected behavior and exact timing should be confirmed during triage with a large-folder reproduction or a captured startup timeline.
+
+Confirmed cause: the background coordinator intentionally allowed the SQLite read to overtake the queued startup index write. The UI accepted that empty read as a stable completed view, so the later index update only offered the normal explicit refresh workflow. IPTC-empty filtering now waits for an in-flight startup index synchronization before issuing its first read; stable completed views retain explicit refresh behavior.
+
+Validation: deterministic regression test, full 261-test suite, Ruff, and `git diff --check` pass on Linux/offscreen Qt.

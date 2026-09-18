@@ -28,6 +28,7 @@ the current multi-selection in the same way as `Shift+Down` and `Shift+Up`.
 - [x] Add deterministic regression coverage for both shortcuts and direction
       reversal.
 - [x] Existing Files-pane navigation and multi-selection tests continue to pass.
+- [x] `Shift+J/K` and `Shift+Up/Down` preserve the viewport when extending to an already visible photo in a filtered view.
 
 ## Constraints
 
@@ -38,5 +39,5 @@ the current multi-selection in the same way as `Shift+Down` and `Shift+Up`.
 
 ## Validation
 
-- Focused and full test suite pass (255 tests on Windows).
+- Focused and full test suite pass (261 tests on Linux/offscreen Qt; 255-test baseline previously passed on Windows).
 - Ruff passes for modified files.

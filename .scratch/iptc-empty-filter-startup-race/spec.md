@@ -1,6 +1,6 @@
 # IPTC-Empty Filter Startup Race
 
-Status: needs-triage
+Status: completed
 Priority: high
 Milestone: M7 — Startup correctness and autocomplete navigation
 
