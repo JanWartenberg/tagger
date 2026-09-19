@@ -2983,7 +2983,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.dbSearchEdit.text(), "")
         self.assertEqual(self.window.filterInfoLabel.text(), "")
 
-    def test_editing_or_clearing_after_tab_completion_hides_tag_suggestions(
+    def test_editing_filters_and_clearing_hides_tag_suggestions(
         self,
     ) -> None:
         self.window._known_tags_snapshot = {"bird", "birch"}
@@ -2994,7 +2994,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window._tagHint.isVisible())
 
         QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_R)
-        self.assertFalse(self.window._tagHint.isVisible())
+        self.assertTrue(self.window._tagHint.isVisible())
+        self.assertEqual(self.window._tagHint.matches, ["birch", "bird"])
 
         self.window.addEdit.setText("bi")
         QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
@@ -3003,17 +3004,110 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.addEdit.clear()
         self.assertFalse(self.window._tagHint.isVisible())
 
+    def test_tag_chips_cycle_horizontally_and_enter_only_accepts_completion(
+        self,
+    ) -> None:
+        self.window._known_tags_snapshot = {"fann", "finn", "finny"}
+        edit = self.window.addEdit
+        hint = self.window._tagHint
+        edit.setFocus()
+        QtTest.QTest.keyClicks(edit, "f")
+        self.assertFalse(hint.isVisible())
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(hint.selected, 0)
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Left)
+        self.assertEqual(hint.selected, 2)
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Right)
+        self.assertEqual(hint.selected, 0)
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(hint.selected, 1)
+        self.assertEqual(sum(button.isChecked() for button in hint.buttons), 1)
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Down)
+        self.assertEqual(hint.selected, 1)
+        with patch.object(self.window, "_apply_add_tag", return_value=True) as add:
+            QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Return)
+            self.assertEqual(edit.text(), "finn")
+            self.assertFalse(hint.isVisible())
+            add.assert_not_called()
+            QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Return)
+            add.assert_called_once_with("finn")
+        self.assertEqual(edit.text(), "")
+
+    def test_tag_chips_narrow_shared_prefix_and_restore_cursor_keys(self) -> None:
+        self.window._known_tags_snapshot = {"fann", "finn", "finny"}
+        edit = self.window.addEdit
+        edit.setFocus()
+        edit.setText("f")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        QtTest.QTest.keyClicks(edit, "i")
+        self.assertEqual(edit.text(), "fi")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(edit.text(), "finn")
+        self.assertEqual(self.window._tagHint.matches, ["finn", "finny"])
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Right)
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Return)
+        self.assertEqual(edit.text(), "finny")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Left)
+        self.assertEqual(edit.cursorPosition(), 4)
+        edit.setText("no-such-tag")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertFalse(self.window._tagHint.isVisible())
+
+    def test_tag_chips_scroll_100_matches_without_growing_window(self) -> None:
+        self.window._known_tags_snapshot = {f"g{i:03}" for i in range(100)}
+        edit = self.window.addEdit
+        hint = self.window._tagHint
+        edit.setFocus()
+        edit.setText("g")
+        size = self.window.size()
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        for _ in range(99):
+            QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Right)
+        self.app.processEvents()
+        self.assertEqual(self.window.size(), size)
+        self.assertEqual(hint.selected, 99)
+        self.assertIn("100 / 100", hint.counter.text())
+        chip = hint.buttons[99]
+        point = chip.mapTo(hint.scroll.viewport(), QtCore.QPoint())
+        self.assertGreaterEqual(point.x(), 0)
+        self.assertLessEqual(point.x() + chip.width(), hint.scroll.viewport().width())
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(hint.selected, 0)
+        self.app.processEvents()
+        QtTest.QTest.mouseClick(hint.buttons[1], QtCore.Qt.MouseButton.LeftButton)
+        self.assertEqual(hint.selected, 1)
+        self.assertIs(self.window.focusWidget(), edit)
+
+    def test_tag_chips_empty_single_literal_labels_and_focus_loss(self) -> None:
+        self.window._known_tags_snapshot = {"fish & chips", "fish & rice"}
+        edit = self.window.addEdit
+        hint = self.window._tagHint
+        edit.setFocus()
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertFalse(hint.isVisible())
+        edit.setText("fish &")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(hint.buttons[0].text(), "fish && chips")
+        QtTest.QTest.keyClick(
+            edit, QtCore.Qt.Key.Key_Enter, QtCore.Qt.KeyboardModifier.KeypadModifier
+        )
+        self.assertEqual(edit.text(), "fish & chips")
+        edit.setText("fish & r")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.assertEqual(edit.text(), "fish & rice")
+        self.assertFalse(hint.isVisible())
+        edit.setText("fish")
+        QtTest.QTest.keyClick(edit, QtCore.Qt.Key.Key_Tab)
+        self.window.files.setFocus()
+        self.assertFalse(hint.isVisible())
+
     def test_escape_hides_tag_completion_and_exits_tag_input(self) -> None:
         self.window._known_tags_snapshot = {"bird", "birch"}
         self.window.addEdit.setText("bi")
         self.window.addEdit.setFocus()
 
         QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Tab)
-        tag_hint = next(
-            label
-            for label in self.window.findChildren(QtWidgets.QLabel)
-            if label.text() == "birch, bird"
-        )
+        tag_hint = self.window._tagHint
         self.assertTrue(tag_hint.isVisible())
 
         QtTest.QTest.keyClick(self.window.addEdit, QtCore.Qt.Key.Key_Escape)

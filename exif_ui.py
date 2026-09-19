@@ -10,6 +10,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
+from tag_completion import TagCompletion
 from file_actions import FilePaneActions
 from indexing import (
     DateQueryError,
@@ -950,9 +951,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addEdit = QtWidgets.QLineEdit()
         self.addEdit.setPlaceholderText("Add keyword...")
         self.addEdit.textChanged.connect(self._update_add_keyword_limit_feedback)
-        self.addEdit.textChanged.connect(self._hide_tag_matches)
         self.addEdit.returnPressed.connect(self.add_keyword_from_input)
-        self.addEdit.setToolTip("Insert: i · Add: Ctrl+Enter")
+        self.addEdit.setToolTip(
+            "Insert: i · Complete/cycle: Tab · Choose: Left/Right · "
+            "Accept completion: Enter · Add: Enter again / Ctrl+Enter"
+        )
         self.addBtn = QtWidgets.QPushButton("Add")
         self.addBtn.clicked.connect(self.add_keyword_from_input)
         self.addBtn.setToolTip("Add keyword to selected file(s) (Ctrl+Enter)")
@@ -1245,15 +1248,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "border-radius: 4px; padding: 2px 6px; }"
         )
 
-        self._tagHint = QtWidgets.QLabel(self)
-        self._tagHint.setVisible(False)
-        self._tagHint.setAlignment(
-            QtCore.Qt.AlignmentFlag.AlignLeft | QtCore.Qt.AlignmentFlag.AlignVCenter
-        )
-        self._tagHint.setStyleSheet(
-            "QLabel { background: palette(window); border: 1px solid palette(mid); "
-            "border-radius: 4px; padding: 2px 6px; }"
-        )
+        self._tagHint = TagCompletion(self.addEdit, self._tag_candidates, self)
 
         self._apply_focus_styles()
         self._update_view_indicator(self.photo_workspace.snapshot())
@@ -1461,6 +1456,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         et = event.type()
+        if obj is self.addEdit:
+            if et in (QtCore.QEvent.Type.Move, QtCore.QEvent.Type.Resize):
+                self._position_tag_hint()
+            if self._tagHint.handle_event(event):
+                return True
         if obj is self.previewLabel and et == QtCore.QEvent.Type.Resize:
             self._update_preview_pixmap()
         if obj is self.files.viewport() and et == QtCore.QEvent.Type.Resize:
@@ -2011,24 +2011,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._show_cmd_matches(", ".join(matches))
 
     def _tab_complete_add_edit(self) -> None:
-        raw = (self.addEdit.text() or "").strip()
-        if not raw:
-            return
-        matches = self._tag_candidates(raw)
-        if not matches:
+        self._tagHint.complete()
+        raw = self.addEdit.text().strip()
+        if raw and not self._tag_candidates(raw):
             self.statusBar().showMessage("No tag match")
-            self._hide_tag_matches()
-            return
-        common = self._common_prefix(matches)
-        if common and common.casefold() != raw.casefold():
-            self.addEdit.setText(common)
-            self.addEdit.setCursorPosition(len(common))
-        if len(matches) == 1:
-            self.addEdit.setText(matches[0])
-            self.addEdit.setCursorPosition(len(matches[0]))
-            self._hide_tag_matches()
-            return
-        self._show_tag_matches(", ".join(matches))
 
     def _command_candidates(self, prefix: str) -> list[str]:
         out = [name for name in self._commands_by_name if name.startswith(prefix)]
@@ -2065,11 +2051,6 @@ class MainWindow(QtWidgets.QMainWindow):
     def _hide_cmd_matches(self) -> None:
         self._cmdHint.setVisible(False)
 
-    def _show_tag_matches(self, text: str) -> None:
-        self._tagHint.setText(text)
-        self._tagHint.setVisible(True)
-        self._position_tag_hint()
-
     def _hide_tag_matches(self) -> None:
         self._tagHint.setVisible(False)
 
@@ -2088,16 +2069,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._cmdHint.setGeometry(x, y, max(10, width), height)
 
     def _position_tag_hint(self) -> None:
-        if not self._tagHint.isVisible():
-            return
-        edit_geo = self.addEdit.geometry()
-        map_pos = self.addEdit.mapTo(self, QtCore.QPoint(0, 0))
-        margin = 6
-        height = self._tagHint.sizeHint().height() + 4
-        width = max(10, edit_geo.width() - margin * 2)
-        x = map_pos.x() + margin
-        y = map_pos.y() - height - 4
-        self._tagHint.setGeometry(x, y, width, height)
+        self._tagHint.reposition()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)

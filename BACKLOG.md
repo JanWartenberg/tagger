@@ -2,10 +2,9 @@
 
 ## Current milestone
 
-**M7 — Startup correctness and autocomplete navigation** is active. Its remaining
-ticket is:
+**M7 — Startup correctness and autocomplete navigation** is complete.
 
-- [Add keyboard navigation for autocomplete matches](.scratch/autocomplete-match-navigation/issues/01-add-keyboard-navigation-for-autocomplete-matches.md) — medium priority
+- [Add keyboard navigation for autocomplete matches](.scratch/autocomplete-match-navigation/issues/01-add-keyboard-navigation-for-autocomplete-matches.md) — completed with compact horizontal chips
 
 The high-priority [IPTC-empty startup race](.scratch/iptc-empty-filter-startup-race/issues/01-prevent-empty-startup-iptc-filter-result.md) is completed.
 
