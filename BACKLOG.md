@@ -2,21 +2,26 @@
 
 ## Current milestone
 
-**M7 — Startup correctness and autocomplete navigation** is complete.
+**M8 — Duplicate candidate review and tag propagation** is active. Its tickets
+are ordered by dependency:
 
-- [Add keyboard navigation for autocomplete matches](.scratch/autocomplete-match-navigation/issues/01-add-keyboard-navigation-for-autocomplete-matches.md) — completed with compact horizontal chips
+1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — ready for agent
+2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — needs triage; blocked by ticket 01
+3. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — needs triage; blocked by ticket 02
 
-The high-priority [IPTC-empty startup race](.scratch/iptc-empty-filter-startup-race/issues/01-prevent-empty-startup-iptc-filter-result.md) is completed.
+Implement the read-only detection foundation first. Keep detection, human
+assessment, and metadata mutation as separate delivery stages.
 
 ## Future milestone
 
-**M-Future — Unscheduled opportunities** means sometime after M7, without a target date.
+**M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
-- [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M7.
+- [Performance follow-up](.scratch/performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md) remains deferred until one to three other topics have been completed.
+- [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
 
 ## Historical milestones
 
-M1 was confirmed by the maintainer as the initial MVP. M2–M6 names are recorded
+M1 was confirmed by the maintainer as the initial MVP. M2–M7 names are recorded
 in existing ticket metadata; their tickets have terminal dispositions (completed
 or wontfix). This is not a list of active work.
 
@@ -28,6 +33,7 @@ or wontfix). This is not a list of active work.
 | M4 | Faster photo-finding and tagging workflows |
 | M5 | Composable workspace filtering |
 | M6 | Maintainability and performance |
+| M7 | Startup correctness and autocomplete navigation |
 
 Specs and individual tickets live in `.scratch/`; this file records milestone
 selection rather than duplicating ticket status.

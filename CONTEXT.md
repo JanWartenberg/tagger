@@ -47,6 +47,24 @@ An indexed search result whose cached image-file path no longer exists when TAGG
 **Stale-result index repair**:
 A background scan of an index root started after TAGGER encounters a stale result. It reconciles the SQLite cache with photo files currently found below that root: removing records for missing files and indexing independently discovered files with their current metadata. It does not identify filesystem renames and is distinct from the IPTC-empty filter's explicit post-index-update refresh workflow.
 
+### Duplicate review
+
+**Duplicate-candidate detector**:
+A named, read-only method that examines an immutable set of photo paths and reports groups worth human assessment together with the evidence used. A detector does not assert that its candidates are duplicates and does not choose or mutate tags.
+
+**Duplicate candidate group**:
+Two or more photos associated by one Duplicate-candidate detector. The group remains a candidate until a person assesses its members; a photo series sharing a timestamp is therefore one valid candidate group rather than a confirmed duplicate set.
+_Avoid_: Duplicate group, confirmed duplicates
+
+**Duplicate scan scope**:
+The immutable photo-path set supplied to one duplicate scan. Its origin, such as the current index database or a selected subfolder, is independent from the chosen Duplicate-candidate detector.
+
+**Same-capture-timestamp detector**:
+The default Duplicate-candidate detector. It groups equal effective capture timestamps, preferring `EXIF:DateTimeOriginal` and using a labelled `EXIF:CreateDate` fallback. Equality is evidence for assessment, not proof of image identity.
+
+**Tag propagation plan**:
+An explicitly reviewed choice of one source photo, selected target photos, and tag additions within a Duplicate candidate group. It does not change metadata until the user confirms it through the normal Tag mutation workflow.
+
 ### Tag mutations
 
 **Tag mutation**:
