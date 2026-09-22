@@ -12,7 +12,7 @@ When a large folder is opened, the IPTC-empty filter can run before the folder's
 
 Reported example:
 
-- File: `C:\\Users\\janwa\\Pictures\\Fotos\\Themen\\Affen\\Affen Papa\\IMG_5759.JPG`
+- File: `C:\\Users\\<user>\\Pictures\\Fotos\\Themen\\Affen\\Affen Papa\\IMG_5759.JPG`
 - The file has no IPTC tags.
 - Open `Fotos\\Themen` and press `Ctrl+E` immediately.
 - Actual result: everything is filtered out / 0 matches.

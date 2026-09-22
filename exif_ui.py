@@ -75,7 +75,7 @@ from storage import add_recent_tag, load_config, load_recent_tags, save_config
 from utils import dedupe_casefold, normalize_path
 
 
-DEFAULT_INDEX_ROOT = Path(r"D:\Fotos")
+DEFAULT_INDEX_ROOT = Path.home() / "Pictures"
 METADATA_READ_DEBOUNCE_MS = 25
 PREVIEW_LOAD_DEBOUNCE_MS = 125
 FILE_PANE_RENDER_BATCH_SIZE = 250

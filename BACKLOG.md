@@ -17,6 +17,7 @@ assessment, and metadata mutation as separate delivery stages.
 **M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
 - [Performance follow-up](.scratch/performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md) remains deferred until one to three other topics have been completed.
+- [Configurable default index root](.scratch/configurable-default-index-root/issues/01-add-configurable-default-index-root.md) is medium priority and remains unscheduled.
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
 
 ## Historical milestones
@@ -34,6 +35,13 @@ or wontfix). This is not a list of active work.
 | M5 | Composable workspace filtering |
 | M6 | Maintainability and performance |
 | M7 | Startup correctness and autocomplete navigation |
+
+## High-priority cross-cutting work
+
+GitHub publication readiness is tracked separately from M8 as cross-cutting
+repository preparation:
+
+- [Prepare TAGGER for GitHub publication](.scratch/github-publication-readiness/issues/01-prepare-tagger-for-github.md) — ready for agent, high priority
 
 Specs and individual tickets live in `.scratch/`; this file records milestone
 selection rather than duplicating ticket status.

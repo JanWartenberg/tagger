@@ -24,8 +24,8 @@ A repair retains ticket 01's strict trigger: an explicit missing-file metadata-r
 
 For example:
 
-- `D:\Fotos\foo\bar\img.jpg` reconciles direct supported photos in `D:\Fotos\foo\bar`, not descendants.
-- `D:\Fotos\img2.jpg` reconciles direct supported photos in `D:\Fotos`, not its subfolders.
+- `C:\Users\<user>\Pictures\Fotos\foo\bar\img.jpg` reconciles direct supported photos in `C:\Users\<user>\Pictures\Fotos\foo\bar`, not descendants.
+- `C:\Users\<user>\Pictures\Fotos\img2.jpg` reconciles direct supported photos in `C:\Users\<user>\Pictures\Fotos`, not its subfolders.
 
 A local reconciliation may discover a current file in that directory, but must not claim it identified a filesystem rename.
 

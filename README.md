@@ -1,6 +1,10 @@
-# Exif UI (PyQt6)
+# TAGGER
 
-Minimal GUI to view/add/remove photo keywords using `exiftool`.
+Keyboard-driven Windows desktop application for viewing, searching, and editing
+photo metadata with ExifTool and PyQt6.
+
+TAGGER is a local tool: it does not upload photos, use cloud services, or
+provide a packaged release at this time.
 
 Features (MVP)
 - Drag and drop JPG/JPEG files (drop anywhere)
@@ -38,9 +42,32 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+For development and testing, install the additional tools:
+
+```bat
+pip install -r requirements-dev.txt
+```
+
 Run
 ```bat
 python tagger.py
+```
+
+Development checks
+------------------
+Run these commands from an activated virtual environment. The Qt tests use an
+offscreen platform and do not access a real photo library:
+
+```bat
+set QT_QPA_PLATFORM=offscreen
+ruff check .
+pytest
+```
+
+The complete test suite can also be run directly with the standard library:
+
+```bat
+python -m unittest discover -s tests -v
 ```
 
 Relocating the photo folder
@@ -54,8 +81,8 @@ the cached absolute paths. Close TAGGER first, make sure the photos are already
 at the new location, then run a dry run followed by the migration:
 
 ```bat
-python migrate_index.py "D:\\Fotos" "C:\\Users\\janwa\\Pictures\\Fotos" --database "C:\\Users\\janwa\\Pictures\\Fotos\\.tagger\\index.sqlite" --dry-run
-python migrate_index.py "D:\\Fotos" "C:\\Users\\janwa\\Pictures\\Fotos" --database "C:\\Users\\janwa\\Pictures\\Fotos\\.tagger\\index.sqlite"
+python migrate_index.py "C:\\Users\\<user>\\Pictures\\Fotos-old" "C:\\Users\\<user>\\Pictures\\Fotos" --database "C:\\Users\\<user>\\Pictures\\Fotos\\.tagger\\index.sqlite" --dry-run
+python migrate_index.py "C:\\Users\\<user>\\Pictures\\Fotos-old" "C:\\Users\\<user>\\Pictures\\Fotos" --database "C:\\Users\\<user>\\Pictures\\Fotos\\.tagger\\index.sqlite"
 ```
 
 The second command creates a timestamped `index.sqlite.before-migration-*`

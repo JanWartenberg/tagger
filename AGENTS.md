@@ -7,6 +7,7 @@
 - TAGGER is a Python and PyQt desktop tool developed primarily for Windows; keep it compatible with Linux where practical.
 - Keep the UI responsive by human standards. Potentially long-running work must run in the background rather than block the UI thread.
 - Use Ruff to lint and format new or modified Python code. Do not reformat unrelated legacy code as part of a focused change.
+- Before handing off Python changes, run `ruff check .` and `QT_QPA_PLATFORM=offscreen pytest` from an activated development environment; use the Windows equivalents documented in `tests/README.md` on Windows.
 
 ## Agent skills
 

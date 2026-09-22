@@ -16,7 +16,7 @@ TAGGER uses built-in `unittest` tests at two seams:
 Install the project dependencies before running the complete suite:
 
 ```sh
-python3 -m pip install -r requirements.txt
+python3 -m pip install -r requirements-dev.txt
 ```
 
 `requirements.txt` requires `PyQt6>=6.6`. When PyQt6 is installed, test discovery
@@ -29,21 +29,21 @@ run.
 Linux and other POSIX environments:
 
 ```sh
-QT_QPA_PLATFORM=offscreen python3 -m unittest discover -s tests -v
+QT_QPA_PLATFORM=offscreen python3 -m pytest
 ```
 
 Windows Command Prompt (`cmd.exe`), from the activated project virtual environment:
 
 ```bat
 set QT_QPA_PLATFORM=offscreen
-python -m unittest discover -s tests -v
+pytest
 ```
 
 Windows PowerShell:
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-python -m unittest discover -s tests -v
+pytest
 ```
 
 ## Acceptance
