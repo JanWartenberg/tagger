@@ -13,14 +13,14 @@ from services.background_coordinator import (
     IndexEnsureCompleted,
     IndexOperationKind,
     IndexRefreshCompleted,
-    IndexRefreshProgress,
     IndexRefreshFailed,
     IndexRefreshKind,
-    IptcEmptyIndexCompleted,
+    IndexRefreshProgress,
     IndexSearchCompleted,
-    KnownTagsCompleted,
     IndexWriteCompleted,
     IndexWriteFailed,
+    IptcEmptyIndexCompleted,
+    KnownTagsCompleted,
 )
 from utils import normalize_path
 

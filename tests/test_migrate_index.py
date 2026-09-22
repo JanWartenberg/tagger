@@ -1,9 +1,9 @@
 import contextlib
 import io
-from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from migrate_index import _backup_database, main, migrate

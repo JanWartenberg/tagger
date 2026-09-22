@@ -609,7 +609,7 @@ class BackgroundCoordinator:
                         key=str.casefold,
                     )
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - worker boundary reports failures
                 event: DiscoveryEvent = DiscoveryFailed(
                     kind=request.kind,
                     workspace_generation=request.workspace_generation,
@@ -667,7 +667,7 @@ class BackgroundCoordinator:
                 event = KnownTagsCompleted(
                     request, frozenset(self._index.load_known_tags(request.root))
                 )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - worker boundary reports failures
             event = IndexReadFailed(request, str(error))
         self._accept_index_read(event)
 
@@ -777,7 +777,7 @@ class BackgroundCoordinator:
                 if states:
                     self._index.update_states(root, states)
                 event = IndexWriteCompleted(root, operation.kind)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - worker boundary reports failures
             if operation.refresh_request is not None:
                 event = IndexRefreshFailed(operation.refresh_request, str(error))
             else:

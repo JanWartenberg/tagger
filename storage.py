@@ -59,7 +59,7 @@ def load_recent_tags() -> list[str]:
     def _read_list(path: Path) -> list[str]:
         try:
             data = json.loads(path.read_text(encoding=TEXT_ENCODING))
-        except Exception:
+        except (OSError, UnicodeError, json.JSONDecodeError):
             return []
         return _clean_list(data)
 
@@ -91,7 +91,7 @@ def load_config() -> dict:
         return {}
     try:
         data = json.loads(p.read_text(encoding=TEXT_ENCODING))
-    except Exception:
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return {}
     return data if isinstance(data, dict) else {}
 

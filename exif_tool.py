@@ -77,6 +77,7 @@ class ExifTool:
                 [self.exe, "-charset", "filename=UTF8", "-@", "-"],
                 input=("\n".join(args) + "\n").encode("utf-8"),
                 capture_output=True,
+                check=False,
             )
         except FileNotFoundError as e:
             raise ExifToolError(

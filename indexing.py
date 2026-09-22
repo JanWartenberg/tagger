@@ -42,7 +42,7 @@ def resolve_index_root(
 
     try:
         common = Path(os.path.commonpath([str(p) for p in candidates])).resolve()
-    except Exception:
+    except (OSError, RuntimeError, ValueError):
         common = candidates[0].parent if candidates[0].is_file() else candidates[0]
     if common.is_file():
         common = common.parent
@@ -70,8 +70,8 @@ def resolve_index_root(
                     for p in candidates
                 ):
                     return pref
-            except Exception:
-                pass
+            except (OSError, RuntimeError, ValueError):
+                return common
 
     return common
 
@@ -993,7 +993,7 @@ class PhotoIndex:
         for attempt in range(3):
             try:
                 return exif.read_keywords_many(paths)
-            except Exception:
+            except Exception:  # noqa: BLE001 - retry any ExifTool failure
                 if attempt == 2:
                     return {}
                 time.sleep(0.1 * (attempt + 1))

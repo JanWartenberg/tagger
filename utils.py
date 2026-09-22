@@ -22,5 +22,5 @@ def dedupe_casefold(items: list[str]) -> list[str]:
 def normalize_path(p: str) -> str:
     try:
         return str(Path(p).resolve())
-    except Exception:
+    except (OSError, RuntimeError):
         return os.path.normpath(p)

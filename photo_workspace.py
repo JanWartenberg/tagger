@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import os
+import unicodedata
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-import os
-from typing import Iterable
-import unicodedata
 
 
 class PhotoWorkspaceViewMode(str, Enum):

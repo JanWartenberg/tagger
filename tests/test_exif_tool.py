@@ -57,11 +57,13 @@ class ExifToolDateParsingTests(unittest.TestCase):
 
     def test_rejects_an_over_limit_iptc_keyword_before_running_exiftool(self) -> None:
         exif = ExifTool()
-        with patch.object(exif, "_run") as run:
-            with self.assertRaises(IptcKeywordLengthError) as error:
-                exif.write_keyword_fields(
-                    ["photo.jpg"], ["x" * 65], ["x" * 65], keep_backup=False
-                )
+        with (
+            patch.object(exif, "_run") as run,
+            self.assertRaises(IptcKeywordLengthError) as error,
+        ):
+            exif.write_keyword_fields(
+                ["photo.jpg"], ["x" * 65], ["x" * 65], keep_backup=False
+            )
 
         self.assertEqual(error.exception.violation.utf8_byte_count, 65)
         run.assert_not_called()

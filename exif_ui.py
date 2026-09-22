@@ -1,33 +1,31 @@
 import re
 import sys
 import time
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
-from collections.abc import Mapping, Sequence
-from typing import Callable
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 from actions import ActionSpec, KeyRoute, build_action_specs
 from exif_tool import ExifTool, KeywordState
-from tag_completion import TagCompletion
 from file_actions import FilePaneActions
 from indexing import (
     DateQueryError,
-    IndexRefreshProgress as IndexRefreshStep,
     IndexSyncResult,
     IptcEmptyIndexResult,
     PhotoIndex,
     resolve_index_root,
     validate_search_query,
 )
+from indexing import (
+    IndexRefreshProgress as IndexRefreshStep,
+)
 from photo_workspace import (
     PhotoWorkspace,
     PhotoWorkspaceSnapshot,
     PhotoWorkspaceViewMode,
 )
-from services.error_history import SessionErrorHistory
-from services.batch_tag_summary import BatchTagSummary, summarize_batch_tags
 from services.background_coordinator import (
     BackgroundCoordinator,
     BackgroundRunner,
@@ -39,25 +37,23 @@ from services.background_coordinator import (
     DiscoveryRequest,
     IndexAdapter,
     IndexEnsureCompleted,
-    IptcEmptyIndexCompleted,
     IndexReadFailed,
-    IndexRefreshCompleted,
-    IndexRefreshProgress,
-    IndexRefreshFailed,
-    IndexRefreshKind,
-    IndexRefreshRequest,
     IndexReadKind,
     IndexReadRequest,
+    IndexRefreshCompleted,
+    IndexRefreshFailed,
+    IndexRefreshKind,
+    IndexRefreshProgress,
+    IndexRefreshRequest,
     IndexSearchCompleted,
     IndexStaleResultEvicted,
     IndexWriteCompleted,
     IndexWriteFailed,
+    IptcEmptyIndexCompleted,
     KnownTagsCompleted,
 )
-from services.photo_discovery import (
-    SUPPORTED_PHOTO_EXTENSIONS,
-    FileSystemPhotoDiscovery,
-)
+from services.batch_tag_summary import BatchTagSummary, summarize_batch_tags
+from services.error_history import SessionErrorHistory
 from services.keyword_limits import (
     iptc_keyword_list_violation,
     keyword_length_violation,
@@ -65,6 +61,10 @@ from services.keyword_limits import (
 )
 from services.keyword_reconciliation import aligned_keyword_rows, reconcile_keywords
 from services.pending_tag_mutation import MutationStatus, PendingTagMutation, TagIntent
+from services.photo_discovery import (
+    SUPPORTED_PHOTO_EXTENSIONS,
+    FileSystemPhotoDiscovery,
+)
 from services.tag_mutation import TagMutationResult, TagMutationService
 from services.tag_mutation_coordinator import (
     TagMutationCoordinator,
@@ -72,8 +72,8 @@ from services.tag_mutation_coordinator import (
     TagMutationLifecycleKind,
 )
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
+from tag_completion import TagCompletion
 from utils import dedupe_casefold, normalize_path
-
 
 DEFAULT_INDEX_ROOT = Path.home() / "Pictures"
 METADATA_READ_DEBOUNCE_MS = 25
@@ -82,7 +82,7 @@ FILE_PANE_RENDER_BATCH_SIZE = 250
 REFRESH_DISCOVERY_ANIMATION_INTERVAL_MS = 1_000
 METADATA_READ_PRIORITY = 1_000_000
 _MISSING_FILE_ERROR = re.compile(
-    r"\bfile not found\b|\bno such file or directory\b", re.I
+    r"\bfile not found\b|\bno such file or directory\b", re.IGNORECASE
 )
 
 
@@ -618,7 +618,7 @@ class Worker(QtCore.QRunnable):
     def run(self) -> None:
         try:
             res = self.fn(*self.args, **self.kwargs)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - worker boundary reports all failures
             self.signals.error.emit(str(e))
             return
         self.signals.finished.emit(res)
@@ -1387,7 +1387,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Missing argument handler for action: {spec.id} "
                     f"({spec.handler_name})"
                 )
-            raise RuntimeError(
+            raise RuntimeError(  # noqa: TRY004 - invalid action wiring is not a type error
                 f"Missing handler for action: {spec.id} ({spec.handler_name})"
             )
         if accepts_arguments:
@@ -1402,7 +1402,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self._dispatch_action(spec.id, command_args=args)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - command boundary reports handler failures
             self._show_error(str(e), source="Command")
 
     def _format_key_route_label(self, route: KeyRoute) -> str:
@@ -1491,14 +1491,18 @@ class MainWindow(QtWidgets.QMainWindow):
                     context_event.pos(), context_event.modifiers()
                 )
                 return True
-        if et == QtCore.QEvent.Type.ShortcutOverride and isinstance(
-            event, QtGui.QKeyEvent
+        if (
+            et == QtCore.QEvent.Type.ShortcutOverride
+            and isinstance(event, QtGui.QKeyEvent)
+            and self._handle_shortcut_override(event)
         ):
-            if self._handle_shortcut_override(event):
-                return True
-        if et == QtCore.QEvent.Type.KeyPress and isinstance(event, QtGui.QKeyEvent):
-            if self._handle_key_routes(obj, event):
-                return True
+            return True
+        if (
+            et == QtCore.QEvent.Type.KeyPress
+            and isinstance(event, QtGui.QKeyEvent)
+            and self._handle_key_routes(obj, event)
+        ):
+            return True
         return super().eventFilter(obj, event)
 
     def _list_from_obj(
@@ -1510,7 +1514,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 return cur
             try:
                 cur = cur.parent()
-            except Exception:
+            except RuntimeError:
                 break
         return None
 
@@ -1731,11 +1735,11 @@ class MainWindow(QtWidgets.QMainWindow):
                         if (
                             route.scope == "list_widgets"
                             and route.sequence[0] == "Space"
-                        ):
-                            if self._handle_prefix_route(
+                            and self._handle_prefix_route(
                                 route, spec.id, token, obj, list_widget
-                            ):
-                                return True
+                            )
+                        ):
+                            return True
             for scope in ("global_non_input", "list_widgets"):
                 match = self._find_matching_single_route(token, scope, obj, list_widget)
                 if match is not None:
@@ -1743,11 +1747,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     return True
                 for spec in self._actions_by_id.values():
                     for route in spec.key_routes:
-                        if route.scope == scope and route.kind == "sequence":
-                            if self._handle_prefix_route(
+                        if (
+                            route.scope == scope
+                            and route.kind == "sequence"
+                            and self._handle_prefix_route(
                                 route, spec.id, token, obj, list_widget
-                            ):
-                                return True
+                            )
+                        ):
+                            return True
 
         widget_match = self._find_matching_single_route(
             token, "widget_exact", obj, list_widget
@@ -1758,11 +1765,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
         for spec in self._actions_by_id.values():
             for route in spec.key_routes:
-                if route.scope == "widget_exact" and route.kind == "sequence":
-                    if self._handle_prefix_route(
+                if (
+                    route.scope == "widget_exact"
+                    and route.kind == "sequence"
+                    and self._handle_prefix_route(
                         route, spec.id, token, obj, list_widget
-                    ):
-                        return True
+                    )
+                ):
+                    return True
 
         return False
 
@@ -1974,8 +1984,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _execute_command_line(self) -> None:
         raw = self.cmdLine.text() or ""
         self._close_command_line()
-        if raw.startswith(":"):
-            raw = raw[1:]
+        raw = raw.removeprefix(":")
         raw = raw.lstrip()
         if not raw:
             return
@@ -2253,7 +2262,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self._file_actions.open_default(paths)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
             self._report_file_action_error("Open photos", error)
 
     def _open_selected_photos_in_gimp(self) -> None:
@@ -2262,7 +2271,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self._file_actions.open_gimp(paths)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
             self._report_file_action_error("Open photos in GIMP", error)
 
     def _copy_selected_photo_paths(self) -> None:
@@ -2272,7 +2281,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self._file_actions.copy_paths(paths)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
             self._report_file_action_error("Copy photo paths", error)
             return
         if len(paths) == 1:
@@ -2287,7 +2296,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         try:
             self._file_actions.reveal(path)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
             self._report_file_action_error("Reveal photo", error)
             return
         self.statusBar().showMessage(f'Revealing "{path}" in Explorer…')
@@ -3156,7 +3165,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_last_folder(self, folder: str) -> None:
         try:
             p = Path(folder).resolve()
-        except Exception:
+        except (OSError, RuntimeError):
             p = Path(folder)
         if not p.exists() or not p.is_dir():
             return
@@ -3170,20 +3179,20 @@ class MainWindow(QtWidgets.QMainWindow):
                 p = Path(last_folder)
                 if p.exists() and p.is_dir():
                     return str(p)
-            except Exception:
-                pass
+            except (OSError, RuntimeError):
+                last_folder = None
 
         sel = self.selected_file_paths()
         if sel:
             try:
                 return str(Path(sel[0]).resolve().parent)
-            except Exception:
+            except (OSError, RuntimeError):
                 return str(Path(sel[0]).parent)
 
         if self.files.count() > 0:
             try:
                 return str(Path(self.files.item(0).text()).resolve().parent)
-            except Exception:
+            except (OSError, RuntimeError):
                 return str(Path(self.files.item(0).text()).parent)
         return None
 
@@ -3457,10 +3466,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def _err(msg: str) -> None:
             self._metadata_read_in_flight = False
-            if token == self._selection_token:
-                if not self._queue_stale_result_repair(current, msg):
-                    self.statusBar().showMessage("Error")
-                    self._show_error(msg, source="Read keywords")
+            if token == self._selection_token and not self._queue_stale_result_repair(
+                current, msg
+            ):
+                self.statusBar().showMessage("Error")
+                self._show_error(msg, source="Read keywords")
             self._schedule_pending_metadata_read()
 
         worker.signals.finished.connect(_ok)

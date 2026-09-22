@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable
 
 from exif_tool import ExifTool, KeywordState
 from services.keyword_limits import (
@@ -7,7 +7,6 @@ from services.keyword_limits import (
     iptc_keyword_list_violation,
 )
 from services.keyword_reconciliation import normalize_keywords
-
 
 StateLoader = Callable[[str], KeywordState]
 KeywordTransform = Callable[[str, KeywordState], list[str]]
@@ -111,7 +110,7 @@ class TagMutationService:
                 self.exif.write_keyword_fields(
                     [path], target.iptc, target.xmp, keep_backup=keep_backup
                 )
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - preserve per-photo failure state
                 failed_paths[path] = str(error)
                 continue
             updated_states[path] = target
@@ -150,7 +149,7 @@ class TagMutationService:
                 # the dialog's explicit choices. If it fails, apply those choices.
                 try:
                     load_state(path)
-                except Exception:
+                except Exception:  # noqa: BLE001, S110 - stale read is non-fatal
                     pass
                 for attempt in range(3):
                     attempts += 1
@@ -166,7 +165,7 @@ class TagMutationService:
                             raise
                 else:  # pragma: no cover - the loop always breaks or raises
                     raise RuntimeError("Resolve write did not run")
-            except Exception as error:
+            except Exception as error:  # noqa: BLE001 - preserve per-photo failure state
                 failed_paths[path] = str(error)
                 attempts_by_path[path] = attempts
                 continue

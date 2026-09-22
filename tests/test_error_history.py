@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
 import unittest
+from datetime import UTC, datetime
 
 from services.error_history import SessionError, SessionErrorHistory
 
@@ -12,8 +12,8 @@ class SessionErrorHistoryTests(unittest.TestCase):
     ) -> None:
         times = iter(
             [
-                datetime(2026, 8, 5, 14, 32, 8),
-                datetime(2026, 8, 5, 14, 33, 9),
+                datetime(2026, 8, 5, 14, 32, 8, tzinfo=UTC),
+                datetime(2026, 8, 5, 14, 33, 9, tzinfo=UTC),
             ]
         )
         history = SessionErrorHistory(clock=lambda: next(times))
@@ -30,7 +30,9 @@ class SessionErrorHistoryTests(unittest.TestCase):
         )
 
     def test_discards_the_oldest_entry_after_one_hundred_errors(self) -> None:
-        history = SessionErrorHistory(clock=lambda: datetime(2026, 8, 5, 14, 32, 8))
+        history = SessionErrorHistory(
+            clock=lambda: datetime(2026, 8, 5, 14, 32, 8, tzinfo=UTC)
+        )
 
         for index in range(101):
             history.record("Index refresh", f"failure {index}")

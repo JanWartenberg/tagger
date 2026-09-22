@@ -15,6 +15,7 @@ import unittest
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 from utils import normalize_path
@@ -33,14 +34,16 @@ if PYQT_AVAILABLE:
     from exif_ui import MainWindow, ResolveKeywordsDialog
     from indexing import (
         IndexRefreshProgress as IndexRefreshStep,
+    )
+    from indexing import (
         IptcEmptyIndexResult,
     )
     from services.background_coordinator import (
         IndexEnsureCompleted,
+        IndexOperationKind,
         IndexRefreshCompleted,
         IndexRefreshProgress,
         IndexWriteFailed,
-        IndexOperationKind,
     )
 
 
@@ -748,8 +751,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._choose_folder(folder)
         self.discovery_runner.run_discovery()
         self._wait_for_ui(
-            lambda: self.window.files.count() > 0
-            and self.window.files.count() < len(paths),
+            lambda: (
+                self.window.files.count() > 0 and self.window.files.count() < len(paths)
+            ),
             timeout=3,
         )
         self.assertFalse(self.window.filesPaneLoadingIcon.isVisible())
@@ -1249,11 +1253,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertTrue(self.window.batchOverview.isVisible())
         self._wait_until(
-            lambda: [
-                self.window.batchSharedTagsList.item(index).text()
-                for index in range(self.window.batchSharedTagsList.count())
-            ]
-            == ["shared"]
+            lambda: (
+                [
+                    self.window.batchSharedTagsList.item(index).text()
+                    for index in range(self.window.batchSharedTagsList.count())
+                ]
+                == ["shared"]
+            )
         )
         self.assertIn("first", self.window.batchPartialTagsLabel.text())
         self.assertIn("second", self.window.batchPartialTagsLabel.text())
@@ -1486,10 +1492,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         FakeExifTool.release_writes()
         self._wait_until(
-            lambda: FakePhotoIndex.states_by_path.get(
-                departed, KeywordState([], [])
-            ).merged
-            == ["confirmed", "inflight"]
+            lambda: (
+                FakePhotoIndex.states_by_path.get(departed, KeywordState([], [])).merged
+                == ["confirmed", "inflight"]
+            )
         )
 
         self.assertEqual(len(FakeExifTool.write_calls), 1)
@@ -1528,11 +1534,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
         self._wait_until(lambda: self.window.selected_file_paths() == [remaining])
         self._wait_until(
-            lambda: [
-                self.window.keywordsList.item(index).text()
-                for index in range(self.window.keywordsList.count())
-            ]
-            == ["confirmed", "queued"]
+            lambda: (
+                [
+                    self.window.keywordsList.item(index).text()
+                    for index in range(self.window.keywordsList.count())
+                ]
+                == ["confirmed", "queued"]
+            )
         )
 
         self.assertEqual(
@@ -1907,7 +1915,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
 
         class ImageReader:
-            started_paths: list[str] = []
+            started_paths: ClassVar[list[str]] = []
 
             def __init__(self, path: str) -> None:
                 self.path = path
@@ -2203,8 +2211,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.iptc_empty_error = RuntimeError("simulated filter failure")
         self.window.onlyUntagged.setChecked(True)
         self._wait_until(
-            lambda: self.window.statusBar().currentMessage()
-            == "Filtering IPTC-empty failed"
+            lambda: (
+                self.window.statusBar().currentMessage()
+                == "Filtering IPTC-empty failed"
+            )
         )
 
         with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
@@ -2244,8 +2254,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.discovery_runner.run_index_work()
             self.app.processEvents()
             self._wait_for_ui(
-                lambda: self.window.indexRepairStatusLabel.text()
-                == "Index repair queued: removing missing search result…"
+                lambda: (
+                    self.window.indexRepairStatusLabel.text()
+                    == "Index repair queued: removing missing search result…"
+                )
             )
 
         self.assertEqual(
@@ -2287,8 +2299,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run_index_work()
         self.app.processEvents()
         self._wait_for_ui(
-            lambda: self.window.indexRepairStatusLabel.text()
-            == "Index repair queued: removing missing search result…"
+            lambda: (
+                self.window.indexRepairStatusLabel.text()
+                == "Index repair queued: removing missing search result…"
+            )
         )
 
         FakeExifTool.metadata_read_error = None
@@ -2347,8 +2361,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run_index_work()
         self.app.processEvents()
         self._wait_for_ui(
-            lambda: self.window.indexRepairStatusLabel.text()
-            == "Index repair queued: removing missing search result…"
+            lambda: (
+                self.window.indexRepairStatusLabel.text()
+                == "Index repair queued: removing missing search result…"
+            )
         )
         FakeExifTool.metadata_read_error = None
 
@@ -2442,8 +2458,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.iptc_empty_results = set(paths[:150])
         self.window.onlyUntagged.setChecked(True)
         self._wait_until(
-            lambda: self.window.statusBar().currentMessage()
-            == "IPTC-empty results ready"
+            lambda: (
+                self.window.statusBar().currentMessage() == "IPTC-empty results ready"
+            )
         )
         self.window.files.setFocus()
         scroll_bar = self.window.files.verticalScrollBar()
@@ -2465,8 +2482,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.iptc_empty_results = set(paths[:150])
         self.window.onlyUntagged.setChecked(True)
         self._wait_until(
-            lambda: self.window.statusBar().currentMessage()
-            == "IPTC-empty results ready"
+            lambda: (
+                self.window.statusBar().currentMessage() == "IPTC-empty results ready"
+            )
         )
         self.window.files.setFocus()
         scroll_bar = self.window.files.verticalScrollBar()
@@ -2567,8 +2585,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.iptc_empty_results = set(paths[:150])
         self.window.onlyUntagged.setChecked(True)
         self._wait_until(
-            lambda: self.window.statusBar().currentMessage()
-            == "IPTC-empty results ready"
+            lambda: (
+                self.window.statusBar().currentMessage() == "IPTC-empty results ready"
+            )
         )
 
         self.window.files.scrollToItem(
@@ -2698,8 +2717,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
             self.window.onlyUntagged.setChecked(True)
             self._wait_until(
-                lambda: self.window.statusBar().currentMessage()
-                == "Filtering IPTC-empty failed"
+                lambda: (
+                    self.window.statusBar().currentMessage()
+                    == "Filtering IPTC-empty failed"
+                )
             )
 
         self.assertFalse(self.window.onlyUntagged.isChecked())
@@ -2821,8 +2842,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
         paths = self._add_paths(*names)
         self._wait_until(
-            lambda: self.window.keywordsList.count() == 1
-            and self.window.keywordsList.item(0).text() == "tag-0"
+            lambda: (
+                self.window.keywordsList.count() == 1
+                and self.window.keywordsList.item(0).text() == "tag-0"
+            )
         )
 
         FakeExifTool.read_delay_seconds = 0.1
@@ -2835,8 +2858,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.app.processEvents()
 
         self._wait_until(
-            lambda: self.window.keywordsList.count() == 1
-            and self.window.keywordsList.item(0).text() == "tag-6",
+            lambda: (
+                self.window.keywordsList.count() == 1
+                and self.window.keywordsList.item(0).text() == "tag-6"
+            ),
             timeout=5,
         )
         self.assertLess(time.monotonic() - started_at, 0.3)
@@ -2854,12 +2879,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
         paths = self._add_paths(*names)
         self._wait_until(
-            lambda: self.window.keywordsList.count() == 1
-            and self.window.keywordsList.item(0).text() == "tag-0"
+            lambda: (
+                self.window.keywordsList.count() == 1
+                and self.window.keywordsList.item(0).text() == "tag-0"
+            )
         )
 
         class SlowImageReader:
-            started_paths: list[str] = []
+            started_paths: ClassVar[list[str]] = []
 
             def __init__(self, path: str) -> None:
                 self.path = path
@@ -2882,13 +2909,17 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 time.sleep(0.03)
                 self.app.processEvents()
             self._wait_until(
-                lambda: self.window.keywordsList.count() == 1
-                and self.window.keywordsList.item(0).text() == "tag-4",
+                lambda: (
+                    self.window.keywordsList.count() == 1
+                    and self.window.keywordsList.item(0).text() == "tag-4"
+                ),
                 timeout=5,
             )
             self._wait_until(
-                lambda: self.window.previewLabel.pixmap() is not None
-                and not self.window.previewLabel.pixmap().isNull(),
+                lambda: (
+                    self.window.previewLabel.pixmap() is not None
+                    and not self.window.previewLabel.pixmap().isNull()
+                ),
                 timeout=5,
             )
 
@@ -3165,10 +3196,10 @@ class FakeExifTool:
     metadata_read_error: Exception | None = None
     fail_writes = False
     scan_error: Exception | None = None
-    write_failures: list[bool] = []
-    write_calls: list[tuple[str, list[str]]] = []
-    field_write_calls: list[tuple[str, list[str], list[str]]] = []
-    states_by_path: dict[str, KeywordState] = {}
+    write_failures: ClassVar[list[bool]] = []
+    write_calls: ClassVar[list[tuple[str, list[str]]]] = []
+    field_write_calls: ClassVar[list[tuple[str, list[str], list[str]]]] = []
+    states_by_path: ClassVar[dict[str, KeywordState]] = {}
     metadata_read_started = threading.Event()
     write_started = threading.Event()
     _allow_writes = threading.Event()
@@ -3196,7 +3227,7 @@ class FakeExifTool:
     def release_writes(cls) -> None:
         cls._allow_writes.set()
 
-    def read_keywords(self, path: str) -> "KeywordState":
+    def read_keywords(self, path: str) -> KeywordState:
         if type(self).metadata_read_error is not None:
             raise type(self).metadata_read_error
         if type(self).read_delay_seconds:
@@ -3206,7 +3237,7 @@ class FakeExifTool:
             normalize_path(path), KeywordState(["confirmed"], ["confirmed"])
         )
 
-    def read_keywords_many(self, paths: list[str]) -> dict[str, "KeywordState"]:
+    def read_keywords_many(self, paths: list[str]) -> dict[str, KeywordState]:
         return {normalize_path(path): self.read_keywords(path) for path in paths}
 
     def scan_iptc_empty(self, paths: list[str]) -> set[str]:
@@ -3266,21 +3297,21 @@ class FakeFilePaneActions:
 
 
 class FakePhotoIndex:
-    search_results: set[str] = set()
-    iptc_empty_results: set[str] = set()
-    iptc_empty_unknown_paths: set[str] = set()
-    iptc_empty_candidate_reads: list[tuple[str, ...]] = []
+    search_results: ClassVar[set[str]] = set()
+    iptc_empty_results: ClassVar[set[str]] = set()
+    iptc_empty_unknown_paths: ClassVar[set[str]] = set()
+    iptc_empty_candidate_reads: ClassVar[list[tuple[str, ...]]] = []
     iptc_empty_error: Exception | None = None
-    search_queries: list[str] = []
-    search_roots: list[str] = []
+    search_queries: ClassVar[list[str]] = []
+    search_roots: ClassVar[list[str]] = []
     refresh_stale = False
     refresh_error: Exception | None = None
-    refresh_calls: list[str] = []
+    refresh_calls: ClassVar[list[str]] = []
     cancel_calls = 0
-    removed_paths: list[str] = []
-    reconciled_directories: list[str] = []
-    states_by_path: dict[str, KeywordState] = {}
-    known_tags: set[str] = set()
+    removed_paths: ClassVar[list[str]] = []
+    reconciled_directories: ClassVar[list[str]] = []
+    states_by_path: ClassVar[dict[str, KeywordState]] = {}
+    known_tags: ClassVar[set[str]] = set()
     known_tag_reads = 0
 
     @classmethod
@@ -3326,7 +3357,7 @@ class FakePhotoIndex:
         type(self).known_tag_reads += 1
         return type(self).known_tags
 
-    def update_states(self, states: dict[str, "KeywordState"]) -> None:
+    def update_states(self, states: dict[str, KeywordState]) -> None:
         type(self).states_by_path.update(states)
 
     def remove_photo(self, path: str) -> bool:

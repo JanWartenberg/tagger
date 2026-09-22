@@ -18,14 +18,14 @@ import tempfile
 import time
 import tracemalloc
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import exif_tool as exif_tool_module  # noqa: E402
-import indexing as indexing_module  # noqa: E402
-from exif_tool import KeywordState  # noqa: E402
+import exif_tool as exif_tool_module
+import indexing as indexing_module
+from exif_tool import KeywordState
 from indexing import IndexRefreshProgress, PhotoIndex
 from photo_workspace import PhotoWorkspace
 from services.photo_discovery import FileSystemPhotoDiscovery
@@ -55,7 +55,9 @@ class SyntheticExifTool:
 def _make_fixture(root: Path, photo_count: int, depth: int) -> list[str]:
     paths: list[str] = []
     for index in range(photo_count):
-        directory = root / f"level-{index % max(depth, 1):03d}" / f"group-{index % 17:02d}"
+        directory = (
+            root / f"level-{index % max(depth, 1):03d}" / f"group-{index % 17:02d}"
+        )
         directory.mkdir(parents=True, exist_ok=True)
         suffix = ".jpeg" if index % 2 else ".jpg"
         path = directory / f"photo-{index:06d}{suffix}"
@@ -132,7 +134,9 @@ def _prepare_refresh(root: Path, counters: Counter[str], paths: list[str]) -> No
     index.sync_paths(exif, paths, force=True)
 
 
-def _run_scenario(name: str, root: Path, paths: list[str], counters: Counter[str]) -> dict:
+def _run_scenario(
+    name: str, root: Path, paths: list[str], counters: Counter[str]
+) -> dict:
     exif = SyntheticExifTool()
     discovery = FileSystemPhotoDiscovery()
     internal_timings: Counter[str] = Counter()
@@ -185,6 +189,7 @@ def _install_normalization_trace(counters: Counter[str]) -> Callable[[], None]:
         "exif_tool": exif_tool_module.normalize_path,
     }
     for owner, original in originals.items():
+
         def traced(path, *, _owner=owner, _original=original):  # type: ignore[no-untyped-def]
             counters.update({f"normalize_{_owner}": 1})
             return _original(path)

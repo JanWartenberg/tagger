@@ -6,7 +6,6 @@ from pathlib import Path
 
 from utils import SUPPORTED_EXTS
 
-
 SUPPORTED_PHOTO_EXTENSIONS = SUPPORTED_EXTS
 
 

@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
-
 
 INDEX_FILENAME = "index.sqlite"
 
@@ -102,7 +101,7 @@ def migrate(
         if dry_run:
             return len(replacements), len(rows)
 
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         backup = target_db.with_name(
             f"{target_db.name}.before-migration-{timestamp}-{uuid4().hex}"
         )

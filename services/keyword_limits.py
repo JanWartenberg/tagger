@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import unicodedata
-
+from dataclasses import dataclass
 
 IPTC_KEYWORD_MAX_UTF8_BYTES = 64
 
