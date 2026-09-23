@@ -1,6 +1,6 @@
 # 01 — Implement Duplicate-Candidate Detection Foundation
 
-Status: ready-for-agent
+Status: ready-for-human
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
@@ -101,3 +101,10 @@ scores in this ticket.
 ## Design Reference
 
 See the accepted [design direction](../design-notes.md).
+
+## Comments
+
+- 2026-09-23: Implementation completed in commit `c39d6a9`. The maintainer will
+  cross-check the implementation and perform the acceptance test in the next
+  session. Ruff and focused tests pass; the full suite has one unrelated
+  existing UI timing failure in `test_main_window_characterization.py`.
