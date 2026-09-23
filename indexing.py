@@ -346,6 +346,14 @@ class PhotoIndex:
         )
         self._ensure_keyword_index_version(conn)
 
+    def snapshot_photo_paths(self) -> tuple[str, ...]:
+        """Return a deterministic snapshot of all paths currently indexed."""
+        with self._connection() as conn:
+            rows = conn.execute(
+                "SELECT path FROM photos ORDER BY path COLLATE BINARY"
+            ).fetchall()
+        return tuple(str(row["path"]) for row in rows)
+
     def _keyword_index_version(self, conn: sqlite3.Connection) -> str | None:
         row = conn.execute(
             "SELECT value FROM meta WHERE key = ?", (_KEYWORD_INDEX_VERSION_META_KEY,)
