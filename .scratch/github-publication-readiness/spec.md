@@ -1,6 +1,6 @@
 # TAGGER GitHub Publication Readiness
 
-Status: ready-for-agent
+Status: completed
 Priority: high
 
 ## Goal
@@ -45,16 +45,16 @@ limitations.
 
 ## Acceptance Criteria
 
-- [ ] Repository owner and public repository name are recorded.
-- [ ] License decision is recorded and the selected license file is present.
-- [ ] A clean checkout has a complete, accurate quick-start path.
-- [ ] A documented test/quality command succeeds in the supported local setup.
-- [ ] CI scope is explicit and does not depend on unavailable desktop/photo
+- [x] Repository owner and public repository name are recorded.
+- [x] License decision is recorded and the selected license file is present.
+- [x] A clean checkout has a complete, accurate quick-start path.
+- [x] A documented test/quality command succeeds in the supported local setup.
+- [x] CI scope is explicit and does not depend on unavailable desktop/photo
       infrastructure.
-- [ ] Generated, local, private, and machine-specific files are excluded.
-- [ ] A publication review confirms that no private photo data or secrets are
+- [x] Generated, local, private, and machine-specific files are excluded.
+- [x] A publication review confirms that no private photo data or secrets are
       tracked.
-- [ ] The final repository shape is intentionally small and comparable to the
+- [x] The final repository shape is intentionally small and comparable to the
       ticket-cli repository.
 
 ## Decision Record

@@ -1,6 +1,6 @@
 # 01 — Prepare TAGGER for GitHub Publication
 
-Status: ready-for-agent
+Status: completed
 Category: maintenance
 Priority: high
 Milestone: M9 — GitHub publication readiness
@@ -43,14 +43,14 @@ development.
 
 ## Acceptance Criteria
 
-- [ ] GitHub owner and repository name are recorded.
-- [ ] License decision is recorded and the license file is present.
-- [ ] A clean checkout can follow the README to install, run, and test TAGGER.
-- [ ] The documented quality/test command succeeds in the supported setup.
-- [ ] CI, if added, has an explicit supported environment and reliable scope.
-- [ ] No local caches, virtual environments, private photo data, secrets, or
+- [x] GitHub owner and repository name are recorded.
+- [x] License decision is recorded and the license file is present.
+- [x] A clean checkout can follow the README to install, run, and test TAGGER.
+- [x] The documented quality/test command succeeds in the supported setup.
+- [x] CI, if added, has an explicit supported environment and reliable scope.
+- [x] No local caches, virtual environments, private photo data, secrets, or
       machine-specific paths are tracked.
-- [ ] The resulting repository is intentionally small and similar in shape to
+- [x] The resulting repository is intentionally small and similar in shape to
       ticket-cli repository.
 
 ## Decision Record

@@ -41,7 +41,7 @@ or wontfix). This is not a list of active work.
 GitHub publication readiness is tracked separately from M8 as cross-cutting
 repository preparation:
 
-- [Prepare TAGGER for GitHub publication](.scratch/github-publication-readiness/issues/01-prepare-tagger-for-github.md) — ready for agent, high priority
+- [Prepare TAGGER for GitHub publication](.scratch/github-publication-readiness/issues/01-prepare-tagger-for-github.md) — completed, high priority
 
 Specs and individual tickets live in `.scratch/`; this file records milestone
 selection rather than duplicating ticket status.
