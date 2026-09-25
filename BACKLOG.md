@@ -5,12 +5,12 @@
 **M8 — Duplicate candidate review and tag propagation** is active. Its tickets
 are ordered by dependency:
 
-1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — ready for agent
-2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — needs triage; blocked by ticket 01
+1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — completed
+2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — needs triage
 3. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — needs triage; blocked by ticket 02
 
-Implement the read-only detection foundation first. Keep detection, human
-assessment, and metadata mutation as separate delivery stages.
+The read-only detection foundation is accepted. Keep assessment and metadata
+mutation as separate delivery stages.
 
 ## Future milestone
 

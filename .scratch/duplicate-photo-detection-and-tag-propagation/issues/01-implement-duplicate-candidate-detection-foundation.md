@@ -1,6 +1,6 @@
 # 01 — Implement Duplicate-Candidate Detection Foundation
 
-Status: ready-for-human
+Status: completed
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
@@ -72,22 +72,22 @@ scores in this ticket.
 
 ## Acceptance Criteria
 
-- [ ] Detection policy and result models import no Qt.
-- [ ] The detector has a stable user-visible name and machine identity.
-- [ ] Candidate members preserve their path, compared timestamp, and source field.
-- [ ] Group and member ordering is deterministic.
-- [ ] Database scope snapshots all indexed photo paths through a public
+- [x] Detection policy and result models import no Qt.
+- [x] The detector has a stable user-visible name and machine identity.
+- [x] Candidate members preserve their path, compared timestamp, and source field.
+- [x] Group and member ordering is deterministic.
+- [x] Database scope snapshots all indexed photo paths through a public
       `PhotoIndex` operation without exposing its SQLite connection.
-- [ ] Subfolder scope recursively discovers only supported photo files.
-- [ ] The scan operates on the immutable path snapshot supplied at start.
-- [ ] Metadata reads use bounded batches and expose progress.
-- [ ] Cancellation is checked between batches and a cancelled scan cannot return
+- [x] Subfolder scope recursively discovers only supported photo files.
+- [x] The scan operates on the immutable path snapshot supplied at start.
+- [x] Metadata reads use bounded batches and expose progress.
+- [x] Cancellation is checked between batches and a cancelled scan cannot return
       publishable complete results.
-- [ ] One unreadable or missing photo does not prevent other candidate groups.
-- [ ] Pure tests cover DateTimeOriginal grouping, labelled CreateDate fallback,
+- [x] One unreadable or missing photo does not prevent other candidate groups.
+- [x] Pure tests cover DateTimeOriginal grouping, labelled CreateDate fallback,
       timestamp-less photos, bursts with more than two members, deterministic
       ordering, scope isolation, partial read failure, progress, and cancellation.
-- [ ] Ruff passes for modified Python files and the full test suite remains green.
+- [x] Ruff passes for modified Python files and the full test suite remains green.
 
 ## Out of Scope
 
@@ -104,7 +104,7 @@ See the accepted [design direction](../design-notes.md).
 
 ## Comments
 
-- 2026-09-23: Implementation completed in commit `c39d6a9`. The maintainer will
-  cross-check the implementation and perform the acceptance test in the next
-  session. Ruff and focused tests pass; the full suite has one unrelated
-  existing UI timing failure in `test_main_window_characterization.py`.
+- 2026-09-23: Implementation completed in commit `c39d6a9`.
+- 2026-09-23: Accepted after the maintainer completed the acceptance checklist:
+  Ruff, focused duplicate-detection tests, and the full regression suite passed;
+  detector-boundary, lifecycle, and scope/read-only reviews passed.

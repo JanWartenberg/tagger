@@ -73,3 +73,9 @@ They are not part of the initial implementation.
 Implementation is split into detection foundation, assessment UI, and tag
 propagation tickets. The simple end-to-end workflow takes priority over more
 sophisticated matching methods.
+
+## Delivery status
+
+- 2026-09-23: Detection foundation was accepted in commit `c39d6a9`.
+  Assessment UI and tag propagation remain outstanding under tickets 02 and 03;
+  this specification therefore remains active.

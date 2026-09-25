@@ -4,7 +4,7 @@ Status: needs-triage
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
-Blocked by: 01
+Blocked by: None
 
 ## Goal
 
