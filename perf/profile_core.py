@@ -23,13 +23,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import exif_tool as exif_tool_module
-import indexing as indexing_module
-from exif_tool import KeywordState
-from indexing import IndexRefreshProgress, PhotoIndex
-from photo_workspace import PhotoWorkspace
-from services.photo_discovery import FileSystemPhotoDiscovery
-from utils import normalize_path
+from tagger_app import exif_tool as exif_tool_module
+from tagger_app import indexing as indexing_module
+from tagger_app.exif_tool import KeywordState
+from tagger_app.indexing import IndexRefreshProgress, PhotoIndex
+from tagger_app.photo_workspace import PhotoWorkspace
+from tagger_app.services.photo_discovery import FileSystemPhotoDiscovery
+from tagger_app.utils import normalize_path
 
 
 class SyntheticExifTool:

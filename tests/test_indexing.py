@@ -5,8 +5,8 @@ from contextlib import closing
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from exif_tool import KeywordState
-from indexing import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.indexing import (
     _PATH_QUERY_BATCH_SIZE,
     DateQueryError,
     IndexRefreshProgress,
@@ -14,7 +14,7 @@ from indexing import (
     PhotoIndex,
     resolve_index_root,
 )
-from utils import normalize_path
+from tagger_app.utils import normalize_path
 
 
 class FakeExifTool:

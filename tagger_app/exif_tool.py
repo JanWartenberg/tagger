@@ -3,12 +3,12 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 
-from services.keyword_limits import (
+from tagger_app.services.keyword_limits import (
     IptcKeywordLengthError,
     iptc_keyword_list_violation,
     normalize_keyword,
 )
-from utils import dedupe_casefold, normalize_path
+from tagger_app.utils import dedupe_casefold, normalize_path
 
 
 @dataclass

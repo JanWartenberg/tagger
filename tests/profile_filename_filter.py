@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from photo_workspace import PhotoWorkspace
+from tagger_app.photo_workspace import PhotoWorkspace
 
 PATH_COUNT = 3_000
 MAX_DERIVED_MEMBERSHIP_CALLS = 2

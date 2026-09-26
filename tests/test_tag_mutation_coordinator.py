@@ -3,10 +3,10 @@ from __future__ import annotations
 import unittest
 from collections.abc import Callable
 
-from exif_tool import KeywordState
-from services.pending_tag_mutation import MutationStatus, TagIntent
-from services.tag_mutation import TagMutationResult
-from services.tag_mutation_coordinator import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.pending_tag_mutation import MutationStatus, TagIntent
+from tagger_app.services.tag_mutation import TagMutationResult
+from tagger_app.services.tag_mutation_coordinator import (
     TagMutationCoordinator,
     TagMutationLifecycle,
     TagMutationLifecycleKind,

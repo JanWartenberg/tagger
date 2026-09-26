@@ -4,8 +4,8 @@ import unittest
 from collections.abc import Callable
 from unittest.mock import patch
 
-from indexing import IndexRefreshProgress as RefreshStep
-from services.background_coordinator import (
+from tagger_app.indexing import IndexRefreshProgress as RefreshStep
+from tagger_app.services.background_coordinator import (
     BackgroundCoordinator,
     DiscoveryCompleted,
     DiscoveryFailed,
@@ -22,7 +22,7 @@ from services.background_coordinator import (
     IptcEmptyIndexCompleted,
     KnownTagsCompleted,
 )
-from utils import normalize_path
+from tagger_app.utils import normalize_path
 
 
 def fixture_path(path: str) -> str:
@@ -389,7 +389,7 @@ class BackgroundCoordinatorIndexTests(unittest.TestCase):
         paths = [fixture_path(f"/photos/{number}.jpg") for number in range(2)]
 
         with patch(
-            "services.background_coordinator._normalize_path",
+            "tagger_app.services.background_coordinator._normalize_path",
             wraps=normalize_path,
         ) as normalize:
             self.coordinator.ensure_index(root, paths, paths_are_normalized=True)

@@ -1,8 +1,8 @@
 import unittest
 from unittest.mock import patch
 
-from exif_tool import ExifTool
-from services.keyword_limits import IptcKeywordLengthError
+from tagger_app.exif_tool import ExifTool
+from tagger_app.services.keyword_limits import IptcKeywordLengthError
 
 
 class ExifToolDateParsingTests(unittest.TestCase):

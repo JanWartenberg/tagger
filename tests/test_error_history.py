@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from datetime import UTC, datetime
 
-from services.error_history import SessionError, SessionErrorHistory
+from tagger_app.services.error_history import SessionError, SessionErrorHistory
 
 
 class SessionErrorHistoryTests(unittest.TestCase):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from utils import SUPPORTED_EXTS
+from tagger_app.utils import SUPPORTED_EXTS
 
 SUPPORTED_PHOTO_EXTENSIONS = SUPPORTED_EXTS
 

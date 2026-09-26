@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import ClassVar
 from unittest.mock import patch
 
-from utils import normalize_path
+from tagger_app.utils import normalize_path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -30,21 +30,21 @@ else:
     PYQT_AVAILABLE = True
 
 if PYQT_AVAILABLE:
-    from exif_tool import KeywordState
-    from exif_ui import MainWindow, ResolveKeywordsDialog
-    from indexing import (
+    from tagger_app.exif_tool import KeywordState
+    from tagger_app.indexing import (
         IndexRefreshProgress as IndexRefreshStep,
     )
-    from indexing import (
+    from tagger_app.indexing import (
         IptcEmptyIndexResult,
     )
-    from services.background_coordinator import (
+    from tagger_app.services.background_coordinator import (
         IndexEnsureCompleted,
         IndexOperationKind,
         IndexRefreshCompleted,
         IndexRefreshProgress,
         IndexWriteFailed,
     )
+    from tagger_app.ui.main_window import MainWindow, ResolveKeywordsDialog
 
 
 @unittest.skipUnless(
@@ -56,13 +56,17 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self) -> None:
-        self.exif_patch = patch("exif_ui.ExifTool", FakeExifTool)
-        self.index_patch = patch("exif_ui.PhotoIndex", FakePhotoIndex)
+        self.exif_patch = patch(
+            "tagger_app.ui.main_window.ExifTool", FakeExifTool
+        )
+        self.index_patch = patch(
+            "tagger_app.ui.main_window.PhotoIndex", FakePhotoIndex
+        )
         self.storage_patches = [
-            patch("exif_ui.load_config", return_value={}),
-            patch("exif_ui.save_config"),
-            patch("exif_ui.load_recent_tags", return_value=[]),
-            patch("exif_ui.add_recent_tag"),
+            patch("tagger_app.ui.main_window.load_config", return_value={}),
+            patch("tagger_app.ui.main_window.save_config"),
+            patch("tagger_app.ui.main_window.load_recent_tags", return_value=[]),
+            patch("tagger_app.ui.main_window.add_recent_tag"),
         ]
         self.exif_patch.start()
         self.index_patch.start()
@@ -134,7 +138,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
     def _choose_folder(self, folder: str) -> None:
         with patch(
-            "exif_ui.QtWidgets.QFileDialog.getExistingDirectory", return_value=folder
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value=folder,
         ):
             self.window.add_folder_dialog()
 
@@ -639,7 +644,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         with (
             tempfile.TemporaryDirectory() as directory,
-            patch("exif_ui.DEFAULT_INDEX_ROOT", Path(directory)),
+            patch("tagger_app.ui.main_window.DEFAULT_INDEX_ROOT", Path(directory)),
         ):
             FakePhotoIndex.search_results = set()
             self.window.dbSearchEdit.setText("tag:missing")
@@ -938,7 +943,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery.results[folder] = RuntimeError("discovery failed")
 
         self._choose_folder(folder)
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.discovery_runner.run_discovery()
 
         self.assertEqual(self.window.all_file_paths(), [])
@@ -963,7 +968,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         root = self.window._index_root
         self.assertIsNotNone(root)
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.window.backgroundDiscoveryEvent.emit(
                 IndexWriteFailed(
                     root=root,
@@ -978,7 +983,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         critical.assert_not_called()
 
-        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("errors", [])
 
         self.assertIn("Index update: index failed", information.call_args.args[2])
@@ -1159,7 +1164,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._wait_until(lambda: self.window.resolveBtn.isEnabled())
 
         chosen = KeywordState(["xmp-only"], [])
-        with patch("exif_ui.ResolveKeywordsDialog") as dialog:
+        with patch("tagger_app.ui.main_window.ResolveKeywordsDialog") as dialog:
             dialog.return_value.exec.return_value = (
                 QtWidgets.QDialog.DialogCode.Accepted
             )
@@ -1182,7 +1187,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._wait_until(lambda: self.window.resolveBtn.isEnabled())
 
         chosen = KeywordState(["xmp-only"], ["xmp-only"])
-        with patch("exif_ui.ResolveKeywordsDialog") as dialog:
+        with patch("tagger_app.ui.main_window.ResolveKeywordsDialog") as dialog:
             dialog.return_value.exec.return_value = (
                 QtWidgets.QDialog.DialogCode.Accepted
             )
@@ -1228,7 +1233,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertTrue(self.window.addEdit.isEnabled())
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical"):
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"):
             FakeExifTool.release_writes()
             self._wait_until(
                 lambda: "attention" in self.window.mutationStatusLabel.text()
@@ -1414,7 +1419,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakePhotoIndex.states_by_path[second].merged, ["confirmed"])
         self.assertIn("1 succeeded, 1 failed", self.window.statusBar().currentMessage())
 
-        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("errors", [])
 
         self.assertIn(
@@ -1631,7 +1636,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             ["confirmed", "external"], ["confirmed", "external"]
         )
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical"):
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"):
             FakeExifTool.release_writes()
             self._wait_until(lambda: len(FakeExifTool.write_calls) == 2)
             self._wait_until(
@@ -1842,7 +1847,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 shortcut, ["+".join(route.sequence) for route in action.key_routes]
             )
 
-        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("listcommands", [])
 
         command_list = information.call_args.args[2]
@@ -1994,7 +1999,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 return QtGui.QImage(1, 1, QtGui.QImage.Format.Format_RGB32)
 
         third_rect = self.window.files.visualItemRect(self.window.files.item(2))
-        with patch("exif_ui.QtGui.QImageReader", ImageReader):
+        with patch("tagger_app.ui.main_window.QtGui.QImageReader", ImageReader):
             QtWidgets.QApplication.sendEvent(
                 self.window.files.viewport(),
                 QtGui.QContextMenuEvent(
@@ -2214,7 +2219,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             indexed_count=4_000,
         )
 
-        with patch("exif_ui.time.monotonic", return_value=1.0):
+        with patch("tagger_app.ui.main_window.time.monotonic", return_value=1.0):
             self.window._show_refresh_progress(progress)
 
         self.assertEqual(
@@ -2246,7 +2251,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             indexed_count=4_000,
         )
 
-        with patch("exif_ui.time.monotonic", return_value=1.0):
+        with patch("tagger_app.ui.main_window.time.monotonic", return_value=1.0):
             self.window._handle_index_refresh_event(
                 IndexRefreshProgress(request, progress)
             )
@@ -2262,7 +2267,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window._refresh_discovery_timer.isActive())
 
     def test_errors_command_reports_an_empty_session(self) -> None:
-        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("errors", [])
 
         information.assert_called_once_with(
@@ -2283,7 +2288,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
         )
 
-        with patch("exif_ui.QtWidgets.QMessageBox.information") as information:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
             self.window._dispatch_command("errors", [])
 
         message = information.call_args.args[2]
@@ -2315,7 +2320,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {stale_path}
         self.window.dbSearchEdit.setText("tag:bird")
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.window.apply_db_search()
             self.discovery_runner.run_index_work()
             self.app.processEvents()
@@ -2386,7 +2391,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         missing_path = "C:/photos/missing.jpg"
         FakeExifTool.metadata_read_error = RuntimeError("File not found")
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.window.replace_photo_workspace([missing_path])
             self._wait_until(
                 lambda: self.window.statusBar().currentMessage() == "Error"
@@ -2404,7 +2409,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {path}
         self.window.dbSearchEdit.setText("tag:broken")
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.window.apply_db_search()
             self.discovery_runner.run_index_work()
             self.app.processEvents()
@@ -2780,7 +2785,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         FakePhotoIndex.iptc_empty_error = RuntimeError("simulated filter failure")
 
-        with patch("exif_ui.QtWidgets.QMessageBox.critical") as critical:
+        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
             self.window.onlyUntagged.setChecked(True)
             self._wait_until(
                 lambda: (
@@ -2965,7 +2970,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 time.sleep(0.1)
                 return QtGui.QImage(1, 1, QtGui.QImage.Format.Format_RGB32)
 
-        with patch("exif_ui.QtGui.QImageReader", SlowImageReader):
+        with patch("tagger_app.ui.main_window.QtGui.QImageReader", SlowImageReader):
             started_at = time.monotonic()
             for row in range(1, len(paths)):
                 self.window.files.setCurrentItem(

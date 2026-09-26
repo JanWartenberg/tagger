@@ -8,8 +8,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Protocol
 
-from exif_tool import ExifTool, KeywordState
-from utils import normalize_path
+from tagger_app.exif_tool import ExifTool, KeywordState
+from tagger_app.utils import normalize_path
 
 
 @dataclass(frozen=True)

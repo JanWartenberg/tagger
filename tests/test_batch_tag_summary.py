@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from exif_tool import KeywordState
-from services.batch_tag_summary import summarize_batch_tags
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.batch_tag_summary import summarize_batch_tags
 
 
 class BatchTagSummaryTests(unittest.TestCase):

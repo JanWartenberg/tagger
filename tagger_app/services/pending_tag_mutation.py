@@ -1,8 +1,8 @@
 from dataclasses import dataclass, replace
 from enum import Enum
 
-from exif_tool import KeywordState
-from utils import dedupe_casefold
+from tagger_app.exif_tool import KeywordState
+from tagger_app.utils import dedupe_casefold
 
 
 class MutationStatus(str, Enum):

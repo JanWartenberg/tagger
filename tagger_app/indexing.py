@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from exif_tool import ExifTool, KeywordState
-from utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
+from tagger_app.exif_tool import ExifTool, KeywordState
+from tagger_app.utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
 
 # SQLite commonly permits 999 bind variables. Keep path-set queries comfortably below
 # that limit so supported builds with the default limit can index large workspaces.

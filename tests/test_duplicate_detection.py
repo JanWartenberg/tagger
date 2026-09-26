@@ -2,8 +2,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from exif_tool import KeywordState
-from services.duplicate_detection import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.duplicate_detection import (
     ExifToolCaptureMetadataReader,
     IndexedPhotoScope,
     MetadataReadError,
@@ -12,8 +12,8 @@ from services.duplicate_detection import (
     ScanRequest,
     SubfolderPhotoScope,
 )
-from services.photo_discovery import FileSystemPhotoDiscovery
-from utils import normalize_path
+from tagger_app.services.photo_discovery import FileSystemPhotoDiscovery
+from tagger_app.utils import normalize_path
 
 
 class MappingReader:

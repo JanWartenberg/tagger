@@ -1,6 +1,6 @@
 import unittest
 
-from services.keyword_limits import (
+from tagger_app.services.keyword_limits import (
     IPTC_KEYWORD_MAX_UTF8_BYTES,
     iptc_keyword_list_violation,
     keyword_length_violation,

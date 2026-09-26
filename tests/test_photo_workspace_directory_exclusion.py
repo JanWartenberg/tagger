@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from photo_workspace import PhotoWorkspace
+from tagger_app.photo_workspace import PhotoWorkspace
 
 
 class DirectoryExclusionTests(unittest.TestCase):

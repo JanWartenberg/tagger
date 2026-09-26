@@ -1,5 +1,4 @@
 import re
-import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
@@ -7,10 +6,9 @@ from pathlib import Path
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
-from actions import ActionSpec, KeyRoute, build_action_specs
-from exif_tool import ExifTool, KeywordState
-from file_actions import FilePaneActions
-from indexing import (
+from tagger_app.exif_tool import ExifTool, KeywordState
+from tagger_app.file_actions import FilePaneActions
+from tagger_app.indexing import (
     DateQueryError,
     IndexSyncResult,
     IptcEmptyIndexResult,
@@ -18,15 +16,15 @@ from indexing import (
     resolve_index_root,
     validate_search_query,
 )
-from indexing import (
+from tagger_app.indexing import (
     IndexRefreshProgress as IndexRefreshStep,
 )
-from photo_workspace import (
+from tagger_app.photo_workspace import (
     PhotoWorkspace,
     PhotoWorkspaceSnapshot,
     PhotoWorkspaceViewMode,
 )
-from services.background_coordinator import (
+from tagger_app.services.background_coordinator import (
     BackgroundCoordinator,
     BackgroundRunner,
     CoordinatorEvent,
@@ -52,28 +50,44 @@ from services.background_coordinator import (
     IptcEmptyIndexCompleted,
     KnownTagsCompleted,
 )
-from services.batch_tag_summary import BatchTagSummary, summarize_batch_tags
-from services.error_history import SessionErrorHistory
-from services.keyword_limits import (
+from tagger_app.services.batch_tag_summary import (
+    BatchTagSummary,
+    summarize_batch_tags,
+)
+from tagger_app.services.error_history import SessionErrorHistory
+from tagger_app.services.keyword_limits import (
     iptc_keyword_list_violation,
     keyword_length_violation,
     normalize_keyword,
 )
-from services.keyword_reconciliation import aligned_keyword_rows, reconcile_keywords
-from services.pending_tag_mutation import MutationStatus, PendingTagMutation, TagIntent
-from services.photo_discovery import (
+from tagger_app.services.keyword_reconciliation import (
+    aligned_keyword_rows,
+    reconcile_keywords,
+)
+from tagger_app.services.pending_tag_mutation import (
+    MutationStatus,
+    PendingTagMutation,
+    TagIntent,
+)
+from tagger_app.services.photo_discovery import (
     SUPPORTED_PHOTO_EXTENSIONS,
     FileSystemPhotoDiscovery,
 )
-from services.tag_mutation import TagMutationResult, TagMutationService
-from services.tag_mutation_coordinator import (
+from tagger_app.services.tag_mutation import TagMutationResult, TagMutationService
+from tagger_app.services.tag_mutation_coordinator import (
     TagMutationCoordinator,
     TagMutationLifecycle,
     TagMutationLifecycleKind,
 )
-from storage import add_recent_tag, load_config, load_recent_tags, save_config
-from ui.tag_completion import TagCompletion
-from utils import dedupe_casefold, normalize_path
+from tagger_app.storage import (
+    add_recent_tag,
+    load_config,
+    load_recent_tags,
+    save_config,
+)
+from tagger_app.ui.actions import ActionSpec, KeyRoute, build_action_specs
+from tagger_app.ui.tag_completion import TagCompletion
+from tagger_app.utils import dedupe_casefold, normalize_path
 
 DEFAULT_INDEX_ROOT = Path.home() / "Pictures"
 METADATA_READ_DEBOUNCE_MS = 25
@@ -4884,15 +4898,3 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.signals.finished.connect(_ok)
         worker.signals.error.connect(_err)
         self.pool.start(worker)
-
-
-def main() -> int:
-    app = QtWidgets.QApplication(sys.argv)
-    w = MainWindow()
-    app.installEventFilter(w)
-    w.show()
-    return app.exec()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

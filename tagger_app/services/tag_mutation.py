@@ -1,12 +1,12 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from exif_tool import ExifTool, KeywordState
-from services.keyword_limits import (
+from tagger_app.exif_tool import ExifTool, KeywordState
+from tagger_app.services.keyword_limits import (
     IptcKeywordLengthError,
     iptc_keyword_list_violation,
 )
-from services.keyword_reconciliation import normalize_keywords
+from tagger_app.services.keyword_reconciliation import normalize_keywords
 
 StateLoader = Callable[[str], KeywordState]
 KeywordTransform = Callable[[str, KeywordState], list[str]]

@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from exif_tool import KeywordState
-from services.pending_tag_mutation import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutationCoordinator,
     TagIntent,

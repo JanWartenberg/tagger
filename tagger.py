@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import QApplication
 
 
 def main():
-    from exif_ui import MainWindow
+    from tagger_app.ui.main_window import MainWindow
 
     app = QApplication(sys.argv)
     win = MainWindow()

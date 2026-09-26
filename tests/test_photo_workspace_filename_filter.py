@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from photo_workspace import PhotoWorkspace, PhotoWorkspaceViewMode
+from tagger_app.photo_workspace import PhotoWorkspace, PhotoWorkspaceViewMode
 
 
 class FilenameFilterTests(unittest.TestCase):

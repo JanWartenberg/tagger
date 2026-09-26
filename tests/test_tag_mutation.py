@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from exif_tool import KeywordState
-from services.tag_mutation import TagMutationService
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.tag_mutation import TagMutationService
 
 
 class TagMutationServiceTests(unittest.TestCase):

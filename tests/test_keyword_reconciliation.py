@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from exif_tool import KeywordState
-from services.keyword_reconciliation import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.keyword_reconciliation import (
     MismatchKind,
     aligned_keyword_rows,
     reconcile_keywords,

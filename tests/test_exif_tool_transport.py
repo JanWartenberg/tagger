@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from exif_tool import ExifTool, ExifToolError
+from tagger_app.exif_tool import ExifTool, ExifToolError
 
 
 class ExifToolTransportTests(unittest.TestCase):
@@ -27,14 +27,14 @@ class ExifToolTransportTests(unittest.TestCase):
                 b"",
             )
 
-        with patch("exif_tool.subprocess.run", side_effect=execute):
+        with patch("tagger_app.exif_tool.subprocess.run", side_effect=execute):
             state = ExifTool().read_keywords_many([photo])[photo]
         self.assertTrue(state.iptc_readable)
         self.assertEqual(state.iptc, ["Korallenmöwe"])
 
     def test_writes_unicode_keywords_and_paths_as_utf8(self):
         with patch(
-            "exif_tool.subprocess.run",
+            "tagger_app.exif_tool.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         ) as run:
             ExifTool().write_keyword_fields(
@@ -48,7 +48,7 @@ class ExifToolTransportTests(unittest.TestCase):
         for argument in ("photo\n-overwrite_original", "photo\r.jpg"):
             with (
                 self.subTest(argument=argument),
-                patch("exif_tool.subprocess.run") as run,
+                patch("tagger_app.exif_tool.subprocess.run") as run,
                 self.assertRaises(ExifToolError),
             ):
                 ExifTool()._run([argument])
@@ -57,7 +57,7 @@ class ExifToolTransportTests(unittest.TestCase):
     def test_reports_decoded_process_error(self):
         with (
             patch(
-                "exif_tool.subprocess.run",
+                "tagger_app.exif_tool.subprocess.run",
                 return_value=subprocess.CompletedProcess(
                     [], 1, b"", "Cannot read Möwe.JPG".encode()
                 ),

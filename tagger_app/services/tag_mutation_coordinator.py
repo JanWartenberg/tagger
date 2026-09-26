@@ -7,14 +7,14 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
-from exif_tool import KeywordState
-from services.pending_tag_mutation import (
+from tagger_app.exif_tool import KeywordState
+from tagger_app.services.pending_tag_mutation import (
     MutationStatus,
     PendingTagMutation,
     PendingTagMutationCoordinator,
     TagIntent,
 )
-from services.tag_mutation import TagMutationResult
+from tagger_app.services.tag_mutation import TagMutationResult
 
 
 class TagMutationRunner(Protocol):
