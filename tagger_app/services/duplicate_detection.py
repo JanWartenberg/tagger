@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from hashlib import sha256
 from pathlib import Path
+from threading import Lock
 from typing import Protocol
 
 from tagger_app.exif_tool import ExifTool, KeywordState
@@ -74,6 +76,125 @@ class ScanResult:
     processed: int
     total: int
     complete: bool
+
+
+class DuplicateScopeKind(str, Enum):
+    INDEX_DATABASE = "index-database"
+    SUBFOLDER = "subfolder"
+
+
+@dataclass(frozen=True)
+class ScopePreparationRequest:
+    request_id: int
+    kind: DuplicateScopeKind
+    root: str
+
+
+@dataclass(frozen=True)
+class DuplicateScopeSnapshot:
+    """An immutable path scope prepared before an explicit detector run."""
+
+    scope_id: str
+    kind: DuplicateScopeKind
+    root: str
+    paths: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        normalized = tuple(sorted({normalize_path(path) for path in self.paths}))
+        object.__setattr__(self, "root", normalize_path(self.root))
+        object.__setattr__(self, "paths", normalized)
+
+
+@dataclass(frozen=True)
+class ScopePreparationCompleted:
+    request: ScopePreparationRequest
+    snapshot: DuplicateScopeSnapshot
+
+
+@dataclass(frozen=True)
+class ScopePreparationFailed:
+    request: ScopePreparationRequest
+    error: str
+
+
+class ScopePreparationRunner(Protocol):
+    def submit(self, work: Callable[[], None]) -> None: ...
+
+
+class DuplicateScopeCoordinator:
+    """Prepare one current immutable scope without publishing stale work."""
+
+    def __init__(
+        self,
+        *,
+        discovery: object,
+        index_factory: Callable[[str], object],
+        runner: ScopePreparationRunner,
+        event_sink: Callable[
+            [ScopePreparationCompleted | ScopePreparationFailed], None
+        ],
+    ) -> None:
+        self._discovery = discovery
+        self._index_factory = index_factory
+        self._runner = runner
+        self._event_sink = event_sink
+        self._lock = Lock()
+        self._next_request_id = 0
+        self._current_request_id: int | None = None
+
+    def prepare_index(self, root: str | Path) -> ScopePreparationRequest:
+        return self._prepare(DuplicateScopeKind.INDEX_DATABASE, root)
+
+    def prepare_subfolder(self, root: str | Path) -> ScopePreparationRequest:
+        return self._prepare(DuplicateScopeKind.SUBFOLDER, root)
+
+    def invalidate(self) -> None:
+        """Prevent active work from publishing after the scope choice changes."""
+        with self._lock:
+            self._current_request_id = None
+
+    def _prepare(
+        self, kind: DuplicateScopeKind, root: str | Path
+    ) -> ScopePreparationRequest:
+        with self._lock:
+            self._next_request_id += 1
+            request = ScopePreparationRequest(
+                self._next_request_id, kind, normalize_path(root)
+            )
+            self._current_request_id = request.request_id
+
+        def work() -> None:
+            try:
+                if request.kind is DuplicateScopeKind.INDEX_DATABASE:
+                    scan_request = IndexedPhotoScope(
+                        self._index_factory(request.root)
+                    ).snapshot(f"scope-{request.request_id}")
+                else:
+                    scan_request = SubfolderPhotoScope(self._discovery).snapshot(
+                        f"scope-{request.request_id}", request.root
+                    )
+                event: ScopePreparationCompleted | ScopePreparationFailed = (
+                    ScopePreparationCompleted(
+                        request,
+                        DuplicateScopeSnapshot(
+                            scan_request.scan_id,
+                            request.kind,
+                            request.root,
+                            scan_request.paths,
+                        ),
+                    )
+                )
+            except Exception as error:  # noqa: BLE001 - worker reports failures
+                event = ScopePreparationFailed(
+                    request, str(error) or "scope preparation failed"
+                )
+            with self._lock:
+                if self._current_request_id != request.request_id:
+                    return
+            self._event_sink(event)
+
+        self._runner.submit(work)
+        return request
 
 
 class CaptureMetadataReader(Protocol):

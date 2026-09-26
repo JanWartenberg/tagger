@@ -54,6 +54,13 @@ from tagger_app.services.batch_tag_summary import (
     BatchTagSummary,
     summarize_batch_tags,
 )
+from tagger_app.services.duplicate_detection import (
+    DuplicateScopeCoordinator,
+    DuplicateScopeKind,
+    DuplicateScopeSnapshot,
+    ScopePreparationCompleted,
+    ScopePreparationFailed,
+)
 from tagger_app.services.error_history import SessionErrorHistory
 from tagger_app.services.keyword_limits import (
     iptc_keyword_list_violation,
@@ -761,6 +768,7 @@ class PhotoIndexAdapter:
 
 class MainWindow(QtWidgets.QMainWindow):
     backgroundDiscoveryEvent = QtCore.pyqtSignal(object)
+    duplicateScopeEvent = QtCore.pyqtSignal(object)
 
     def __init__(
         self,
@@ -846,13 +854,25 @@ class MainWindow(QtWidgets.QMainWindow):
         self._coordinator_workspace_generation: int | None = None
 
         self._config = load_config()
+        discovery_adapter = discovery or FileSystemPhotoDiscovery()
+        background_runner_adapter = background_runner or QtBackgroundRunner(self.pool)
         self._background_coordinator = BackgroundCoordinator(
-            discovery=discovery or FileSystemPhotoDiscovery(),
+            discovery=discovery_adapter,
             index=index_adapter or PhotoIndexAdapter(self.exif),
-            runner=background_runner or QtBackgroundRunner(self.pool),
+            runner=background_runner_adapter,
             event_sink=self.backgroundDiscoveryEvent.emit,
         )
         self.backgroundDiscoveryEvent.connect(self._handle_coordinator_event)
+        self._prepared_duplicate_scope: DuplicateScopeSnapshot | None = None
+        self._duplicate_scope_preparing = False
+        self._active_duplicate_scope_request_id: int | None = None
+        self._duplicate_scope_coordinator = DuplicateScopeCoordinator(
+            discovery=discovery_adapter,
+            index_factory=PhotoIndex,
+            runner=background_runner_adapter,
+            event_sink=self.duplicateScopeEvent.emit,
+        )
+        self.duplicateScopeEvent.connect(self._handle_duplicate_scope_event)
 
         self.files = FileListWidget()
         self._file_items_by_path: dict[str, QtWidgets.QListWidgetItem] = {}
@@ -1360,16 +1380,36 @@ class MainWindow(QtWidgets.QMainWindow):
         setup.setMinimumWidth(280)
         setup_layout = QtWidgets.QFormLayout(setup)
         self.duplicateScopeCombo = QtWidgets.QComboBox()
-        self.duplicateScopeCombo.addItems(
-            ("Current index database", "Choose subfolder…")
+        self.duplicateScopeCombo.addItem(
+            "Current index database", DuplicateScopeKind.INDEX_DATABASE
+        )
+        self.duplicateScopeCombo.addItem(
+            "Choose subfolder…", DuplicateScopeKind.SUBFOLDER
+        )
+        self.duplicateScopeCombo.currentIndexChanged.connect(
+            self._duplicate_scope_choice_changed
         )
         setup_layout.addRow("Scope:", self.duplicateScopeCombo)
-        setup_layout.addRow("Scope size:", QtWidgets.QLabel("Not prepared"))
+        self.duplicateScopePathLabel = QtWidgets.QLabel("No active index database")
+        self.duplicateScopePathLabel.setWordWrap(True)
+        setup_layout.addRow("Location:", self.duplicateScopePathLabel)
+        self.duplicateScopeSizeLabel = QtWidgets.QLabel("Not prepared")
+        setup_layout.addRow("Scope size:", self.duplicateScopeSizeLabel)
         setup_layout.addRow("Method:", QtWidgets.QLabel("Same capture timestamp"))
-        prepare_button = QtWidgets.QPushButton("Prepare scope")
-        prepare_button.setEnabled(False)
-        prepare_button.setToolTip("Scope preparation is not wired in this prototype")
-        setup_layout.addRow(prepare_button)
+        scope_actions = QtWidgets.QWidget()
+        scope_actions_layout = QtWidgets.QHBoxLayout(scope_actions)
+        scope_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.duplicatePrepareScopeButton = QtWidgets.QPushButton("Prepare scope")
+        self.duplicatePrepareScopeButton.clicked.connect(self.prepare_duplicate_scope)
+        self.duplicatePrepareScopeButton.setEnabled(False)
+        self.duplicateStartScanButton = QtWidgets.QPushButton("Start scan")
+        self.duplicateStartScanButton.setEnabled(False)
+        self.duplicateStartScanButton.setToolTip(
+            "Detector execution is implemented in the next delivery slice"
+        )
+        scope_actions_layout.addWidget(self.duplicatePrepareScopeButton)
+        scope_actions_layout.addWidget(self.duplicateStartScanButton)
+        setup_layout.addRow(scope_actions)
         setup_layout.setFieldGrowthPolicy(
             QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
@@ -1377,20 +1417,24 @@ class MainWindow(QtWidgets.QMainWindow):
         empty = QtWidgets.QWidget()
         empty_layout = QtWidgets.QVBoxLayout(empty)
         empty_layout.addStretch(1)
-        empty_title = QtWidgets.QLabel("No candidate scan has been started")
-        empty_title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        empty_title_font = empty_title.font()
+        self.duplicateReviewEmptyTitle = QtWidgets.QLabel(
+            "No candidate scan has been started"
+        )
+        self.duplicateReviewEmptyTitle.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_title_font = self.duplicateReviewEmptyTitle.font()
         empty_title_font.setPointSize(empty_title_font.pointSize() + 2)
         empty_title_font.setBold(True)
-        empty_title.setFont(empty_title_font)
-        empty_layout.addWidget(empty_title)
-        empty_detail = QtWidgets.QLabel(
-            "This branch prototypes view navigation only. Opening duplicate review "
-            "does not scan photos or change metadata."
+        self.duplicateReviewEmptyTitle.setFont(empty_title_font)
+        empty_layout.addWidget(self.duplicateReviewEmptyTitle)
+        self.duplicateReviewEmptyDetail = QtWidgets.QLabel(
+            "Prepare an index-database or subfolder scope first. Scope preparation "
+            "does not scan metadata or change files."
         )
-        empty_detail.setWordWrap(True)
-        empty_detail.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
-        empty_layout.addWidget(empty_detail)
+        self.duplicateReviewEmptyDetail.setWordWrap(True)
+        self.duplicateReviewEmptyDetail.setAlignment(
+            QtCore.Qt.AlignmentFlag.AlignCenter
+        )
+        empty_layout.addWidget(self.duplicateReviewEmptyDetail)
         empty_layout.addStretch(1)
 
         content.addWidget(setup)
@@ -1401,6 +1445,105 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addWidget(content, 1)
         return view
 
+    def _duplicate_scope_choice_changed(self) -> None:
+        self._duplicate_scope_coordinator.invalidate()
+        self._prepared_duplicate_scope = None
+        self._duplicate_scope_preparing = False
+        self._active_duplicate_scope_request_id = None
+        self.duplicateScopeSizeLabel.setText("Not prepared")
+        self.duplicateStartScanButton.setEnabled(False)
+        self.duplicateReviewEmptyTitle.setText("No candidate scan has been started")
+        self.duplicateReviewEmptyDetail.setText(
+            "Prepare an index-database or subfolder scope first. Scope preparation "
+            "does not scan metadata or change files."
+        )
+        self._refresh_duplicate_scope_controls()
+
+    def _refresh_duplicate_scope_controls(self) -> None:
+        kind = self.duplicateScopeCombo.currentData()
+        prepared = self._prepared_duplicate_scope
+        if prepared is not None and prepared.kind is kind:
+            self.duplicateScopePathLabel.setText(prepared.root)
+            self.duplicatePrepareScopeButton.setEnabled(True)
+            self.duplicatePrepareScopeButton.setText("Prepare again")
+            self.duplicateStartScanButton.setEnabled(False)
+            return
+        if self._duplicate_scope_preparing:
+            self.duplicatePrepareScopeButton.setEnabled(False)
+            self.duplicatePrepareScopeButton.setText("Preparing…")
+            return
+        if kind is DuplicateScopeKind.INDEX_DATABASE:
+            location = self._index_root or "No active index database"
+            can_prepare = self._index_root is not None
+        else:
+            location = "Choose a folder when preparing the scope"
+            can_prepare = True
+        self.duplicateScopePathLabel.setText(location)
+        self.duplicatePrepareScopeButton.setEnabled(can_prepare)
+        self.duplicatePrepareScopeButton.setText("Prepare scope")
+
+    def prepare_duplicate_scope(self) -> None:
+        kind = self.duplicateScopeCombo.currentData()
+        if kind is DuplicateScopeKind.INDEX_DATABASE:
+            if self._index_root is None:
+                self.duplicateScopeSizeLabel.setText("No active index database")
+                return
+            root = self._index_root
+            request = self._duplicate_scope_coordinator.prepare_index(root)
+        else:
+            root = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Choose duplicate scan folder"
+            )
+            if not root:
+                return
+            request = self._duplicate_scope_coordinator.prepare_subfolder(root)
+        self._active_duplicate_scope_request_id = request.request_id
+        self._prepared_duplicate_scope = None
+        self._duplicate_scope_preparing = True
+        self.duplicateScopePathLabel.setText(normalize_path(root))
+        self.duplicateScopeSizeLabel.setText("Preparing…")
+        self.duplicateReviewEmptyTitle.setText("Preparing scope…")
+        self.duplicateReviewEmptyDetail.setText(
+            "Discovering supported photo paths in the background. Metadata is not "
+            "being read."
+        )
+        self.duplicatePrepareScopeButton.setText("Preparing…")
+        self.duplicatePrepareScopeButton.setEnabled(False)
+        self.duplicateStartScanButton.setEnabled(False)
+        self.statusBar().showMessage("Preparing duplicate scan scope…")
+
+    def _handle_duplicate_scope_event(
+        self, event: ScopePreparationCompleted | ScopePreparationFailed
+    ) -> None:
+        if event.request.request_id != self._active_duplicate_scope_request_id:
+            return
+        self._active_duplicate_scope_request_id = None
+        self._duplicate_scope_preparing = False
+        self.duplicatePrepareScopeButton.setText("Prepare again")
+        self.duplicatePrepareScopeButton.setEnabled(True)
+        if isinstance(event, ScopePreparationFailed):
+            self._prepared_duplicate_scope = None
+            self.duplicateScopeSizeLabel.setText("Preparation failed")
+            self.duplicateReviewEmptyTitle.setText("Scope preparation failed")
+            self.duplicateReviewEmptyDetail.setText(event.error)
+            self.duplicateStartScanButton.setEnabled(False)
+            self.statusBar().showMessage(
+                f"Duplicate scope preparation failed: {event.error}"
+            )
+            self._record_session_error("Duplicate scope", event.error)
+            return
+        self._prepared_duplicate_scope = event.snapshot
+        count = len(event.snapshot.paths)
+        self.duplicateScopePathLabel.setText(event.snapshot.root)
+        self.duplicateScopeSizeLabel.setText(f"{count:,} photos ready")
+        self.duplicateReviewEmptyTitle.setText("Scope is ready")
+        self.duplicateReviewEmptyDetail.setText(
+            f"{count:,} photo paths are frozen for the next explicit detector run. "
+            "No metadata scan has started."
+        )
+        self.duplicateStartScanButton.setEnabled(False)
+        self.statusBar().showMessage(f"Duplicate scope ready: {count:,} photos")
+
     def show_duplicate_review(self) -> None:
         focus = self.focusWidget()
         if focus is not None and self.taggingWorkspaceView.isAncestorOf(focus):
@@ -1410,6 +1553,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.viewSelector.setAccessibleName(
             "Current application view: Duplicate review"
         )
+        self._refresh_duplicate_scope_controls()
         self.duplicateReviewBackButton.setFocus()
 
     def show_tagging_workspace(self) -> None:

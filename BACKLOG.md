@@ -6,7 +6,7 @@
 are ordered by dependency:
 
 1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — completed
-2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — needs triage
+2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — ready for agent; scope preparation implemented on the duplicate-review branch
 3. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — needs triage; blocked by ticket 02
 
 The read-only detection foundation is accepted. Keep assessment and metadata

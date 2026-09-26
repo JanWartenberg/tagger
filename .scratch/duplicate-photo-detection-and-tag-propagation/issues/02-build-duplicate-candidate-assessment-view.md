@@ -1,6 +1,6 @@
 # 02 — Build Duplicate-Candidate Assessment View
 
-Status: needs-triage
+Status: ready-for-agent
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
@@ -64,6 +64,16 @@ blocks normal tagging commands while duplicate review is active.
 Branch policy: continue all duplicate-detection work on
 `prototype/duplicate-review-ui` for now. Keep `main` at the original accepted
 TAGGER baseline until an explicit integration decision is made.
+
+Implementation progress:
+
+- Scope preparation now snapshots either the active index database or a selected
+  subfolder in the background and displays the frozen path count.
+- Superseded scope work cannot publish over the current choice.
+- Opening review and preparing a scope do not start metadata detection or mutate
+  files.
+- Detector execution, progress/cancellation, candidate enrichment, and assessment
+  remain to be implemented.
 
 ## Design Reference
 

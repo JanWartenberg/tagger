@@ -4,12 +4,16 @@ from pathlib import Path
 
 from tagger_app.exif_tool import KeywordState
 from tagger_app.services.duplicate_detection import (
+    DuplicateScopeCoordinator,
+    DuplicateScopeKind,
     ExifToolCaptureMetadataReader,
     IndexedPhotoScope,
     MetadataReadError,
     PhotoMetadata,
     SameCaptureTimestampDetector,
     ScanRequest,
+    ScopePreparationCompleted,
+    ScopePreparationFailed,
     SubfolderPhotoScope,
 )
 from tagger_app.services.photo_discovery import FileSystemPhotoDiscovery
@@ -143,6 +147,107 @@ class ScopeAdapterTests(unittest.TestCase):
                 )
             ),
         )
+
+
+class ScopeCoordinatorTests(unittest.TestCase):
+    class Runner:
+        def __init__(self):
+            self.work = []
+
+        def submit(self, work):
+            self.work.append(work)
+
+        def run(self, index=0):
+            self.work.pop(index)()
+
+    class Discovery:
+        def __init__(self, results):
+            self.results = results
+
+        def discover(self, root):
+            result = self.results[root]
+            if isinstance(result, Exception):
+                raise result
+            return result
+
+    class Index:
+        def __init__(self, paths):
+            self.paths = paths
+
+        def snapshot_photo_paths(self):
+            return self.paths
+
+    def test_prepares_immutable_index_and_subfolder_snapshots(self):
+        runner = self.Runner()
+        events = []
+        discovery = self.Discovery(
+            {normalize_path("folder"): ["folder/b.jpg", "folder/a.jpg"]}
+        )
+        coordinator = DuplicateScopeCoordinator(
+            discovery=discovery,
+            index_factory=lambda _root: self.Index(["index/b.jpg", "index/a.jpg"]),
+            runner=runner,
+            event_sink=events.append,
+        )
+
+        coordinator.prepare_index("index-root")
+        runner.run()
+        coordinator.prepare_subfolder("folder")
+        runner.run()
+
+        self.assertEqual(len(events), 2)
+        self.assertTrue(all(isinstance(event, ScopePreparationCompleted) for event in events))
+        self.assertEqual(events[0].snapshot.kind, DuplicateScopeKind.INDEX_DATABASE)
+        self.assertEqual(
+            events[0].snapshot.paths,
+            (normalize_path("index/a.jpg"), normalize_path("index/b.jpg")),
+        )
+        self.assertEqual(events[1].snapshot.kind, DuplicateScopeKind.SUBFOLDER)
+        self.assertEqual(events[1].snapshot.root, normalize_path("folder"))
+
+    def test_superseded_scope_cannot_publish_after_newer_scope(self):
+        runner = self.Runner()
+        events = []
+        discovery = self.Discovery(
+            {
+                normalize_path("old"): ["old/photo.jpg"],
+                normalize_path("new"): ["new/photo.jpg"],
+            }
+        )
+        coordinator = DuplicateScopeCoordinator(
+            discovery=discovery,
+            index_factory=lambda _root: self.Index([]),
+            runner=runner,
+            event_sink=events.append,
+        )
+
+        coordinator.prepare_subfolder("old")
+        coordinator.prepare_subfolder("new")
+        runner.run(1)
+        runner.run(0)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].snapshot.root, normalize_path("new"))
+
+    def test_current_scope_failure_is_reported(self):
+        runner = self.Runner()
+        events = []
+        discovery = self.Discovery(
+            {normalize_path("broken"): RuntimeError("cannot enumerate")}
+        )
+        coordinator = DuplicateScopeCoordinator(
+            discovery=discovery,
+            index_factory=lambda _root: self.Index([]),
+            runner=runner,
+            event_sink=events.append,
+        )
+
+        coordinator.prepare_subfolder("broken")
+        runner.run()
+
+        self.assertEqual(len(events), 1)
+        self.assertIsInstance(events[0], ScopePreparationFailed)
+        self.assertEqual(events[0].error, "cannot enumerate")
 
 
 class ExifToolReaderTests(unittest.TestCase):

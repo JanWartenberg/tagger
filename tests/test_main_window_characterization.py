@@ -176,6 +176,79 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [photo])
         self.assertEqual(self.window.dbSearchEdit.text(), "draft search")
 
+    def test_duplicate_review_prepares_index_scope_only_after_explicit_request(
+        self,
+    ) -> None:
+        paths = [normalize_path("C:/photos/b.jpg"), normalize_path("C:/photos/a.jpg")]
+        FakePhotoIndex.snapshot_paths = paths
+        self.window._index_root = normalize_path("C:/photos")
+
+        self.window.show_duplicate_review()
+        self.app.processEvents()
+
+        self.assertEqual(self.discovery_runner.scheduled, [])
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Not prepared")
+        self.assertTrue(self.window.duplicatePrepareScopeButton.isEnabled())
+
+        self.window.duplicatePrepareScopeButton.click()
+
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Preparing…")
+        self.assertIsNone(self.window._prepared_duplicate_scope)
+        self.assertEqual(FakePhotoIndex.snapshot_reads, 0)
+
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.assertEqual(FakePhotoIndex.snapshot_reads, 1)
+        self.assertEqual(
+            self.window._prepared_duplicate_scope.paths, tuple(sorted(paths))
+        )
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "2 photos ready")
+        self.assertFalse(self.window.duplicateStartScanButton.isEnabled())
+        self.assertEqual(FakeExifTool.states_by_path, {})
+
+    def test_duplicate_review_prepares_selected_subfolder_in_background(self) -> None:
+        folder = normalize_path("C:/review")
+        self.discovery.results[folder] = ["C:/review/z.jpg", "C:/review/a.jpg"]
+        self.window.show_duplicate_review()
+        self.window.duplicateScopeCombo.setCurrentIndex(1)
+
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value=folder,
+        ):
+            self.window.duplicatePrepareScopeButton.click()
+
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Preparing…")
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        snapshot = self.window._prepared_duplicate_scope
+        self.assertEqual(snapshot.root, folder)
+        self.assertEqual(
+            snapshot.paths,
+            (normalize_path("C:/review/a.jpg"), normalize_path("C:/review/z.jpg")),
+        )
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "2 photos ready")
+
+    def test_duplicate_scope_completion_cannot_replace_a_new_scope_choice(self) -> None:
+        folder = normalize_path("C:/old-review")
+        self.discovery.results[folder] = ["C:/old-review/photo.jpg"]
+        self.window.show_duplicate_review()
+        self.window.duplicateScopeCombo.setCurrentIndex(1)
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value=folder,
+        ):
+            self.window.duplicatePrepareScopeButton.click()
+
+        self.window.duplicateScopeCombo.setCurrentIndex(0)
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.assertIsNone(self.window._prepared_duplicate_scope)
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Not prepared")
+
     def test_view_selector_coexists_with_active_status_bar_widgets(self) -> None:
         self.window.iptcEmptyRefreshOffer.show()
         self.window.indexRepairStatusLabel.setText("Index refresh: 12,345 / 98,765")
@@ -3384,6 +3457,8 @@ class FakePhotoIndex:
     states_by_path: ClassVar[dict[str, KeywordState]] = {}
     known_tags: ClassVar[set[str]] = set()
     known_tag_reads = 0
+    snapshot_paths: ClassVar[list[str]] = []
+    snapshot_reads = 0
 
     @classmethod
     def reset(cls) -> None:
@@ -3403,12 +3478,18 @@ class FakePhotoIndex:
         cls.states_by_path = {}
         cls.known_tags = set()
         cls.known_tag_reads = 0
+        cls.snapshot_paths = []
+        cls.snapshot_reads = 0
 
     def __init__(self, root: str) -> None:
         self.root = root
 
     def is_initialized(self) -> bool:
         return True
+
+    def snapshot_photo_paths(self) -> tuple[str, ...]:
+        type(self).snapshot_reads += 1
+        return tuple(type(self).snapshot_paths)
 
     def is_refresh_stale(self) -> bool:
         return type(self).refresh_stale
