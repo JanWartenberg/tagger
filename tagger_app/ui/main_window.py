@@ -1330,6 +1330,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.keywordsList.viewport(),
             self.addEdit,
             self.cmdLine,
+            self.duplicateReviewView,
+            self.duplicateReviewBackButton,
+            self.duplicateScopeCombo,
+            self.duplicatePrepareScopeButton,
+            self.duplicateStartScanButton,
         ]:
             if w is not None:
                 w.setAcceptDrops(True)
@@ -1339,7 +1344,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Extra shortcuts (work regardless of focus)
         self._shortcuts: list[QtGui.QShortcut] = []
-        self._vim_repeated_key_pending: dict[tuple[str, int], int] = {}
+        self._vim_sequence_pending: dict[str, int] = {}
         self._vim_space_pending: int | None = None
         self._vim_visual_keywords = False
         self._vim_visual_anchor = 0
@@ -1703,7 +1708,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _format_key_route_label(self, route: KeyRoute) -> str:
         if route.kind == "sequence":
-            if len(route.sequence) == 2 and route.sequence[0] == route.sequence[1]:
+            if len(route.sequence) == 2 and all(
+                len(token) == 1 for token in route.sequence
+            ):
                 return "".join(route.sequence)
             if route.sequence[0] == "Space":
                 return f"Space {route.sequence[1].upper()}"
@@ -1839,6 +1846,10 @@ class MainWindow(QtWidgets.QMainWindow):
             event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
         ):
             return "Shift+K"
+        if event.key() == QtCore.Qt.Key.Key_T and (
+            event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
+        ):
+            return "T"
         if event.key() == QtCore.Qt.Key.Key_Down and (
             event.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier
         ):
@@ -1955,30 +1966,6 @@ class MainWindow(QtWidgets.QMainWindow):
         timeout_ms = route.timeout_ms or 600
         now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
 
-        if prefix == suffix:
-            if list_widget is None:
-                return False
-            if route.widget_refs:
-                allowed_widgets = {
-                    self._widget_refs[ref]
-                    for ref in route.widget_refs
-                    if ref in self._widget_refs
-                }
-                if list_widget not in allowed_widgets:
-                    return False
-            key = (prefix, id(list_widget))
-            last = self._vim_repeated_key_pending.get(key)
-            if token == prefix and last is not None and (now - last) <= timeout_ms:
-                self._vim_repeated_key_pending.pop(key, None)
-                self._dispatch_action(action_id)
-                return True
-            if token == prefix:
-                self._vim_repeated_key_pending[key] = now
-                return True
-            if last is not None:
-                self._vim_repeated_key_pending.pop(key, None)
-            return False
-
         if prefix == "Space":
             if token == prefix:
                 self._vim_space_pending = now
@@ -2014,6 +2001,48 @@ class MainWindow(QtWidgets.QMainWindow):
 
         return False
 
+    def _handle_non_space_sequence_routes(
+        self,
+        token: str,
+        obj: QtCore.QObject | None,
+        list_widget: QtWidgets.QListWidget | None,
+    ) -> bool:
+        routes: list[tuple[str, KeyRoute]] = []
+        for spec in self._actions_by_id.values():
+            for route in spec.key_routes:
+                if (
+                    route.kind == "sequence"
+                    and len(route.sequence) == 2
+                    and route.sequence[0] != "Space"
+                    and self._scope_matches(route, obj, list_widget)
+                ):
+                    routes.append((spec.id, route))
+
+        now = int(QtCore.QDateTime.currentMSecsSinceEpoch())
+        for prefix, started_at in tuple(self._vim_sequence_pending.items()):
+            matching = [
+                (action_id, route)
+                for action_id, route in routes
+                if route.sequence[0] == prefix
+            ]
+            timeout_ms = max(
+                (route.timeout_ms or 600 for _action_id, route in matching),
+                default=600,
+            )
+            self._vim_sequence_pending.pop(prefix, None)
+            if now - started_at > timeout_ms:
+                continue
+            for action_id, route in matching:
+                if token == route.sequence[1]:
+                    self._dispatch_action(action_id)
+                    return True
+
+        prefixes = {route.sequence[0] for _action_id, route in routes}
+        if token in prefixes:
+            self._vim_sequence_pending[token] = now
+            return True
+        return False
+
     def _handle_key_routes(self, obj: QtCore.QObject, event: QtGui.QKeyEvent) -> bool:
         token = self._event_token(event)
         if token is None:
@@ -2021,10 +2050,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
         focus = self.focusWidget()
         list_widget = self._resolve_current_list_widget(obj)
+        accepts_vim_route = not isinstance(
+            focus, QtWidgets.QLineEdit
+        ) and self._mods_ok(event.modifiers())
+        if not accepts_vim_route:
+            self._vim_sequence_pending.clear()
 
-        if not isinstance(focus, QtWidgets.QLineEdit) and self._mods_ok(
-            event.modifiers()
-        ):
+        if accepts_vim_route:
             if self._vim_space_pending is not None:
                 for spec in self._actions_by_id.values():
                     for route in spec.key_routes:
@@ -2036,6 +2068,8 @@ class MainWindow(QtWidgets.QMainWindow):
                             )
                         ):
                             return True
+            if self._handle_non_space_sequence_routes(token, obj, list_widget):
+                return True
             for scope in ("global_non_input", "list_widgets"):
                 match = self._find_matching_single_route(token, scope, obj, list_widget)
                 if match is not None:

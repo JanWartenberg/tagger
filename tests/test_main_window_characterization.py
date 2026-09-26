@@ -176,6 +176,49 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.selected_file_paths(), [photo])
         self.assertEqual(self.window.dbSearchEdit.text(), "draft search")
 
+    def test_view_keyboard_aliases_switch_views(self) -> None:
+        self.window.files.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_D,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_T,
+            QtCore.Qt.KeyboardModifier.ControlModifier
+            | QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_G)
+        QtTest.QTest.keyClick(self.window.files, QtCore.Qt.Key.Key_T)
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+
+        QtTest.QTest.keyClick(self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_G)
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_T,
+            QtCore.Qt.KeyboardModifier.ShiftModifier,
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+
+    def test_vim_view_aliases_do_not_capture_text_input(self) -> None:
+        self.window.dbSearchEdit.setFocus()
+
+        QtTest.QTest.keyClicks(self.window.dbSearchEdit, "gt")
+        self.app.processEvents()
+
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+        self.assertEqual(self.window.dbSearchEdit.text(), "gt")
+
     def test_duplicate_review_prepares_index_scope_only_after_explicit_request(
         self,
     ) -> None:

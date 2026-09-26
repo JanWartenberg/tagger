@@ -76,12 +76,30 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Open duplicate candidate review",
             handler_name="show_duplicate_review",
             command=CommandBinding("duplicates"),
+            shortcuts=(ShortcutBinding("Ctrl+Alt+D"),),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("g", "t"),
+                    scope="global_non_input",
+                    timeout_ms=600,
+                ),
+            ),
         ),
         ActionSpec(
             id="showtagging",
             description="Return to the tagging workspace",
             handler_name="show_tagging_workspace",
             command=CommandBinding("tagging"),
+            shortcuts=(ShortcutBinding("Ctrl+Alt+T"),),
+            key_routes=(
+                KeyRoute(
+                    kind="sequence",
+                    sequence=("g", "T"),
+                    scope="global_non_input",
+                    timeout_ms=600,
+                ),
+            ),
         ),
         ActionSpec(
             id="reindex",
