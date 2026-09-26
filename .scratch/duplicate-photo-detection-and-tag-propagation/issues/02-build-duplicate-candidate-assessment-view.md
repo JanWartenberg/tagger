@@ -47,6 +47,14 @@ changing metadata.
 - Alternative detectors.
 - Deleting, moving, or consolidating files.
 
+## Prototype
+
+A throwaway navigation and assessment-view prototype is available on branch
+`prototype/duplicate-review-ui` at
+`prototype/duplicate-review-navigation-variants.html`. It compares a status-bar
+view selector, a hover/focus edge drawer, and a compact title-bar menu without
+changing the tagging workspace.
+
 ## Design Reference
 
 See the accepted [design direction](../design-notes.md).
