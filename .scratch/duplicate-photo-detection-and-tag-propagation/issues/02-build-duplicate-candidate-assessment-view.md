@@ -61,6 +61,10 @@ because it consumes vertical workspace. The same branch contains a runnable Qt
 navigation shell using a `QStackedWidget`; it preserves the Photo Workspace and
 blocks normal tagging commands while duplicate review is active.
 
+Branch policy: continue all duplicate-detection work on
+`prototype/duplicate-review-ui` for now. Keep `main` at the original accepted
+TAGGER baseline until an explicit integration decision is made.
+
 ## Design Reference
 
 See the accepted [design direction](../design-notes.md).
