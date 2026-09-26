@@ -55,6 +55,12 @@ A throwaway navigation and assessment-view prototype is available on branch
 view selector, a hover/focus edge drawer, and a compact title-bar menu without
 changing the tagging workspace.
 
+Selected direction: a compact `Views` menu in the existing status bar. The edge
+drawer was rejected as tricky, and a separate application-menu row was rejected
+because it consumes vertical workspace. The same branch contains a runnable Qt
+navigation shell using a `QStackedWidget`; it preserves the Photo Workspace and
+blocks normal tagging commands while duplicate review is active.
+
 ## Design Reference
 
 See the accepted [design direction](../design-notes.md).

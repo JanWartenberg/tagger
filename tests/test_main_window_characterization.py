@@ -147,6 +147,72 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(self.window.workspaceCountLabel.text(), "2 in workspace")
         self.assertFalse(self.window.filterSummary.isVisible())
 
+    def test_status_bar_view_selector_preserves_the_tagging_workspace(self) -> None:
+        (photo,) = self._add_paths("first.jpg")
+        self.window.dbSearchEdit.setText("draft search")
+        self.window.files.setFocus()
+
+        self.window.duplicateReviewAction.trigger()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertFalse(self.window.taggingWorkspaceView.isVisible())
+        self.assertEqual(self.window.viewSelector.text(), "Views")
+        self.assertEqual(self.window.selected_file_paths(), [photo])
+        self.assertEqual(self.window.dbSearchEdit.text(), "draft search")
+
+        self.window.duplicateReviewBackButton.click()
+        self.app.processEvents()
+
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+        self.assertFalse(self.window.duplicateReviewView.isVisible())
+        self.assertEqual(self.window.viewSelector.text(), "Views")
+        self.assertIs(self.window.focusWidget(), self.window.files)
+        self.assertEqual(self.window.selected_file_paths(), [photo])
+        self.assertEqual(self.window.dbSearchEdit.text(), "draft search")
+
+    def test_view_selector_coexists_with_active_status_bar_widgets(self) -> None:
+        self.window.iptcEmptyRefreshOffer.show()
+        self.window.indexRepairStatusLabel.setText("Index refresh: 12,345 / 98,765")
+        self.window.statusBar().showMessage("Scanning the active photo workspace")
+        self.window.resize(1100, 700)
+        self.app.processEvents()
+
+        widgets = (
+            self.window.iptcEmptyRefreshOffer,
+            self.window.indexRepairStatusLabel,
+            self.window.viewSelector,
+        )
+        self.assertTrue(all(widget.isVisible() for widget in widgets))
+        self.assertLessEqual(self.window.viewSelector.sizeHint().width(), 70)
+        for left, right in zip(widgets, widgets[1:]):
+            self.assertLessEqual(left.geometry().right(), right.geometry().left())
+        self.assertLessEqual(
+            self.window.viewSelector.geometry().right(),
+            self.window.statusBar().contentsRect().right(),
+        )
+        self.assertEqual(
+            self.window.statusBar().currentMessage(),
+            "Scanning the active photo workspace",
+        )
+
+    def test_duplicate_review_blocks_tagging_commands_but_remains_command_accessible(
+        self,
+    ) -> None:
+        self.window._dispatch_command("duplicates", [])
+
+        self.window._dispatch_command("addfolder", [])
+
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertEqual(
+            self.window.statusBar().currentMessage(),
+            "Return to the tagging workspace to use tagging commands",
+        )
+
+        self.window._dispatch_command("tagging", [])
+
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+
     def test_files_filter_box_has_separate_date_field_and_compact_summary(self) -> None:
         _first, second = self._add_paths("first.jpg", "second.jpg")
         FakePhotoIndex.search_results = {second}

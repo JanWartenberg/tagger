@@ -1211,7 +1211,15 @@ class MainWindow(QtWidgets.QMainWindow):
         splitter.setStretchFactor(1, 2)
         splitter.setChildrenCollapsible(False)
 
-        self.setCentralWidget(splitter)
+        self.taggingWorkspaceView = splitter
+        self.duplicateReviewView = self._build_duplicate_review_view()
+        self.mainViews = QtWidgets.QStackedWidget()
+        self.mainViews.setObjectName("mainViews")
+        self.mainViews.addWidget(self.taggingWorkspaceView)
+        self.mainViews.addWidget(self.duplicateReviewView)
+        self.setCentralWidget(self.mainViews)
+        self._tagging_focus_widget: QtWidgets.QWidget | None = None
+
         self.iptcEmptyRefreshOffer = QtWidgets.QWidget()
         self.iptcEmptyRefreshOffer.setObjectName("iptcEmptyRefreshOffer")
         refresh_offer_layout = QtWidgets.QHBoxLayout(self.iptcEmptyRefreshOffer)
@@ -1228,6 +1236,27 @@ class MainWindow(QtWidgets.QMainWindow):
         self.indexRepairStatusLabel = QtWidgets.QLabel()
         self.indexRepairStatusLabel.setObjectName("indexRepairStatus")
         self.statusBar().addPermanentWidget(self.indexRepairStatusLabel)
+        self.viewSelector = QtWidgets.QToolButton()
+        self.viewSelector.setObjectName("viewSelector")
+        self.viewSelector.setText("Views")
+        self.viewSelector.setAutoRaise(True)
+        self.viewSelector.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.viewSelector.setToolTip("Switch between tagging and duplicate review")
+        self.viewSelector.setAccessibleName("Current application view: Tagging")
+        view_menu = QtWidgets.QMenu(self.viewSelector)
+        self.taggingViewAction = view_menu.addAction("Tagging workspace")
+        self.duplicateReviewAction = view_menu.addAction("Duplicate review")
+        self.taggingViewAction.setCheckable(True)
+        self.duplicateReviewAction.setCheckable(True)
+        self._viewActionGroup = QtGui.QActionGroup(self)
+        self._viewActionGroup.setExclusive(True)
+        self._viewActionGroup.addAction(self.taggingViewAction)
+        self._viewActionGroup.addAction(self.duplicateReviewAction)
+        self.taggingViewAction.setChecked(True)
+        self.taggingViewAction.triggered.connect(self.show_tagging_workspace)
+        self.duplicateReviewAction.triggered.connect(self.show_duplicate_review)
+        self.viewSelector.setMenu(view_menu)
+        self.statusBar().addPermanentWidget(self.viewSelector)
         self.statusBar().showMessage("Ready")
         self.resize(1100, 700)
         splitter.setSizes([450, 650])
@@ -1286,6 +1315,98 @@ class MainWindow(QtWidgets.QMainWindow):
         self._listed_actions: list[ActionSpec] = []
         self._widget_refs: dict[str, QtCore.QObject] = {}
         self._init_actions()
+
+    def _build_duplicate_review_view(self) -> QtWidgets.QWidget:
+        view = QtWidgets.QWidget()
+        view.setObjectName("duplicateReviewView")
+        layout = QtWidgets.QVBoxLayout(view)
+        layout.setContentsMargins(12, 10, 12, 12)
+        layout.setSpacing(10)
+
+        header = QtWidgets.QHBoxLayout()
+        self.duplicateReviewBackButton = QtWidgets.QToolButton()
+        self.duplicateReviewBackButton.setText("← Back to tagging")
+        self.duplicateReviewBackButton.clicked.connect(self.show_tagging_workspace)
+        header.addWidget(self.duplicateReviewBackButton)
+        title = QtWidgets.QLabel("Duplicate review")
+        title_font = title.font()
+        title_font.setPointSize(title_font.pointSize() + 2)
+        title_font.setBold(True)
+        title.setFont(title_font)
+        header.addWidget(title)
+        header.addWidget(QtWidgets.QLabel("Candidates require human assessment"))
+        header.addStretch(1)
+        read_only = QtWidgets.QLabel("Read-only assessment view")
+        read_only.setStyleSheet("color: palette(mid);")
+        header.addWidget(read_only)
+        layout.addLayout(header)
+
+        content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        setup = QtWidgets.QGroupBox("Scan setup")
+        setup.setMinimumWidth(280)
+        setup_layout = QtWidgets.QFormLayout(setup)
+        self.duplicateScopeCombo = QtWidgets.QComboBox()
+        self.duplicateScopeCombo.addItems(
+            ("Current index database", "Choose subfolder…")
+        )
+        setup_layout.addRow("Scope:", self.duplicateScopeCombo)
+        setup_layout.addRow("Scope size:", QtWidgets.QLabel("Not prepared"))
+        setup_layout.addRow("Method:", QtWidgets.QLabel("Same capture timestamp"))
+        prepare_button = QtWidgets.QPushButton("Prepare scope")
+        prepare_button.setEnabled(False)
+        prepare_button.setToolTip("Scope preparation is not wired in this prototype")
+        setup_layout.addRow(prepare_button)
+        setup_layout.setFieldGrowthPolicy(
+            QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
+        )
+
+        empty = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout(empty)
+        empty_layout.addStretch(1)
+        empty_title = QtWidgets.QLabel("No candidate scan has been started")
+        empty_title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_title_font = empty_title.font()
+        empty_title_font.setPointSize(empty_title_font.pointSize() + 2)
+        empty_title_font.setBold(True)
+        empty_title.setFont(empty_title_font)
+        empty_layout.addWidget(empty_title)
+        empty_detail = QtWidgets.QLabel(
+            "This branch prototypes view navigation only. Opening duplicate review "
+            "does not scan photos or change metadata."
+        )
+        empty_detail.setWordWrap(True)
+        empty_detail.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_detail)
+        empty_layout.addStretch(1)
+
+        content.addWidget(setup)
+        content.addWidget(empty)
+        content.setStretchFactor(0, 0)
+        content.setStretchFactor(1, 1)
+        content.setChildrenCollapsible(False)
+        layout.addWidget(content, 1)
+        return view
+
+    def show_duplicate_review(self) -> None:
+        focus = self.focusWidget()
+        if focus is not None and self.taggingWorkspaceView.isAncestorOf(focus):
+            self._tagging_focus_widget = focus
+        self.mainViews.setCurrentWidget(self.duplicateReviewView)
+        self.duplicateReviewAction.setChecked(True)
+        self.viewSelector.setAccessibleName(
+            "Current application view: Duplicate review"
+        )
+        self.duplicateReviewBackButton.setFocus()
+
+    def show_tagging_workspace(self) -> None:
+        self.mainViews.setCurrentWidget(self.taggingWorkspaceView)
+        self.taggingViewAction.setChecked(True)
+        self.viewSelector.setAccessibleName("Current application view: Tagging")
+        focus = self._tagging_focus_widget
+        if focus is not None and focus.isEnabled():
+            focus.setFocus()
+        else:
+            self.files.setFocus()
 
     def _init_actions(self) -> None:
         specs = build_action_specs()
@@ -1379,6 +1500,23 @@ class MainWindow(QtWidgets.QMainWindow):
         spec = self._actions_by_id.get(action_id)
         if spec is None:
             raise RuntimeError(f"Unknown action: {action_id}")
+        allowed_in_duplicate_review = {
+            "showduplicates",
+            "showtagging",
+            "open_command_line",
+            "complete_command_line",
+            "listcommands",
+            "quit",
+            "escape",
+        }
+        if (
+            self.mainViews.currentWidget() is self.duplicateReviewView
+            and action_id not in allowed_in_duplicate_review
+        ):
+            self.statusBar().showMessage(
+                "Return to the tagging workspace to use tagging commands"
+            )
+            return
         accepts_arguments = spec.command is not None and spec.command.accepts_arguments
         handler = getattr(self, spec.handler_name, None)
         if not callable(handler):
@@ -1958,6 +2096,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _escape_action(self) -> None:
         if self.cmdLine.isVisible():
             self._close_command_line()
+            return
+        if self.mainViews.currentWidget() is self.duplicateReviewView:
+            self.show_tagging_workspace()
             return
         self._hide_tag_matches()
         fw = self.focusWidget()

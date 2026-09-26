@@ -72,6 +72,18 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+O"),),
         ),
         ActionSpec(
+            id="showduplicates",
+            description="Open duplicate candidate review",
+            handler_name="show_duplicate_review",
+            command=CommandBinding("duplicates"),
+        ),
+        ActionSpec(
+            id="showtagging",
+            description="Return to the tagging workspace",
+            handler_name="show_tagging_workspace",
+            command=CommandBinding("tagging"),
+        ),
+        ActionSpec(
             id="reindex",
             description="Fully refresh the active photo index",
             handler_name="reindex_active_root",
