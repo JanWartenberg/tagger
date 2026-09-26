@@ -72,7 +72,7 @@ from services.tag_mutation_coordinator import (
     TagMutationLifecycleKind,
 )
 from storage import add_recent_tag, load_config, load_recent_tags, save_config
-from tag_completion import TagCompletion
+from ui.tag_completion import TagCompletion
 from utils import dedupe_casefold, normalize_path
 
 DEFAULT_INDEX_ROOT = Path.home() / "Pictures"
