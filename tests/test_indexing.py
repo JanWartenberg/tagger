@@ -407,6 +407,8 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
             index = PhotoIndex(root)
             exif = FakeExifTool()
             original_iterdir = Path.iterdir
+            original_stat = Path.stat
+            root_stat = root.stat()
 
             def add_photo_after_enumeration(path: Path):
                 children = original_iterdir(path)
@@ -416,14 +418,31 @@ class PhotoIndexResumableRefreshTests(unittest.TestCase):
                     return iter(children)
                 return children
 
-            with patch.object(
-                Path, "iterdir", autospec=True, side_effect=add_photo_after_enumeration
+            def keep_root_directory_timestamp_stable(path: Path, *args, **kwargs):
+                if path == root:
+                    return root_stat
+                return original_stat(path, *args, **kwargs)
+
+            with (
+                patch.object(
+                    Path,
+                    "iterdir",
+                    autospec=True,
+                    side_effect=add_photo_after_enumeration,
+                ),
+                patch.object(
+                    Path,
+                    "stat",
+                    autospec=True,
+                    side_effect=keep_root_directory_timestamp_stable,
+                ),
             ):
                 index.refresh_step(exif)
-
-            completed: IndexRefreshProgress | IndexSyncResult = index.refresh_step(exif)
-            while isinstance(completed, IndexRefreshProgress):
-                completed = index.refresh_step(exif)
+                completed: IndexRefreshProgress | IndexSyncResult = index.refresh_step(
+                    exif
+                )
+                while isinstance(completed, IndexRefreshProgress):
+                    completed = index.refresh_step(exif)
 
             self.assertIsInstance(completed, IndexSyncResult)
             self.assertEqual(completed.scanned_count, 2)

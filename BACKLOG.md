@@ -6,8 +6,9 @@
 are ordered by dependency:
 
 1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — completed
-2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — ready for agent; scope preparation implemented on the duplicate-review branch
-3. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — needs triage; blocked by ticket 02
+2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — completed and accepted
+3. [Add Folder action to duplicate review](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02a-add-folder-action-to-duplicate-view.md) — completed and accepted
+4. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — ready for agent; workflow decisions accepted
 
 The read-only detection foundation is accepted. Keep assessment and metadata
 mutation as separate delivery stages.
@@ -19,6 +20,7 @@ mutation as separate delivery stages.
 - [Performance follow-up](.scratch/performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md) remains deferred until one to three other topics have been completed.
 - [Configurable default index root](.scratch/configurable-default-index-root/issues/01-add-configurable-default-index-root.md) is medium priority and remains unscheduled.
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
+- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is a low-priority follow-up to M8.
 
 ## Historical milestones
 

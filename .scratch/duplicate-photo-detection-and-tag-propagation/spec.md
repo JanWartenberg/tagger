@@ -23,9 +23,11 @@ files are duplicates and never changes metadata by itself.
 - Scope selection is independent from detection. Initial scopes are the entire
   current index database and a user-selected subfolder.
 - Review uses a dedicated view inside TAGGER, not a Photo Workspace filter mode.
-- The user explicitly chooses one source and one or more targets.
-- Propagation merges source tags into each target; it does not replace existing
-  target tags.
+- The user explicitly chooses one readable, settled, non-empty source. Every
+  readable, settled, confirmed-empty target is preselected and may be deselected
+  individually.
+- Propagation copies the source's canonical tags only into selected empty
+  targets; images with existing or unknown tags are ineligible.
 
 The accepted design is detailed in [design-notes.md](design-notes.md).
 
@@ -50,10 +52,12 @@ They are not part of the initial implementation.
 2. Run the selected detector in the background.
 3. Present stable candidate groups and their evidence.
 4. Show canonical IPTC tag availability for every member.
-5. Let the user assess the candidate and select a source and targets.
-6. Preview merged tag additions and request confirmation.
-7. Apply confirmed additions through the existing tag-mutation workflow.
-8. Report success or failure per target and preserve existing retry semantics.
+5. Let the user assess the candidate, choose a valid source, and adjust the
+   preselected eligible empty targets.
+6. Preview the exact copied tags and selected targets and request confirmation.
+7. Apply the confirmed copy through the existing tag-mutation workflow.
+8. Advance review while a compact row reports pending, successful, failed, and
+   retryable outcomes per target.
 
 ## Constraints
 
@@ -62,8 +66,9 @@ They are not part of the initial implementation.
 - Cancelled or superseded scans cannot publish active results.
 - Missing or unreadable photos do not discard otherwise valid results.
 - No file changes occur before explicit confirmation.
-- Source tags must be refreshed before confirmation and represent confirmed file
-  state rather than pending intent.
+- Source and target tags must be refreshed before confirmation and represent
+  confirmed file state rather than pending intent. The source must be non-empty;
+  every target must be confirmed empty.
 - Preserve canonical IPTC/XMP behavior, keyword limits, backup settings,
   pending/failed mutations, retries, and Session errors.
 - Partial propagation failures must not hide successful writes.
@@ -77,5 +82,5 @@ sophisticated matching methods.
 ## Delivery status
 
 - 2026-09-23: Detection foundation was accepted in commit `c39d6a9`.
-  Assessment UI and tag propagation remain outstanding under tickets 02 and 03;
-  this specification therefore remains active.
+- Duplicate assessment and Add Folder workflows are accepted. Tag propagation
+  remains under ticket 03, so this specification remains active.

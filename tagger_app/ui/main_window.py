@@ -55,9 +55,18 @@ from tagger_app.services.batch_tag_summary import (
     summarize_batch_tags,
 )
 from tagger_app.services.duplicate_detection import (
+    CandidateGroup,
+    DuplicateScanCompleted,
+    DuplicateScanCoordinator,
+    DuplicateScanFailed,
+    DuplicateScanProgress,
+    DuplicateScanStarted,
     DuplicateScopeCoordinator,
     DuplicateScopeKind,
     DuplicateScopeSnapshot,
+    ExifToolCaptureMetadataReader,
+    SameCaptureTimestampDetector,
+    ScanResult,
     ScopePreparationCompleted,
     ScopePreparationFailed,
 )
@@ -152,6 +161,22 @@ def _unverified_iptc_icon(size: int = 16) -> QtGui.QIcon:
     painter.drawText(pixmap.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, "?")
     painter.end()
     return QtGui.QIcon(pixmap)
+
+
+class CompactStatusMenuButton(QtWidgets.QToolButton):
+    """Keep a native menu button from consuming platform-dependent footer width."""
+
+    MAXIMUM_HINT_WIDTH = 70
+
+    def sizeHint(self) -> QtCore.QSize:
+        hint = super().sizeHint()
+        hint.setWidth(min(hint.width(), self.MAXIMUM_HINT_WIDTH))
+        return hint
+
+    def minimumSizeHint(self) -> QtCore.QSize:
+        hint = super().minimumSizeHint()
+        hint.setWidth(min(hint.width(), self.MAXIMUM_HINT_WIDTH))
+        return hint
 
 
 class LoadingSpinner(QtWidgets.QWidget):
@@ -769,6 +794,7 @@ class PhotoIndexAdapter:
 class MainWindow(QtWidgets.QMainWindow):
     backgroundDiscoveryEvent = QtCore.pyqtSignal(object)
     duplicateScopeEvent = QtCore.pyqtSignal(object)
+    duplicateScanEvent = QtCore.pyqtSignal(object)
 
     def __init__(
         self,
@@ -873,6 +899,25 @@ class MainWindow(QtWidgets.QMainWindow):
             event_sink=self.duplicateScopeEvent.emit,
         )
         self.duplicateScopeEvent.connect(self._handle_duplicate_scope_event)
+        self._duplicate_detector = SameCaptureTimestampDetector()
+        self._duplicate_scan_coordinator = DuplicateScanCoordinator(
+            reader=ExifToolCaptureMetadataReader(self.exif),
+            runner=background_runner_adapter,
+            event_sink=self.duplicateScanEvent.emit,
+        )
+        self.duplicateScanEvent.connect(self._handle_duplicate_scan_event)
+        self._active_duplicate_scan_id: str | None = None
+        self._duplicate_scan_result: ScanResult | None = None
+        self._duplicate_assessments: dict[str, dict[str, object]] = {}
+        self._duplicate_member_controls: dict[
+            str, dict[str, tuple[QtWidgets.QRadioButton, QtWidgets.QCheckBox]]
+        ] = {}
+        self._active_duplicate_group_id: str | None = None
+        self._visible_duplicate_group_ids: list[str] = []
+        self._duplicate_group_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self._duplicate_preview_generation = 0
+        self._duplicate_preview_workers: set[Worker] = set()
+        self._duplicate_folder_scope_after_load: str | None = None
 
         self.files = FileListWidget()
         self._file_items_by_path: dict[str, QtWidgets.QListWidgetItem] = {}
@@ -1270,11 +1315,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.indexRepairStatusLabel = QtWidgets.QLabel()
         self.indexRepairStatusLabel.setObjectName("indexRepairStatus")
         self.statusBar().addPermanentWidget(self.indexRepairStatusLabel)
-        self.viewSelector = QtWidgets.QToolButton()
+        self.viewSelector = CompactStatusMenuButton()
         self.viewSelector.setObjectName("viewSelector")
         self.viewSelector.setText("Views")
         self.viewSelector.setAutoRaise(True)
-        self.viewSelector.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.viewSelector.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        )
         self.viewSelector.setToolTip("Switch between tagging and duplicate review")
         self.viewSelector.setAccessibleName("Current application view: Tagging")
         view_menu = QtWidgets.QMenu(self.viewSelector)
@@ -1333,7 +1380,6 @@ class MainWindow(QtWidgets.QMainWindow):
             self.duplicateReviewView,
             self.duplicateReviewBackButton,
             self.duplicateScopeCombo,
-            self.duplicatePrepareScopeButton,
             self.duplicateStartScanButton,
         ]:
             if w is not None:
@@ -1365,6 +1411,9 @@ class MainWindow(QtWidgets.QMainWindow):
         header = QtWidgets.QHBoxLayout()
         self.duplicateReviewBackButton = QtWidgets.QToolButton()
         self.duplicateReviewBackButton.setText("← Back to tagging")
+        self.duplicateReviewBackButton.setToolTip(
+            "Return to the tagging workspace (Esc / gT / Ctrl+Alt+T)"
+        )
         self.duplicateReviewBackButton.clicked.connect(self.show_tagging_workspace)
         header.addWidget(self.duplicateReviewBackButton)
         title = QtWidgets.QLabel("Duplicate review")
@@ -1373,18 +1422,23 @@ class MainWindow(QtWidgets.QMainWindow):
         title_font.setBold(True)
         title.setFont(title_font)
         header.addWidget(title)
-        header.addWidget(QtWidgets.QLabel("Candidates require human assessment"))
         header.addStretch(1)
+        self.duplicateAddFolderButton = QtWidgets.QPushButton("Add folder")
+        self.duplicateAddFolderButton.setToolTip(
+            "Add all JPG/JPEG files from a folder (Ctrl+O)"
+        )
+        self.duplicateAddFolderButton.clicked.connect(self.add_folder_dialog)
+        header.addWidget(self.duplicateAddFolderButton)
         read_only = QtWidgets.QLabel("Read-only assessment view")
         read_only.setStyleSheet("color: palette(mid);")
         header.addWidget(read_only)
         layout.addLayout(header)
 
-        content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
+        content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         setup = QtWidgets.QGroupBox("Scan setup")
-        setup.setMinimumWidth(280)
         setup_layout = QtWidgets.QFormLayout(setup)
         self.duplicateScopeCombo = QtWidgets.QComboBox()
+        self.duplicateScopeCombo.setToolTip("Choose duplicate scan scope (Alt+S)")
         self.duplicateScopeCombo.addItem(
             "Current index database", DuplicateScopeKind.INDEX_DATABASE
         )
@@ -1398,29 +1452,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateScopePathLabel = QtWidgets.QLabel("No active index database")
         self.duplicateScopePathLabel.setWordWrap(True)
         setup_layout.addRow("Location:", self.duplicateScopePathLabel)
-        self.duplicateScopeSizeLabel = QtWidgets.QLabel("Not prepared")
+        self.duplicateScopeSizeLabel = QtWidgets.QLabel("Waiting for a photo folder")
         setup_layout.addRow("Scope size:", self.duplicateScopeSizeLabel)
         setup_layout.addRow("Method:", QtWidgets.QLabel("Same capture timestamp"))
-        scope_actions = QtWidgets.QWidget()
-        scope_actions_layout = QtWidgets.QHBoxLayout(scope_actions)
-        scope_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self.duplicatePrepareScopeButton = QtWidgets.QPushButton("Prepare scope")
-        self.duplicatePrepareScopeButton.clicked.connect(self.prepare_duplicate_scope)
-        self.duplicatePrepareScopeButton.setEnabled(False)
+        self.duplicateScanCostLabel = QtWidgets.QLabel(
+            "Choose or add a photo folder to calculate the scan size."
+        )
+        self.duplicateScanCostLabel.setWordWrap(True)
+        setup_layout.addRow("Scan work:", self.duplicateScanCostLabel)
         self.duplicateStartScanButton = QtWidgets.QPushButton("Start scan")
         self.duplicateStartScanButton.setEnabled(False)
         self.duplicateStartScanButton.setToolTip(
-            "Detector execution is implemented in the next delivery slice"
+            "Scan the prepared scope for candidates (Space s)"
         )
-        scope_actions_layout.addWidget(self.duplicatePrepareScopeButton)
-        scope_actions_layout.addWidget(self.duplicateStartScanButton)
-        setup_layout.addRow(scope_actions)
+        self.duplicateStartScanButton.clicked.connect(self.start_duplicate_scan)
+        setup_layout.addRow(self.duplicateStartScanButton)
+        self.duplicateCancelScanButton = QtWidgets.QPushButton("Cancel scan")
+        self.duplicateCancelScanButton.setToolTip("Cancel the active scan (Esc)")
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateCancelScanButton.clicked.connect(self.cancel_duplicate_scan)
+        setup_layout.addRow(self.duplicateCancelScanButton)
+        self.duplicateScanProgress = QtWidgets.QProgressBar()
+        self.duplicateScanProgress.setRange(0, 1)
+        self.duplicateScanProgress.setValue(0)
+        self.duplicateScanProgress.setFormat("%v / %m photos")
+        self.duplicateScanProgress.hide()
+        setup_layout.addRow("Progress:", self.duplicateScanProgress)
         setup_layout.setFieldGrowthPolicy(
             QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow
         )
 
-        empty = QtWidgets.QWidget()
-        empty_layout = QtWidgets.QVBoxLayout(empty)
+        results = QtWidgets.QWidget()
+        results_layout = QtWidgets.QVBoxLayout(results)
+        results_layout.setContentsMargins(0, 0, 0, 0)
+        self.duplicateReviewEmpty = QtWidgets.QWidget()
+        empty_layout = QtWidgets.QVBoxLayout(self.duplicateReviewEmpty)
         empty_layout.addStretch(1)
         self.duplicateReviewEmptyTitle = QtWidgets.QLabel(
             "No candidate scan has been started"
@@ -1432,8 +1498,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateReviewEmptyTitle.setFont(empty_title_font)
         empty_layout.addWidget(self.duplicateReviewEmptyTitle)
         self.duplicateReviewEmptyDetail = QtWidgets.QLabel(
-            "Prepare an index-database or subfolder scope first. Scope preparation "
-            "does not scan metadata or change files."
+            "Add a photo folder or choose a scan scope. TAGGER will collect its "
+            "photo paths before you explicitly start metadata scanning."
         )
         self.duplicateReviewEmptyDetail.setWordWrap(True)
         self.duplicateReviewEmptyDetail.setAlignment(
@@ -1441,9 +1507,85 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         empty_layout.addWidget(self.duplicateReviewEmptyDetail)
         empty_layout.addStretch(1)
+        results_layout.addWidget(self.duplicateReviewEmpty)
+
+        result_summary = QtWidgets.QWidget()
+        result_summary_layout = QtWidgets.QHBoxLayout(result_summary)
+        result_summary_layout.setContentsMargins(0, 0, 0, 0)
+        self.duplicateResultsSummary = QtWidgets.QLabel()
+        self.duplicateResultsSummary.setWordWrap(True)
+        self.duplicateResultsSummary.hide()
+        result_summary_layout.addWidget(self.duplicateResultsSummary, 1)
+        self.duplicateExcludeEmptyCandidatesCheck = QtWidgets.QCheckBox(
+            "Hide groups where no photo has tags"
+        )
+        self.duplicateExcludeEmptyCandidatesCheck.setToolTip(
+            "Hide groups only when every member has a readable, empty IPTC tag "
+            "list (e / Alt+E)"
+        )
+        self.duplicateExcludeEmptyCandidatesCheck.toggled.connect(
+            self._filter_duplicate_candidates
+        )
+        self.duplicateExcludeEmptyCandidatesCheck.setEnabled(False)
+        result_summary_layout.addWidget(self.duplicateExcludeEmptyCandidatesCheck)
+        results_layout.addWidget(result_summary)
+
+        self.duplicateCandidateQueue = QtWidgets.QScrollArea()
+        self.duplicateCandidateQueue.setWidgetResizable(True)
+        self.duplicateCandidateQueue.setHorizontalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.duplicateCandidateQueue.setVerticalScrollBarPolicy(
+            QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.duplicateCandidateQueue.setMaximumHeight(104)
+        self.duplicateCandidateQueueBody = QtWidgets.QWidget()
+        self.duplicateCandidateQueueLayout = QtWidgets.QHBoxLayout(
+            self.duplicateCandidateQueueBody
+        )
+        self.duplicateCandidateQueueLayout.setContentsMargins(6, 6, 6, 6)
+        self.duplicateCandidateQueueLayout.setSpacing(6)
+        self.duplicateCandidateQueueLayout.addStretch(1)
+        self.duplicateCandidateQueue.setWidget(self.duplicateCandidateQueueBody)
+        self.duplicateCandidateQueue.hide()
+        results_layout.addWidget(self.duplicateCandidateQueue)
+
+        self.duplicateResultsScroll = QtWidgets.QScrollArea()
+        self.duplicateResultsScroll.setWidgetResizable(True)
+        self.duplicateResultsBody = QtWidgets.QWidget()
+        self.duplicateResultsLayout = QtWidgets.QVBoxLayout(self.duplicateResultsBody)
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateResultsScroll.setWidget(self.duplicateResultsBody)
+        self.duplicateResultsScroll.hide()
+        results_layout.addWidget(self.duplicateResultsScroll, 1)
+
+        self.duplicateAssessmentActions = QtWidgets.QWidget()
+        assessment_actions_layout = QtWidgets.QHBoxLayout(
+            self.duplicateAssessmentActions
+        )
+        assessment_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.duplicateAssessmentHint = QtWidgets.QLabel(
+            "Choose a source and targets to prepare the future tag workflow."
+        )
+        self.duplicateAssessmentHint.setWordWrap(True)
+        assessment_actions_layout.addWidget(self.duplicateAssessmentHint, 1)
+        self.duplicateIgnoreButton = QtWidgets.QPushButton("Ignore candidate")
+        self.duplicateIgnoreButton.setToolTip(
+            "Remove this group from the current review queue (x)"
+        )
+        self.duplicateIgnoreButton.clicked.connect(self.ignore_active_duplicate_group)
+        assessment_actions_layout.addWidget(self.duplicateIgnoreButton)
+        self.duplicateApplyTagsButton = QtWidgets.QPushButton("Apply tags…")
+        self.duplicateApplyTagsButton.setEnabled(False)
+        self.duplicateApplyTagsButton.setToolTip(
+            "Coming workflow: apply source tags (Ctrl+Enter / Space p)"
+        )
+        assessment_actions_layout.addWidget(self.duplicateApplyTagsButton)
+        self.duplicateAssessmentActions.hide()
+        results_layout.addWidget(self.duplicateAssessmentActions)
 
         content.addWidget(setup)
-        content.addWidget(empty)
+        content.addWidget(results)
         content.setStretchFactor(0, 0)
         content.setStretchFactor(1, 1)
         content.setChildrenCollapsible(False)
@@ -1452,46 +1594,137 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _duplicate_scope_choice_changed(self) -> None:
         self._duplicate_scope_coordinator.invalidate()
+        self._duplicate_scan_coordinator.cancel()
+        self._active_duplicate_scan_id = None
+        self._duplicate_scan_result = None
+        self._clear_duplicate_results()
         self._prepared_duplicate_scope = None
         self._duplicate_scope_preparing = False
         self._active_duplicate_scope_request_id = None
-        self.duplicateScopeSizeLabel.setText("Not prepared")
+        self.duplicateScopeSizeLabel.setText("Collecting photo list…")
         self.duplicateStartScanButton.setEnabled(False)
-        self.duplicateReviewEmptyTitle.setText("No candidate scan has been started")
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateScanProgress.hide()
+        self.duplicateReviewEmptyTitle.setText("Collecting the photo list…")
         self.duplicateReviewEmptyDetail.setText(
-            "Prepare an index-database or subfolder scope first. Scope preparation "
-            "does not scan metadata or change files."
+            "TAGGER is determining which photos belong to this scope. Large "
+            "folders may take some time; metadata scanning has not started."
         )
         self._refresh_duplicate_scope_controls()
+        self._ensure_duplicate_scope_prepared()
 
     def _refresh_duplicate_scope_controls(self) -> None:
         kind = self.duplicateScopeCombo.currentData()
         prepared = self._prepared_duplicate_scope
         if prepared is not None and prepared.kind is kind:
+            count = len(prepared.paths)
             self.duplicateScopePathLabel.setText(prepared.root)
-            self.duplicatePrepareScopeButton.setEnabled(True)
-            self.duplicatePrepareScopeButton.setText("Prepare again")
-            self.duplicateStartScanButton.setEnabled(False)
+            self.duplicateScopeSizeLabel.setText(f"{count:,} photos ready")
+            self.duplicateScanCostLabel.setText(
+                f"Starting the scan will read metadata from {count:,} photos and "
+                "may take some time. Progress and cancellation remain available."
+            )
+            self.duplicateStartScanButton.setEnabled(
+                self._active_duplicate_scan_id is None and bool(prepared.paths)
+            )
             return
+        self.duplicateStartScanButton.setEnabled(False)
         if self._duplicate_scope_preparing:
-            self.duplicatePrepareScopeButton.setEnabled(False)
-            self.duplicatePrepareScopeButton.setText("Preparing…")
+            self.duplicateScopeSizeLabel.setText("Collecting photo list…")
+            self.duplicateScanCostLabel.setText(
+                "Collecting photo paths in the background. Large folders may take "
+                "some time; candidate metadata is not being scanned yet."
+            )
             return
         if kind is DuplicateScopeKind.INDEX_DATABASE:
-            location = self._index_root or "No active index database"
-            can_prepare = self._index_root is not None
+            self.duplicateScopePathLabel.setText(
+                self._index_root or "No active index database"
+            )
+            self.duplicateScopeSizeLabel.setText("Waiting for a photo folder")
+            self.duplicateScanCostLabel.setText(
+                "Add a photo folder to calculate how many photos will be scanned."
+            )
         else:
-            location = "Choose a folder when preparing the scope"
-            can_prepare = True
-        self.duplicateScopePathLabel.setText(location)
-        self.duplicatePrepareScopeButton.setEnabled(can_prepare)
-        self.duplicatePrepareScopeButton.setText("Prepare scope")
+            self.duplicateScopePathLabel.setText("No subfolder selected")
+            self.duplicateScopeSizeLabel.setText("Choose a subfolder")
+            self.duplicateScanCostLabel.setText(
+                "Choose a subfolder to calculate how many photos will be scanned."
+            )
+
+    def _invalidate_duplicate_scope_for_folder_load(self) -> None:
+        self._duplicate_scope_coordinator.invalidate()
+        self._duplicate_scan_coordinator.cancel()
+        self._active_duplicate_scan_id = None
+        self._active_duplicate_scope_request_id = None
+        self._duplicate_scope_preparing = False
+        self._prepared_duplicate_scope = None
+        self._duplicate_scan_result = None
+        self._clear_duplicate_results()
+        self.duplicateStartScanButton.setEnabled(False)
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateScanProgress.hide()
+        self.duplicateScopeSizeLabel.setText("Loading folder…")
+        self.duplicateScanCostLabel.setText(
+            "Loading the selected folder before calculating its duplicate scan size."
+        )
+
+    def _prepare_discovered_duplicate_subfolder(
+        self, root: str, paths: tuple[str, ...]
+    ) -> None:
+        self._duplicate_scope_coordinator.invalidate()
+        self.duplicateScopeCombo.blockSignals(True)
+        self.duplicateScopeCombo.setCurrentIndex(1)
+        self.duplicateScopeCombo.blockSignals(False)
+        request = self._duplicate_scope_coordinator.prepare_discovered_subfolder(
+            root, paths
+        )
+        self._active_duplicate_scope_request_id = request.request_id
+        self._prepared_duplicate_scope = None
+        self._duplicate_scope_preparing = True
+        self.duplicateScopePathLabel.setText(normalize_path(root))
+        self.duplicateScopeSizeLabel.setText("Collecting photo list…")
+        self.duplicateScanCostLabel.setText(
+            "Freezing the photos found in the selected subfolder. Metadata scanning "
+            "has not started."
+        )
+        self.duplicateStartScanButton.setEnabled(False)
+
+    def _ensure_duplicate_scope_prepared(self) -> None:
+        if (
+            self._duplicate_scope_preparing
+            or self._active_duplicate_scan_id is not None
+        ):
+            return
+        kind = self.duplicateScopeCombo.currentData()
+        prepared = self._prepared_duplicate_scope
+        if prepared is not None and prepared.kind is kind:
+            return
+        if kind is DuplicateScopeKind.INDEX_DATABASE:
+            if self._index_root is None:
+                self._refresh_duplicate_scope_controls()
+                return
+            if self._index_root in self._index_sync_inflight:
+                self.duplicateScopeSizeLabel.setText("Indexing photos…")
+                self.duplicateScanCostLabel.setText(
+                    "Updating the photo index before calculating scan size. This "
+                    "runs in the background and may take some time."
+                )
+                return
+        self.prepare_duplicate_scope()
 
     def prepare_duplicate_scope(self) -> None:
+        if self._duplicate_scope_preparing:
+            return
+        self._duplicate_scan_coordinator.cancel()
+        self._active_duplicate_scan_id = None
+        self._duplicate_scan_result = None
+        self._clear_duplicate_results()
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateScanProgress.hide()
         kind = self.duplicateScopeCombo.currentData()
         if kind is DuplicateScopeKind.INDEX_DATABASE:
             if self._index_root is None:
-                self.duplicateScopeSizeLabel.setText("No active index database")
+                self._refresh_duplicate_scope_controls()
                 return
             root = self._index_root
             request = self._duplicate_scope_coordinator.prepare_index(root)
@@ -1500,22 +1733,29 @@ class MainWindow(QtWidgets.QMainWindow):
                 self, "Choose duplicate scan folder"
             )
             if not root:
+                self.duplicateScopeCombo.blockSignals(True)
+                self.duplicateScopeCombo.setCurrentIndex(0)
+                self.duplicateScopeCombo.blockSignals(False)
+                self._refresh_duplicate_scope_controls()
+                self._ensure_duplicate_scope_prepared()
                 return
             request = self._duplicate_scope_coordinator.prepare_subfolder(root)
         self._active_duplicate_scope_request_id = request.request_id
         self._prepared_duplicate_scope = None
         self._duplicate_scope_preparing = True
         self.duplicateScopePathLabel.setText(normalize_path(root))
-        self.duplicateScopeSizeLabel.setText("Preparing…")
-        self.duplicateReviewEmptyTitle.setText("Preparing scope…")
-        self.duplicateReviewEmptyDetail.setText(
-            "Discovering supported photo paths in the background. Metadata is not "
-            "being read."
+        self.duplicateScopeSizeLabel.setText("Collecting photo list…")
+        self.duplicateScanCostLabel.setText(
+            "Collecting photo paths in the background. Large folders may take some "
+            "time; candidate metadata is not being scanned yet."
         )
-        self.duplicatePrepareScopeButton.setText("Preparing…")
-        self.duplicatePrepareScopeButton.setEnabled(False)
+        self.duplicateReviewEmptyTitle.setText("Collecting the photo list…")
+        self.duplicateReviewEmptyDetail.setText(
+            "TAGGER is determining the scan size. This may take some time for a "
+            "large folder; no photo metadata is being read yet."
+        )
         self.duplicateStartScanButton.setEnabled(False)
-        self.statusBar().showMessage("Preparing duplicate scan scope…")
+        self.statusBar().showMessage("Collecting duplicate scan photo paths…")
 
     def _handle_duplicate_scope_event(
         self, event: ScopePreparationCompleted | ScopePreparationFailed
@@ -1524,16 +1764,18 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._active_duplicate_scope_request_id = None
         self._duplicate_scope_preparing = False
-        self.duplicatePrepareScopeButton.setText("Prepare again")
-        self.duplicatePrepareScopeButton.setEnabled(True)
         if isinstance(event, ScopePreparationFailed):
             self._prepared_duplicate_scope = None
-            self.duplicateScopeSizeLabel.setText("Preparation failed")
-            self.duplicateReviewEmptyTitle.setText("Scope preparation failed")
+            self.duplicateScopeSizeLabel.setText("Photo list failed")
+            self.duplicateScanCostLabel.setText(
+                "The scan size could not be calculated. Choose the scope again to "
+                "retry."
+            )
+            self.duplicateReviewEmptyTitle.setText("Could not collect photo list")
             self.duplicateReviewEmptyDetail.setText(event.error)
             self.duplicateStartScanButton.setEnabled(False)
             self.statusBar().showMessage(
-                f"Duplicate scope preparation failed: {event.error}"
+                f"Duplicate photo-list collection failed: {event.error}"
             )
             self._record_session_error("Duplicate scope", event.error)
             return
@@ -1541,13 +1783,594 @@ class MainWindow(QtWidgets.QMainWindow):
         count = len(event.snapshot.paths)
         self.duplicateScopePathLabel.setText(event.snapshot.root)
         self.duplicateScopeSizeLabel.setText(f"{count:,} photos ready")
-        self.duplicateReviewEmptyTitle.setText("Scope is ready")
+        self.duplicateScanCostLabel.setText(
+            f"Starting the scan will read metadata from {count:,} photos and may "
+            "take some time. Progress and cancellation remain available."
+        )
+        self.duplicateReviewEmptyTitle.setText("Ready to scan candidates")
         self.duplicateReviewEmptyDetail.setText(
-            f"{count:,} photo paths are frozen for the next explicit detector run. "
-            "No metadata scan has started."
+            f"TAGGER found {count:,} photos in this scope. Start scan will read "
+            "their metadata to find candidate groups; no files will be changed."
+        )
+        self.duplicateStartScanButton.setEnabled(count > 0)
+        self.statusBar().showMessage(f"Duplicate scan ready: {count:,} photos")
+
+    def start_duplicate_scan(self) -> None:
+        snapshot = self._prepared_duplicate_scope
+        if snapshot is None or not snapshot.paths:
+            return
+        self._duplicate_scan_result = None
+        self._clear_duplicate_results()
+        self.duplicateReviewEmpty.show()
+        self.duplicateReviewEmptyTitle.setText("Scanning candidate evidence…")
+        self.duplicateReviewEmptyDetail.setText(
+            f"{self._duplicate_detector.display_name} is reading confirmed metadata "
+            f"for {len(snapshot.paths):,} frozen photo paths."
         )
         self.duplicateStartScanButton.setEnabled(False)
-        self.statusBar().showMessage(f"Duplicate scope ready: {count:,} photos")
+        self.duplicateCancelScanButton.setEnabled(True)
+        self.duplicateScanProgress.setRange(0, len(snapshot.paths))
+        self.duplicateScanProgress.setValue(0)
+        self.duplicateScanCostLabel.setText(
+            f"Scanning metadata for {len(snapshot.paths):,} photos. This may take "
+            "some time; you can cancel without publishing partial results."
+        )
+        self.duplicateScanProgress.show()
+        request = self._duplicate_scan_coordinator.start(
+            snapshot, self._duplicate_detector
+        )
+        self._active_duplicate_scan_id = request.scan_id
+
+    def cancel_duplicate_scan(self) -> None:
+        if self._active_duplicate_scan_id is None:
+            return
+        self._duplicate_scan_coordinator.cancel()
+        self._active_duplicate_scan_id = None
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateScanProgress.hide()
+        self.duplicateReviewEmptyTitle.setText("Candidate scan cancelled")
+        self.duplicateReviewEmptyDetail.setText(
+            "The cancelled scan cannot publish results. The prepared scope remains "
+            "available for another explicit scan."
+        )
+        self._refresh_duplicate_scope_controls()
+        self.statusBar().showMessage("Duplicate candidate scan cancelled")
+
+    def _handle_duplicate_scan_event(
+        self,
+        event: DuplicateScanStarted
+        | DuplicateScanProgress
+        | DuplicateScanCompleted
+        | DuplicateScanFailed,
+    ) -> None:
+        if isinstance(event, DuplicateScanStarted):
+            self._active_duplicate_scan_id = event.request.scan_id
+            self.statusBar().showMessage(
+                f"Running {self._duplicate_detector.display_name}…"
+            )
+            return
+        if event.request.scan_id != self._active_duplicate_scan_id:
+            return
+        if isinstance(event, DuplicateScanProgress):
+            self.duplicateScanProgress.setMaximum(event.progress.total)
+            self.duplicateScanProgress.setValue(event.progress.processed)
+            return
+        self._active_duplicate_scan_id = None
+        self.duplicateCancelScanButton.setEnabled(False)
+        self.duplicateScanProgress.hide()
+        self._refresh_duplicate_scope_controls()
+        if isinstance(event, DuplicateScanFailed):
+            self.duplicateReviewEmpty.show()
+            self.duplicateReviewEmptyTitle.setText("Candidate scan failed")
+            self.duplicateReviewEmptyDetail.setText(event.error)
+            self._record_session_error("Duplicate scan", event.error)
+            self.statusBar().showMessage(f"Duplicate scan failed: {event.error}")
+            return
+        self._duplicate_scan_result = event.result
+        self._render_duplicate_scan_result(event.result)
+        self.statusBar().showMessage(
+            f"Duplicate scan complete: {len(event.result.groups):,} candidate groups"
+        )
+
+    @staticmethod
+    def _clear_layout(layout: QtWidgets.QLayout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+            child_layout = item.layout()
+            if child_layout is not None:
+                MainWindow._clear_layout(child_layout)
+
+    def _clear_duplicate_results(self) -> None:
+        self._duplicate_preview_generation += 1
+        self._duplicate_assessments.clear()
+        self._duplicate_member_controls.clear()
+        self._active_duplicate_group_id = None
+        self._visible_duplicate_group_ids.clear()
+        self._duplicate_group_buttons.clear()
+        self._clear_layout(self.duplicateCandidateQueueLayout)
+        self.duplicateCandidateQueueLayout.addStretch(1)
+        self._clear_layout(self.duplicateResultsLayout)
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateResultsSummary.hide()
+        self.duplicateExcludeEmptyCandidatesCheck.setEnabled(False)
+        self.duplicateCandidateQueue.hide()
+        self.duplicateResultsScroll.hide()
+        self.duplicateAssessmentActions.hide()
+
+    def _render_duplicate_scan_result(self, result: ScanResult) -> None:
+        self._clear_duplicate_results()
+        self.duplicateReviewEmpty.hide()
+        self.duplicateResultsSummary.setText(
+            f"{len(result.groups):,} candidate groups from "
+            f"{result.total:,} photos · Method: "
+            f"{self._duplicate_detector.display_name} ({result.detector_id}). "
+            "These are findings to assess, not confirmed duplicates."
+        )
+        self.duplicateResultsSummary.show()
+        self.duplicateExcludeEmptyCandidatesCheck.setEnabled(True)
+        self.duplicateResultsScroll.show()
+        for group in result.groups:
+            self._duplicate_assessments[group.group_id] = {
+                "source": None,
+                "targets": set(),
+                "ignored": False,
+            }
+        self._filter_duplicate_candidates()
+
+    @staticmethod
+    def _duplicate_group_is_confirmed_empty(group: CandidateGroup) -> bool:
+        return all(
+            member.iptc_readable and not member.iptc_tags for member in group.members
+        )
+
+    def _filter_duplicate_candidates(self) -> None:
+        result = self._duplicate_scan_result
+        if result is None:
+            return
+        exclude_empty = self.duplicateExcludeEmptyCandidatesCheck.isChecked()
+        self._visible_duplicate_group_ids = [
+            group.group_id
+            for group in result.groups
+            if not self._duplicate_assessments[group.group_id]["ignored"]
+            and not (exclude_empty and self._duplicate_group_is_confirmed_empty(group))
+        ]
+        self._render_duplicate_candidate_queue()
+        if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
+            self._show_duplicate_candidate_group(self._active_duplicate_group_id)
+        elif self._visible_duplicate_group_ids:
+            self._show_duplicate_candidate_group(self._visible_duplicate_group_ids[0])
+        elif result.groups and exclude_empty:
+            self._show_no_active_duplicate_group(
+                "No candidate groups match the current filter. "
+                "Clear ‘Hide groups where no photo has tags’ to review all findings."
+            )
+        else:
+            self._show_no_active_duplicate_group(
+                "No duplicate candidate groups were found."
+            )
+
+    def _duplicate_group(self, group_id: str) -> CandidateGroup | None:
+        result = self._duplicate_scan_result
+        if result is None:
+            return None
+        return next(
+            (group for group in result.groups if group.group_id == group_id), None
+        )
+
+    def _render_duplicate_candidate_queue(self) -> None:
+        self._clear_layout(self.duplicateCandidateQueueLayout)
+        self._duplicate_group_buttons.clear()
+        for position, group_id in enumerate(self._visible_duplicate_group_ids, start=1):
+            group = self._duplicate_group(group_id)
+            if group is None:
+                continue
+            timestamp = group.members[0].timestamp if group.members else "Unknown time"
+            tagged = sum(
+                bool(member.iptc_readable and member.iptc_tags)
+                for member in group.members
+            )
+            button = QtWidgets.QPushButton(
+                f"Candidate {position}\n{timestamp}\n"
+                f"{len(group.members)} photos · {tagged} with tags"
+            )
+            button.setCheckable(True)
+            button.setMinimumWidth(190)
+            button.setAccessibleName(f"Open candidate group {position}")
+            button.setToolTip(
+                "Open candidate group (j/k or Left/Right to move between groups)"
+            )
+            button.setProperty("duplicateGroupId", group_id)
+            button.installEventFilter(self)
+            button.clicked.connect(
+                lambda _checked=False, selected=group_id: (
+                    self._show_duplicate_candidate_group(selected)
+                )
+            )
+            self.duplicateCandidateQueueLayout.addWidget(button)
+            self._duplicate_group_buttons[group_id] = button
+        self.duplicateCandidateQueueLayout.addStretch(1)
+        self.duplicateCandidateQueue.setVisible(bool(self._visible_duplicate_group_ids))
+
+    def _show_duplicate_candidate_group(self, group_id: str) -> None:
+        group = self._duplicate_group(group_id)
+        if group is None or group_id not in self._visible_duplicate_group_ids:
+            return
+        self._duplicate_preview_generation += 1
+        generation = self._duplicate_preview_generation
+        self._active_duplicate_group_id = group_id
+        for candidate_id, button in self._duplicate_group_buttons.items():
+            button.setChecked(candidate_id == group_id)
+        self._clear_layout(self.duplicateResultsLayout)
+        self._duplicate_member_controls.clear()
+
+        position = self._visible_duplicate_group_ids.index(group_id) + 1
+        heading = QtWidgets.QLabel(
+            f"Candidate group {position} of {len(self._visible_duplicate_group_ids)}"
+        )
+        heading_font = heading.font()
+        heading_font.setPointSize(heading_font.pointSize() + 2)
+        heading_font.setBold(True)
+        heading.setFont(heading_font)
+        self.duplicateResultsLayout.addWidget(heading)
+
+        explanation = QtWidgets.QLabel(
+            "These photos share capture-time evidence. Compare their previews and "
+            "confirmed IPTC tags, then choose a source and targets for the future "
+            "tag-copy workflow—or ignore this candidate for the current scan."
+        )
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet(
+            "padding: 8px; border-left: 3px solid palette(highlight);"
+        )
+        self.duplicateResultsLayout.addWidget(explanation)
+
+        timestamp = group.members[0].timestamp if group.members else "Unknown"
+        fields = ", ".join(
+            dict.fromkeys(member.source_field for member in group.members)
+        )
+        evidence = QtWidgets.QLabel(
+            f"Evidence: exact effective capture timestamp {timestamp} · "
+            f"field provenance: {fields} · method: "
+            f"{self._duplicate_detector.display_name}"
+        )
+        evidence.setWordWrap(True)
+        self.duplicateResultsLayout.addWidget(evidence)
+
+        cards = QtWidgets.QWidget()
+        cards_layout = QtWidgets.QGridLayout(cards)
+        cards_layout.setContentsMargins(0, 4, 0, 4)
+        controls: dict[str, tuple[QtWidgets.QRadioButton, QtWidgets.QCheckBox]] = {}
+        tagged_members = [
+            member
+            for member in group.members
+            if member.iptc_readable and member.iptc_tags
+        ]
+        suggested_path = tagged_members[0].path if len(tagged_members) == 1 else None
+        assessment = self._duplicate_assessments[group_id]
+        for index, member in enumerate(group.members):
+            card = QtWidgets.QFrame()
+            card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+            card.setMinimumWidth(210)
+            card_layout = QtWidgets.QVBoxLayout(card)
+            preview = QtWidgets.QLabel("Loading preview…")
+            preview.setObjectName("duplicateCandidatePreview")
+            preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+            preview.setMinimumSize(190, 150)
+            preview.setStyleSheet("background: palette(base); color: palette(mid);")
+            card_layout.addWidget(preview, 1)
+            self._load_duplicate_candidate_preview(member.path, preview, generation)
+
+            name = QtWidgets.QLabel(Path(member.path).name)
+            name.setWordWrap(True)
+            name_font = name.font()
+            name_font.setBold(True)
+            name.setFont(name_font)
+            name.setToolTip(member.path)
+            card_layout.addWidget(name)
+            path_label = QtWidgets.QLabel(member.path)
+            path_label.setWordWrap(True)
+            path_label.setStyleSheet("color: palette(mid);")
+            card_layout.addWidget(path_label)
+            provenance = QtWidgets.QLabel(
+                f"{member.timestamp} via {member.source_field}"
+            )
+            provenance.setWordWrap(True)
+            card_layout.addWidget(provenance)
+
+            if not member.iptc_readable:
+                tag_text = "Tags unknown — IPTC:Keywords could not be read"
+            elif member.iptc_tags:
+                tag_text = "Available tags: " + ", ".join(member.iptc_tags)
+            else:
+                tag_text = "Available tags: none (confirmed empty)"
+            if member.path == suggested_path:
+                tag_text += " · suggested source"
+            tags = QtWidgets.QLabel(tag_text)
+            tags.setWordWrap(True)
+            card_layout.addWidget(tags)
+
+            choices = QtWidgets.QHBoxLayout()
+            source = QtWidgets.QRadioButton("Source")
+            source.setAutoExclusive(False)
+            source.setAccessibleName(f"Use {member.path} as source")
+            source.setToolTip("Use this photo as the tag source (s)")
+            target = QtWidgets.QCheckBox("Target")
+            target.setAccessibleName(f"Use {member.path} as target")
+            target.setToolTip("Include this photo as a tag target (t)")
+            source.toggled.connect(
+                lambda checked, selected_group=group_id, path=member.path: (
+                    self._toggle_duplicate_source(selected_group, path, checked)
+                )
+            )
+            target.toggled.connect(
+                lambda checked, selected_group=group_id, path=member.path: (
+                    self._set_duplicate_target(selected_group, path, checked)
+                )
+            )
+            choices.addWidget(source)
+            choices.addWidget(target)
+            choices.addStretch(1)
+            card_layout.addLayout(choices)
+            controls[member.path] = (source, target)
+            cards_layout.addWidget(card, index // 3, index % 3)
+
+        self._duplicate_member_controls[group_id] = controls
+        source_path = assessment["source"]
+        targets = assessment["targets"]
+        if source_path is not None:
+            self._set_duplicate_source(group_id, str(source_path))
+        for path in targets:
+            if path in controls:
+                controls[path][1].setChecked(True)
+        self.duplicateResultsLayout.addWidget(cards)
+        self._add_duplicate_read_failures()
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateAssessmentActions.show()
+        self._refresh_duplicate_assessment_hint()
+
+    def _load_duplicate_candidate_preview(
+        self, path: str, label: QtWidgets.QLabel, generation: int
+    ) -> None:
+        def load_image(photo_path: str) -> QtGui.QImage:
+            reader = QtGui.QImageReader(photo_path)
+            reader.setAutoTransform(True)
+            image = reader.read()
+            if image.isNull():
+                raise RuntimeError("Preview unavailable")
+            return image.scaled(
+                480,
+                320,
+                QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                QtCore.Qt.TransformationMode.SmoothTransformation,
+            )
+
+        worker = Worker(load_image, path)
+        self._duplicate_preview_workers.add(worker)
+
+        def forget_worker() -> None:
+            self._duplicate_preview_workers.discard(worker)
+
+        def loaded(image: QtGui.QImage) -> None:
+            forget_worker()
+            if generation != self._duplicate_preview_generation:
+                return
+            pixmap = QtGui.QPixmap.fromImage(image)
+            label.setPixmap(
+                pixmap.scaled(
+                    label.size(),
+                    QtCore.Qt.AspectRatioMode.KeepAspectRatio,
+                    QtCore.Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+            label.setText("")
+
+        def failed(_message: str) -> None:
+            forget_worker()
+            if generation == self._duplicate_preview_generation:
+                label.setText("Preview unavailable")
+
+        worker.signals.finished.connect(loaded)
+        worker.signals.error.connect(failed)
+        self.pool.start(worker)
+
+    def _add_duplicate_read_failures(self) -> None:
+        result = self._duplicate_scan_result
+        if result is None or not result.errors:
+            return
+        failures = QtWidgets.QGroupBox(
+            f"Other metadata read failures ({len(result.errors)})"
+        )
+        failures_layout = QtWidgets.QVBoxLayout(failures)
+        for error in result.errors:
+            label = QtWidgets.QLabel(f"{error.path} — {error.message}")
+            label.setWordWrap(True)
+            failures_layout.addWidget(label)
+        self.duplicateResultsLayout.addWidget(failures)
+
+    def _show_no_active_duplicate_group(self, message: str) -> None:
+        self._duplicate_preview_generation += 1
+        self._active_duplicate_group_id = None
+        self._duplicate_member_controls.clear()
+        self._clear_layout(self.duplicateResultsLayout)
+        label = QtWidgets.QLabel(message)
+        label.setWordWrap(True)
+        label.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateResultsLayout.addWidget(label)
+        self._add_duplicate_read_failures()
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateAssessmentActions.hide()
+
+    def focus_duplicate_scope(self) -> None:
+        self.duplicateScopeCombo.setFocus()
+
+    def _move_duplicate_group(self, delta: int) -> None:
+        if not self._visible_duplicate_group_ids:
+            return
+        group_id = self._active_duplicate_group_id
+        if group_id not in self._visible_duplicate_group_ids:
+            next_index = 0
+        else:
+            current = self._visible_duplicate_group_ids.index(group_id)
+            next_index = max(
+                0, min(current + delta, len(self._visible_duplicate_group_ids) - 1)
+            )
+        next_group_id = self._visible_duplicate_group_ids[next_index]
+        self._show_duplicate_candidate_group(next_group_id)
+        button = self._duplicate_group_buttons.get(next_group_id)
+        if button is not None:
+            button.setFocus()
+
+    def show_previous_duplicate_group(self) -> None:
+        self._move_duplicate_group(-1)
+
+    def show_next_duplicate_group(self) -> None:
+        self._move_duplicate_group(1)
+
+    def toggle_empty_duplicate_groups(self) -> None:
+        if self.duplicateExcludeEmptyCandidatesCheck.isEnabled():
+            self.duplicateExcludeEmptyCandidatesCheck.toggle()
+
+    def _focused_duplicate_member_path(self) -> str | None:
+        group_id = self._active_duplicate_group_id
+        controls = self._duplicate_member_controls.get(group_id or "", {})
+        focus = self.focusWidget()
+        for path, member_controls in controls.items():
+            if focus in member_controls:
+                return path
+        group = self._duplicate_group(group_id or "")
+        if group is None:
+            return None
+        return next(
+            (member.path for member in group.members if member.path in controls),
+            None,
+        )
+
+    def _focus_duplicate_member(self, delta: int) -> None:
+        group_id = self._active_duplicate_group_id
+        group = self._duplicate_group(group_id or "")
+        controls = self._duplicate_member_controls.get(group_id or "", {})
+        if group is None or not controls:
+            return
+        paths = [member.path for member in group.members if member.path in controls]
+        current_path = self._focused_duplicate_member_path()
+        if self.focusWidget() not in {
+            control for pair in controls.values() for control in pair
+        }:
+            next_index = 0
+        else:
+            current = paths.index(current_path) if current_path in paths else 0
+            next_index = max(0, min(current + delta, len(paths) - 1))
+        controls[paths[next_index]][0].setFocus()
+
+    def focus_previous_duplicate_member(self) -> None:
+        self._focus_duplicate_member(-1)
+
+    def focus_next_duplicate_member(self) -> None:
+        self._focus_duplicate_member(1)
+
+    def set_focused_duplicate_source(self) -> None:
+        group_id = self._active_duplicate_group_id
+        path = self._focused_duplicate_member_path()
+        if group_id is not None and path is not None:
+            self._set_duplicate_source(group_id, path)
+            self._duplicate_member_controls[group_id][path][0].setFocus()
+
+    def toggle_focused_duplicate_target(self) -> None:
+        group_id = self._active_duplicate_group_id
+        path = self._focused_duplicate_member_path()
+        if group_id is None or path is None:
+            return
+        target = self._duplicate_member_controls[group_id][path][1]
+        if target.isEnabled():
+            target.toggle()
+            target.setFocus()
+
+    def ignore_active_duplicate_group(self) -> None:
+        group_id = self._active_duplicate_group_id
+        if group_id is None or group_id not in self._visible_duplicate_group_ids:
+            return
+        index = self._visible_duplicate_group_ids.index(group_id)
+        self._duplicate_assessments[group_id]["ignored"] = True
+        self._visible_duplicate_group_ids.remove(group_id)
+        self._render_duplicate_candidate_queue()
+        if not self._visible_duplicate_group_ids:
+            self._show_no_active_duplicate_group(
+                "All candidate groups from this scan have been ignored. "
+                "Ignored choices are not saved after this scan."
+            )
+        else:
+            next_index = min(index, len(self._visible_duplicate_group_ids) - 1)
+            self._show_duplicate_candidate_group(
+                self._visible_duplicate_group_ids[next_index]
+            )
+        self.statusBar().showMessage(
+            "Candidate ignored for this scan; the decision was not saved"
+        )
+
+    def _refresh_duplicate_assessment_hint(self) -> None:
+        group_id = self._active_duplicate_group_id
+        if group_id is None:
+            return
+        assessment = self._duplicate_assessments[group_id]
+        source = assessment["source"]
+        target_count = len(assessment["targets"])
+        if source is not None and target_count:
+            self.duplicateAssessmentHint.setText(
+                f"Assessment ready: 1 source and {target_count} target(s). "
+                "Apply tags will be enabled in the propagation workflow."
+            )
+        else:
+            self.duplicateAssessmentHint.setText(
+                "Choose one source and one or more targets. Apply tags is shown "
+                "for the coming propagation workflow and remains disabled here."
+            )
+
+    def _toggle_duplicate_source(self, group_id: str, path: str, checked: bool) -> None:
+        assessment = self._duplicate_assessments[group_id]
+        if not checked:
+            if assessment["source"] == path:
+                source = self._duplicate_member_controls[group_id][path][0]
+                source.blockSignals(True)
+                source.setChecked(True)
+                source.blockSignals(False)
+            return
+        self._set_duplicate_source(group_id, path)
+
+    def _set_duplicate_source(self, group_id: str, path: str) -> None:
+        assessment = self._duplicate_assessments[group_id]
+        assessment["source"] = path
+        targets = assessment["targets"]
+        controls = self._duplicate_member_controls[group_id]
+        for member_path, (source, target) in controls.items():
+            should_check = member_path == path
+            if source.isChecked() != should_check:
+                source.blockSignals(True)
+                source.setChecked(should_check)
+                source.blockSignals(False)
+            target.setEnabled(not should_check)
+            if should_check and target.isChecked():
+                target.setChecked(False)
+                targets.discard(member_path)
+        self._refresh_duplicate_assessment_hint()
+
+    def _set_duplicate_target(self, group_id: str, path: str, checked: bool) -> None:
+        assessment = self._duplicate_assessments[group_id]
+        targets = assessment["targets"]
+        if checked:
+            if assessment["source"] == path:
+                control = self._duplicate_member_controls[group_id][path][1]
+                control.blockSignals(True)
+                control.setChecked(False)
+                control.blockSignals(False)
+                return
+            targets.add(path)
+        else:
+            targets.discard(path)
+        self._refresh_duplicate_assessment_hint()
 
     def show_duplicate_review(self) -> None:
         focus = self.focusWidget()
@@ -1559,6 +2382,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Current application view: Duplicate review"
         )
         self._refresh_duplicate_scope_controls()
+        self._ensure_duplicate_scope_prepared()
         self.duplicateReviewBackButton.setFocus()
 
     def show_tagging_workspace(self) -> None:
@@ -1593,6 +2417,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "directoryExcludeEdit": self.directoryExcludeEdit,
             "filesFilterBox": self.filesFilterBox,
             "filesFilterToggleBtn": self.filesFilterToggleBtn,
+            "duplicateReviewView": self.duplicateReviewView,
             "cmdLine": self.cmdLine,
         }
 
@@ -1664,8 +2489,20 @@ class MainWindow(QtWidgets.QMainWindow):
         if spec is None:
             raise RuntimeError(f"Unknown action: {action_id}")
         allowed_in_duplicate_review = {
+            "addfolder",
+            "cancelduplicates",
+            "focusduplicatescope",
+            "ignoreduplicate",
+            "nextduplicategroup",
+            "nextduplicatemember",
+            "previousduplicategroup",
+            "previousduplicatemember",
+            "scanduplicates",
+            "setduplicatesource",
             "showduplicates",
             "showtagging",
+            "toggleduplicatetarget",
+            "toggleemptyduplicates",
             "open_command_line",
             "complete_command_line",
             "listcommands",
@@ -1759,6 +2596,18 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         et = event.type()
+        if (
+            et == QtCore.QEvent.Type.KeyPress
+            and isinstance(obj, QtWidgets.QPushButton)
+            and obj.property("duplicateGroupId") is not None
+        ):
+            key = event.key()
+            if key == QtCore.Qt.Key.Key_Left:
+                self.show_previous_duplicate_group()
+                return True
+            if key == QtCore.Qt.Key.Key_Right:
+                self.show_next_duplicate_group()
+                return True
         if obj is self.addEdit:
             if et in (QtCore.QEvent.Type.Move, QtCore.QEvent.Type.Resize):
                 self._position_tag_hint()
@@ -2290,7 +3139,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._close_command_line()
             return
         if self.mainViews.currentWidget() is self.duplicateReviewView:
-            self.show_tagging_workspace()
+            if self._active_duplicate_scan_id is not None:
+                self.cancel_duplicate_scan()
+            else:
+                self.show_tagging_workspace()
             return
         self._hide_tag_matches()
         fw = self.focusWidget()
@@ -2873,11 +3725,26 @@ class MainWindow(QtWidgets.QMainWindow):
         else:
             folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Choose folder")
         if folder:
+            if self.mainViews.currentWidget() is self.duplicateReviewView:
+                self._duplicate_folder_scope_after_load = normalize_path(folder)
+                self._invalidate_duplicate_scope_for_folder_load()
             self._start_folder_discovery(folder)
 
     def _start_folder_discovery(self, folder: str) -> None:
         # A folder selection replaces the current workspace before discovery starts.
+        had_prepared_index_scope = (
+            self._prepared_duplicate_scope is not None
+            and self._prepared_duplicate_scope.kind is DuplicateScopeKind.INDEX_DATABASE
+        )
         self._reset_files_pane_for_reload()
+        if self._duplicate_folder_scope_after_load is not None:
+            self.duplicateScopePathLabel.setText(
+                self._duplicate_folder_scope_after_load
+            )
+        elif had_prepared_index_scope:
+            self._duplicate_scope_choice_changed()
+        else:
+            self._refresh_duplicate_scope_controls()
         self._hide_files_pane_message()
         self._show_files_render_progress()
         self.statusBar().showMessage("Loading...")
@@ -2971,6 +3838,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._index_sync_inflight.discard(event.root)
             if event.root != self._index_root:
                 return
+            if self.mainViews.currentWidget() is self.duplicateReviewView:
+                self._ensure_duplicate_scope_prepared()
             if isinstance(event.result, IndexSyncResult):
                 if not self._has_active_search_for(event.root):
                     self.statusBar().showMessage(
@@ -3363,7 +4232,10 @@ class MainWindow(QtWidgets.QMainWindow):
             if isinstance(event, DiscoveryCompleted):
 
                 def finish_render() -> None:
-                    if self.files.count() > 0:
+                    if (
+                        self.files.count() > 0
+                        and self.mainViews.currentWidget() is self.taggingWorkspaceView
+                    ):
                         self.files.setFocus()
 
                 self.replace_photo_workspace(
@@ -3379,10 +4251,25 @@ class MainWindow(QtWidgets.QMainWindow):
                 root = self._index_root_for_paths([event.root])
                 if root:
                     self._index_root = root
+                selected_duplicate_folder = self._duplicate_folder_scope_after_load
+                self._duplicate_folder_scope_after_load = None
+                if selected_duplicate_folder == normalize_path(event.root):
+                    self._prepare_discovered_duplicate_subfolder(
+                        event.root, event.paths
+                    )
+                else:
+                    self._refresh_duplicate_scope_controls()
                 self._schedule_index_sync(
                     root, list(event.paths), paths_are_normalized=True
                 )
+                if (
+                    selected_duplicate_folder is None
+                    and self.mainViews.currentWidget() is self.duplicateReviewView
+                ):
+                    self._ensure_duplicate_scope_prepared()
             else:
+                self._duplicate_folder_scope_after_load = None
+                self._refresh_duplicate_scope_controls()
                 self._record_session_error("Photo discovery", event.error)
                 self._hide_files_render_progress()
                 self._show_files_pane_message("No photos loaded")

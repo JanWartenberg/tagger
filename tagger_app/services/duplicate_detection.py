@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from hashlib import sha256
 from pathlib import Path
-from threading import Lock
+from threading import Event, Lock
 from typing import Protocol
 
 from tagger_app.exif_tool import ExifTool, KeywordState
@@ -30,10 +30,12 @@ class ScanRequest:
 
 @dataclass(frozen=True)
 class PhotoMetadata:
-    """The capture fields needed by the initial detector."""
+    """The capture fields and canonical tags needed by duplicate review."""
 
     date_original: str | None = None
     date_create: str | None = None
+    iptc_tags: tuple[str, ...] = ()
+    iptc_readable: bool = True
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,8 @@ class CandidateMember:
     path: str
     timestamp: str
     source_field: str
+    iptc_tags: tuple[str, ...] = ()
+    iptc_readable: bool = True
 
 
 @dataclass(frozen=True)
@@ -121,6 +125,115 @@ class ScopePreparationRunner(Protocol):
     def submit(self, work: Callable[[], None]) -> None: ...
 
 
+@dataclass(frozen=True)
+class DuplicateScanStarted:
+    request: ScanRequest
+    detector_id: str
+
+
+@dataclass(frozen=True)
+class DuplicateScanProgress:
+    request: ScanRequest
+    detector_id: str
+    progress: ScanProgress
+
+
+@dataclass(frozen=True)
+class DuplicateScanCompleted:
+    request: ScanRequest
+    result: ScanResult
+
+
+@dataclass(frozen=True)
+class DuplicateScanFailed:
+    request: ScanRequest
+    detector_id: str
+    error: str
+
+
+DuplicateScanEvent = (
+    DuplicateScanStarted
+    | DuplicateScanProgress
+    | DuplicateScanCompleted
+    | DuplicateScanFailed
+)
+
+
+class DuplicateScanCoordinator:
+    """Run one current detector scan and suppress cancelled or stale events."""
+
+    def __init__(
+        self,
+        *,
+        reader: CaptureMetadataReader,
+        runner: ScopePreparationRunner,
+        event_sink: Callable[[DuplicateScanEvent], None],
+    ) -> None:
+        self._reader = reader
+        self._runner = runner
+        self._event_sink = event_sink
+        self._lock = Lock()
+        self._next_scan_id = 0
+        self._current_scan_id: str | None = None
+        self._cancel_event: Event | None = None
+
+    def start(
+        self,
+        snapshot: DuplicateScopeSnapshot,
+        detector: DuplicateCandidateDetector,
+    ) -> ScanRequest:
+        with self._lock:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+            self._next_scan_id += 1
+            request = ScanRequest(
+                f"{snapshot.scope_id}-scan-{self._next_scan_id}", snapshot.paths
+            )
+            cancel_event = Event()
+            self._cancel_event = cancel_event
+            self._current_scan_id = request.scan_id
+
+        self._event_sink(DuplicateScanStarted(request, detector.detector_id))
+
+        def publish(event: DuplicateScanEvent) -> None:
+            with self._lock:
+                if self._current_scan_id != request.scan_id:
+                    return
+            self._event_sink(event)
+
+        def work() -> None:
+            try:
+                result = detector.scan(
+                    request,
+                    self._reader,
+                    on_progress=lambda progress: publish(
+                        DuplicateScanProgress(request, detector.detector_id, progress)
+                    ),
+                    is_cancelled=cancel_event.is_set,
+                )
+            except Exception as error:  # noqa: BLE001 - worker reports failures
+                publish(
+                    DuplicateScanFailed(
+                        request,
+                        detector.detector_id,
+                        str(error) or "duplicate scan failed",
+                    )
+                )
+                return
+            if result.complete and not cancel_event.is_set():
+                publish(DuplicateScanCompleted(request, result))
+
+        self._runner.submit(work)
+        return request
+
+    def cancel(self) -> None:
+        with self._lock:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+            self._current_scan_id = None
+            self._cancel_event = None
+
+
 class DuplicateScopeCoordinator:
     """Prepare one current immutable scope without publishing stale work."""
 
@@ -148,13 +261,23 @@ class DuplicateScopeCoordinator:
     def prepare_subfolder(self, root: str | Path) -> ScopePreparationRequest:
         return self._prepare(DuplicateScopeKind.SUBFOLDER, root)
 
+    def prepare_discovered_subfolder(
+        self, root: str | Path, paths: Sequence[str]
+    ) -> ScopePreparationRequest:
+        """Freeze paths already returned by the shared folder discovery flow."""
+        return self._prepare(DuplicateScopeKind.SUBFOLDER, root, paths=tuple(paths))
+
     def invalidate(self) -> None:
         """Prevent active work from publishing after the scope choice changes."""
         with self._lock:
             self._current_request_id = None
 
     def _prepare(
-        self, kind: DuplicateScopeKind, root: str | Path
+        self,
+        kind: DuplicateScopeKind,
+        root: str | Path,
+        *,
+        paths: tuple[str, ...] | None = None,
     ) -> ScopePreparationRequest:
         with self._lock:
             self._next_request_id += 1
@@ -165,7 +288,9 @@ class DuplicateScopeCoordinator:
 
         def work() -> None:
             try:
-                if request.kind is DuplicateScopeKind.INDEX_DATABASE:
+                if paths is not None:
+                    scan_request = ScanRequest(f"scope-{request.request_id}", paths)
+                elif request.kind is DuplicateScopeKind.INDEX_DATABASE:
                     scan_request = IndexedPhotoScope(
                         self._index_factory(request.root)
                     ).snapshot(f"scope-{request.request_id}")
@@ -232,7 +357,12 @@ class ExifToolCaptureMetadataReader:
 
 
 def _metadata_from_keyword_state(state: KeywordState) -> PhotoMetadata:
-    return PhotoMetadata(state.date_original, state.date_create)
+    return PhotoMetadata(
+        state.date_original,
+        state.date_create,
+        tuple(state.iptc),
+        state.iptc_readable,
+    )
 
 
 class DuplicateCandidateDetector(Protocol):
@@ -301,7 +431,13 @@ class SameCaptureTimestampDetector:
                 timestamp, source_field = _effective_timestamp(record)
                 if timestamp is not None:
                     by_timestamp.setdefault(timestamp, []).append(
-                        CandidateMember(path, timestamp, source_field)
+                        CandidateMember(
+                            path,
+                            timestamp,
+                            source_field,
+                            record.iptc_tags,
+                            record.iptc_readable,
+                        )
                     )
                 else:
                     timestampless_paths.append(path)
@@ -327,11 +463,22 @@ class SameCaptureTimestampDetector:
 
 
 def _effective_timestamp(metadata: PhotoMetadata) -> tuple[str | None, str]:
-    if metadata.date_original is not None and metadata.date_original.strip():
-        return metadata.date_original.strip(), "EXIF:DateTimeOriginal"
-    if metadata.date_create is not None and metadata.date_create.strip():
-        return metadata.date_create.strip(), "EXIF:CreateDate"
+    date_original = _usable_timestamp(metadata.date_original)
+    if date_original is not None:
+        return date_original, "EXIF:DateTimeOriginal"
+    date_create = _usable_timestamp(metadata.date_create)
+    if date_create is not None:
+        return date_create, "EXIF:CreateDate"
     return None, ""
+
+
+def _usable_timestamp(value: str | None) -> str | None:
+    if value is None or not (timestamp := value.strip()):
+        return None
+    digits = [character for character in timestamp if character.isdigit()]
+    if digits and all(digit == "0" for digit in digits):
+        return None
+    return timestamp
 
 
 def _make_group(timestamp: str, members: list[CandidateMember]) -> CandidateGroup:

@@ -49,6 +49,7 @@ class ActionSpec:
 def build_action_specs() -> tuple[ActionSpec, ...]:
     widget_shortcut = QtCore.Qt.ShortcutContext.WidgetShortcut
     filter_shortcut = QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
+    duplicate_shortcut = QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
 
     return (
         ActionSpec(
@@ -99,6 +100,106 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
                     scope="global_non_input",
                     timeout_ms=600,
                 ),
+            ),
+        ),
+        ActionSpec(
+            id="focusduplicatescope",
+            description="Focus duplicate scan scope",
+            handler_name="focus_duplicate_scope",
+            shortcuts=(
+                ShortcutBinding(
+                    "Alt+S", "duplicateReviewView", context=duplicate_shortcut
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="scanduplicates",
+            description="Start duplicate candidate scan",
+            handler_name="start_duplicate_scan",
+            command=CommandBinding("scanduplicates"),
+            shortcuts=(
+                ShortcutBinding(
+                    "Space, S", "duplicateReviewView", context=duplicate_shortcut
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="cancelduplicates",
+            description="Cancel duplicate candidate scan",
+            handler_name="cancel_duplicate_scan",
+            command=CommandBinding("cancelduplicates"),
+        ),
+        ActionSpec(
+            id="previousduplicategroup",
+            description="Open previous duplicate candidate group",
+            handler_name="show_previous_duplicate_group",
+            command=CommandBinding("previousduplicate"),
+            shortcuts=(
+                ShortcutBinding("K", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="nextduplicategroup",
+            description="Open next duplicate candidate group",
+            handler_name="show_next_duplicate_group",
+            command=CommandBinding("nextduplicate"),
+            shortcuts=(
+                ShortcutBinding("J", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="toggleemptyduplicates",
+            description="Hide candidate groups where no photo has tags",
+            handler_name="toggle_empty_duplicate_groups",
+            command=CommandBinding("toggleemptyduplicates"),
+            shortcuts=(
+                ShortcutBinding("E", "duplicateReviewView", context=duplicate_shortcut),
+                ShortcutBinding(
+                    "Alt+E", "duplicateReviewView", context=duplicate_shortcut
+                ),
+            ),
+        ),
+        ActionSpec(
+            id="previousduplicatemember",
+            description="Focus previous photo in duplicate candidate group",
+            handler_name="focus_previous_duplicate_member",
+            shortcuts=(
+                ShortcutBinding("H", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="nextduplicatemember",
+            description="Focus next photo in duplicate candidate group",
+            handler_name="focus_next_duplicate_member",
+            shortcuts=(
+                ShortcutBinding("L", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="setduplicatesource",
+            description="Set focused candidate photo as tag source",
+            handler_name="set_focused_duplicate_source",
+            command=CommandBinding("duplicatesource"),
+            shortcuts=(
+                ShortcutBinding("S", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="toggleduplicatetarget",
+            description="Toggle focused candidate photo as tag target",
+            handler_name="toggle_focused_duplicate_target",
+            command=CommandBinding("duplicatetarget"),
+            shortcuts=(
+                ShortcutBinding("T", "duplicateReviewView", context=duplicate_shortcut),
+            ),
+        ),
+        ActionSpec(
+            id="ignoreduplicate",
+            description="Ignore active candidate group for this scan",
+            handler_name="ignore_active_duplicate_group",
+            command=CommandBinding("ignorecandidate"),
+            shortcuts=(
+                ShortcutBinding("X", "duplicateReviewView", context=duplicate_shortcut),
             ),
         ),
         ActionSpec(

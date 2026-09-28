@@ -44,6 +44,7 @@ if PYQT_AVAILABLE:
         IndexRefreshProgress,
         IndexWriteFailed,
     )
+    from tagger_app.services.duplicate_detection import DuplicateScopeKind
     from tagger_app.ui.main_window import MainWindow, ResolveKeywordsDialog
 
 
@@ -56,12 +57,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self) -> None:
-        self.exif_patch = patch(
-            "tagger_app.ui.main_window.ExifTool", FakeExifTool
-        )
-        self.index_patch = patch(
-            "tagger_app.ui.main_window.PhotoIndex", FakePhotoIndex
-        )
+        self.exif_patch = patch("tagger_app.ui.main_window.ExifTool", FakeExifTool)
+        self.index_patch = patch("tagger_app.ui.main_window.PhotoIndex", FakePhotoIndex)
         self.storage_patches = [
             patch("tagger_app.ui.main_window.load_config", return_value={}),
             patch("tagger_app.ui.main_window.save_config"),
@@ -201,7 +198,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertTrue(self.window.duplicateReviewView.isVisible())
 
-        QtTest.QTest.keyClick(self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_G)
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_G
+        )
         QtTest.QTest.keyClick(
             self.window.duplicateReviewBackButton,
             QtCore.Qt.Key.Key_T,
@@ -219,9 +218,101 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window.taggingWorkspaceView.isVisible())
         self.assertEqual(self.window.dbSearchEdit.text(), "gt")
 
-    def test_duplicate_review_prepares_index_scope_only_after_explicit_request(
-        self,
-    ) -> None:
+    def test_duplicate_review_has_one_heading_and_can_load_a_folder(self) -> None:
+        folder = normalize_path("C:/review")
+        photo = normalize_path("C:/review/photo.jpg")
+        self.discovery.results[folder] = [photo]
+        self.window.show_duplicate_review()
+
+        labels = {
+            label.text()
+            for label in self.window.duplicateReviewView.findChildren(QtWidgets.QLabel)
+        }
+        self.assertIn("Duplicate review", labels)
+        self.assertNotIn("Candidates require human assessment", labels)
+
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value=folder,
+        ):
+            self.window.duplicateAddFolderButton.click()
+
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertIsNotNone(self.window._active_replacement_discovery)
+        self.assertIsNone(self.window._prepared_duplicate_scope)
+        self.assertIsNone(self.window._duplicate_scan_result)
+
+        self.discovery_runner.run_discovery()
+        self._wait_for_ui(lambda: self.window.files.count() == 1)
+
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertEqual(self.window.all_file_paths(), [photo])
+        self.assertTrue(self.window._duplicate_scope_preparing)
+        self.assertEqual(
+            self.window.duplicateScopePathLabel.text(), normalize_path(folder)
+        )
+        self.assertFalse(self.window.duplicateStartScanButton.isEnabled())
+        self.assertIsNone(self.window._duplicate_scan_result)
+
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "1 photos ready")
+        self.assertEqual(
+            self.window._prepared_duplicate_scope.kind,
+            DuplicateScopeKind.SUBFOLDER,
+        )
+        self.assertEqual(self.window._prepared_duplicate_scope.root, folder)
+        self.assertEqual(self.window._prepared_duplicate_scope.paths, (photo,))
+        self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
+        self.assertIsNone(self.window._duplicate_scan_result)
+
+    def test_duplicate_review_controls_describe_shortcuts(self) -> None:
+        self.assertIn("Ctrl+O", self.window.duplicateAddFolderButton.toolTip())
+        self.assertIn("Ctrl+Alt+T", self.window.duplicateReviewBackButton.toolTip())
+        self.assertIn("Alt+S", self.window.duplicateScopeCombo.toolTip())
+        self.assertIn("Space s", self.window.duplicateStartScanButton.toolTip())
+        self.assertIn("Esc", self.window.duplicateCancelScanButton.toolTip())
+        self.assertIn(
+            "e / Alt+E", self.window.duplicateExcludeEmptyCandidatesCheck.toolTip()
+        )
+        self.assertIn("x", self.window.duplicateIgnoreButton.toolTip())
+        self.assertIn("Space p", self.window.duplicateApplyTagsButton.toolTip())
+
+    def test_ctrl_o_opens_add_folder_from_duplicate_review(self) -> None:
+        self.window.show_duplicate_review()
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value="",
+        ) as choose_folder:
+            QtTest.QTest.keyClick(
+                self.window.duplicateReviewBackButton,
+                QtCore.Qt.Key.Key_O,
+                QtCore.Qt.KeyboardModifier.ControlModifier,
+            )
+            self.app.processEvents()
+
+        choose_folder.assert_called_once()
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+
+    def test_cancelling_duplicate_review_add_folder_changes_nothing(self) -> None:
+        (photo,) = self._add_paths("current.jpg")
+        self.window.show_duplicate_review()
+        scheduled_before = list(self.discovery_runner.scheduled)
+
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
+            return_value="",
+        ):
+            self.window.duplicateAddFolderButton.click()
+
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertEqual(self.window.all_file_paths(), [photo])
+        self.assertEqual(self.discovery_runner.scheduled, scheduled_before)
+        self.assertIsNone(self.window._prepared_duplicate_scope)
+        self.assertIsNone(self.window._duplicate_scan_result)
+
+    def test_duplicate_review_prepares_index_scope_automatically(self) -> None:
         paths = [normalize_path("C:/photos/b.jpg"), normalize_path("C:/photos/a.jpg")]
         FakePhotoIndex.snapshot_paths = paths
         self.window._index_root = normalize_path("C:/photos")
@@ -229,13 +320,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.show_duplicate_review()
         self.app.processEvents()
 
-        self.assertEqual(self.discovery_runner.scheduled, [])
-        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Not prepared")
-        self.assertTrue(self.window.duplicatePrepareScopeButton.isEnabled())
-
-        self.window.duplicatePrepareScopeButton.click()
-
-        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Preparing…")
+        self.assertEqual(len(self.discovery_runner.scheduled), 1)
+        self.assertEqual(
+            self.window.duplicateScopeSizeLabel.text(), "Collecting photo list…"
+        )
+        self.assertIn("background", self.window.duplicateScanCostLabel.text())
         self.assertIsNone(self.window._prepared_duplicate_scope)
         self.assertEqual(FakePhotoIndex.snapshot_reads, 0)
 
@@ -247,22 +336,62 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window._prepared_duplicate_scope.paths, tuple(sorted(paths))
         )
         self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "2 photos ready")
-        self.assertFalse(self.window.duplicateStartScanButton.isEnabled())
+        self.assertIn("2 photos", self.window.duplicateScanCostLabel.text())
+        self.assertIn("may take some time", self.window.duplicateScanCostLabel.text())
+        self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
         self.assertEqual(FakeExifTool.states_by_path, {})
+
+    def test_duplicate_review_scope_scan_and_escape_shortcuts(self) -> None:
+        paths = [normalize_path("C:/photos/a.jpg")]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {paths[0]: KeywordState([], [], "timestamp")}
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_S,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertIs(self.window.focusWidget(), self.window.duplicateScopeCombo)
+
+        self.window.duplicateReviewBackButton.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_Space
+        )
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_S
+        )
+        self.app.processEvents()
+        self.assertIsNotNone(self.window._active_duplicate_scan_id)
+
+        QtTest.QTest.keyClick(
+            self.window.duplicateCancelScanButton, QtCore.Qt.Key.Key_Escape
+        )
+        self.assertIsNone(self.window._active_duplicate_scan_id)
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_Escape
+        )
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
 
     def test_duplicate_review_prepares_selected_subfolder_in_background(self) -> None:
         folder = normalize_path("C:/review")
         self.discovery.results[folder] = ["C:/review/z.jpg", "C:/review/a.jpg"]
         self.window.show_duplicate_review()
-        self.window.duplicateScopeCombo.setCurrentIndex(1)
 
         with patch(
             "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
             return_value=folder,
         ):
-            self.window.duplicatePrepareScopeButton.click()
+            self.window.duplicateScopeCombo.setCurrentIndex(1)
 
-        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Preparing…")
+        self.assertEqual(
+            self.window.duplicateScopeSizeLabel.text(), "Collecting photo list…"
+        )
         self.discovery_runner.run()
         self.app.processEvents()
 
@@ -274,28 +403,252 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "2 photos ready")
 
+    def test_duplicate_scan_renders_evidence_tags_and_assessment_rules(self) -> None:
+        first = normalize_path("C:/photos/a.jpg")
+        second = normalize_path("C:/photos/b.jpg")
+        third = normalize_path("C:/photos/c.jpg")
+        FakePhotoIndex.snapshot_paths = [first, second, third]
+        FakeExifTool.states_by_path = {
+            first: KeywordState(["source-tag"], [], "2024:01:02 03:04:05"),
+            second: KeywordState([], [], "2024:01:02 03:04:05"),
+            third: KeywordState(
+                [],
+                [],
+                None,
+                "2024:01:02 03:04:05",
+                iptc_readable=False,
+            ),
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.window.duplicateStartScanButton.click()
+        self.assertTrue(self.window.duplicateCancelScanButton.isEnabled())
+        self.assertEqual(self.window.duplicateScanProgress.format(), "%v / %m photos")
+        self.assertIn("3 photos", self.window.duplicateScanCostLabel.text())
+        self.assertIn("you can cancel", self.window.duplicateScanCostLabel.text())
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        result = self.window._duplicate_scan_result
+        self.assertEqual(len(result.groups), 1)
+        self.assertIn(
+            "Same capture timestamp", self.window.duplicateResultsSummary.text()
+        )
+        rendered_text = " ".join(
+            label.text()
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+        )
+        self.assertIn("EXIF:DateTimeOriginal", rendered_text)
+        self.assertIn("EXIF:CreateDate", rendered_text)
+        self.assertIn("suggested source", rendered_text)
+        self.assertIn("confirmed empty", rendered_text)
+        self.assertIn("could not be read", rendered_text)
+
+        group_id = result.groups[0].group_id
+        controls = self.window._duplicate_member_controls[group_id]
+        first_source, first_target = controls[first]
+        second_source, second_target = controls[second]
+        first_target.setChecked(True)
+        first_source.setChecked(True)
+        self.assertFalse(first_target.isChecked())
+        self.assertFalse(first_target.isEnabled())
+        first_source.click()
+        self.assertTrue(first_source.isChecked())
+        second_target.setChecked(True)
+        second_source.setChecked(True)
+        self.assertFalse(first_source.isChecked())
+        self.assertFalse(second_target.isChecked())
+        self.assertEqual(self.window._duplicate_assessments[group_id]["source"], second)
+
+    def test_duplicate_review_uses_horizontal_queue_and_read_only_actions(
+        self,
+    ) -> None:
+        paths = [
+            normalize_path(f"C:/photos/{name}.jpg")
+            for name in ("first-a", "first-b", "second-a", "second-b")
+        ]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            paths[0]: KeywordState(["source"], [], "first"),
+            paths[1]: KeywordState([], [], "first"),
+            paths[2]: KeywordState(["other"], [], "second"),
+            paths[3]: KeywordState([], [], "second"),
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        result = self.window._duplicate_scan_result
+        self.assertEqual(len(result.groups), 2)
+        self.assertTrue(self.window.duplicateCandidateQueue.isVisible())
+        self.assertEqual(len(self.window._duplicate_group_buttons), 2)
+        self.assertEqual(
+            self.window._active_duplicate_group_id, result.groups[0].group_id
+        )
+        self.assertEqual(
+            len(
+                self.window.duplicateResultsBody.findChildren(
+                    QtWidgets.QLabel, "duplicateCandidatePreview"
+                )
+            ),
+            2,
+        )
+        self.assertFalse(self.window.duplicateApplyTagsButton.isEnabled())
+        self.assertIn(
+            "coming propagation workflow",
+            self.window.duplicateAssessmentHint.text(),
+        )
+
+        first_group_id = result.groups[0].group_id
+        second_group_id = result.groups[1].group_id
+        first_button = self.window._duplicate_group_buttons[first_group_id]
+        first_button.setFocus()
+        QtTest.QTest.keyClick(first_button, QtCore.Qt.Key.Key_Right)
+        self.assertEqual(self.window._active_duplicate_group_id, second_group_id)
+        QtTest.QTest.keyClick(
+            self.window._duplicate_group_buttons[second_group_id],
+            QtCore.Qt.Key.Key_K,
+        )
+        self.assertEqual(self.window._active_duplicate_group_id, first_group_id)
+        QtTest.QTest.keyClick(
+            self.window._duplicate_group_buttons[first_group_id],
+            QtCore.Qt.Key.Key_J,
+        )
+        self.assertEqual(self.window._active_duplicate_group_id, second_group_id)
+
+        active_controls = self.window._duplicate_member_controls[second_group_id]
+        member_paths = [member.path for member in result.groups[1].members]
+        active_button = self.window._duplicate_group_buttons[second_group_id]
+        active_button.setFocus()
+        QtTest.QTest.keyClick(active_button, QtCore.Qt.Key.Key_L)
+        self.assertIs(self.window.focusWidget(), active_controls[member_paths[0]][0])
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
+        self.assertIs(self.window.focusWidget(), active_controls[member_paths[1]][0])
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_S)
+        self.assertEqual(
+            self.window._duplicate_assessments[second_group_id]["source"],
+            member_paths[1],
+        )
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_H)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_T)
+        self.assertIn(
+            member_paths[0],
+            self.window._duplicate_assessments[second_group_id]["targets"],
+        )
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
+        self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
+
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_X)
+        self.assertNotIn(second_group_id, self.window._visible_duplicate_group_ids)
+        self.assertEqual(len(self.window._duplicate_group_buttons), 1)
+        self.assertEqual(
+            self.window._active_duplicate_group_id, result.groups[0].group_id
+        )
+        self.assertIn("not saved", self.window.statusBar().currentMessage())
+
+    def test_duplicate_review_can_exclude_only_confirmed_empty_groups(self) -> None:
+        paths = [
+            normalize_path(f"C:/photos/{name}.jpg")
+            for name in (
+                "tagged-a",
+                "tagged-b",
+                "empty-a",
+                "empty-b",
+                "unknown-a",
+                "unknown-b",
+            )
+        ]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            paths[0]: KeywordState(["source"], [], "tagged"),
+            paths[1]: KeywordState([], [], "tagged"),
+            paths[2]: KeywordState([], [], "empty"),
+            paths[3]: KeywordState([], [], "empty"),
+            paths[4]: KeywordState([], [], "unknown", iptc_readable=False),
+            paths[5]: KeywordState([], [], "unknown"),
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.assertEqual(len(self.window._duplicate_group_buttons), 3)
+
+        self.window.duplicateExcludeEmptyCandidatesCheck.setChecked(True)
+        self.app.processEvents()
+
+        visible_groups = [
+            self.window._duplicate_group(group_id)
+            for group_id in self.window._visible_duplicate_group_ids
+        ]
+        visible_timestamps = {
+            group.members[0].timestamp for group in visible_groups if group is not None
+        }
+        self.assertEqual(visible_timestamps, {"tagged", "unknown"})
+        self.assertEqual(len(self.window._duplicate_group_buttons), 2)
+
+        self.window.duplicateExcludeEmptyCandidatesCheck.setChecked(False)
+        self.assertEqual(len(self.window._duplicate_group_buttons), 3)
+
+    def test_cancelled_duplicate_scan_cannot_publish_results(self) -> None:
+        paths = [normalize_path("C:/photos/a.jpg"), normalize_path("C:/photos/b.jpg")]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], "same") for path in paths
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+
+        QtTest.QTest.keyClick(
+            self.window.duplicateCancelScanButton, QtCore.Qt.Key.Key_Escape
+        )
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        self.assertIsNone(self.window._duplicate_scan_result)
+        self.assertEqual(
+            self.window.duplicateReviewEmptyTitle.text(),
+            "Candidate scan cancelled",
+        )
+        self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
+
     def test_duplicate_scope_completion_cannot_replace_a_new_scope_choice(self) -> None:
         folder = normalize_path("C:/old-review")
         self.discovery.results[folder] = ["C:/old-review/photo.jpg"]
         self.window.show_duplicate_review()
-        self.window.duplicateScopeCombo.setCurrentIndex(1)
         with patch(
             "tagger_app.ui.main_window.QtWidgets.QFileDialog.getExistingDirectory",
             return_value=folder,
         ):
-            self.window.duplicatePrepareScopeButton.click()
+            self.window.duplicateScopeCombo.setCurrentIndex(1)
 
         self.window.duplicateScopeCombo.setCurrentIndex(0)
         self.discovery_runner.run()
         self.app.processEvents()
 
         self.assertIsNone(self.window._prepared_duplicate_scope)
-        self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "Not prepared")
+        self.assertEqual(
+            self.window.duplicateScopeSizeLabel.text(), "Waiting for a photo folder"
+        )
 
     def test_view_selector_coexists_with_active_status_bar_widgets(self) -> None:
         self.window.iptcEmptyRefreshOffer.show()
         self.window.indexRepairStatusLabel.setText("Index refresh: 12,345 / 98,765")
         self.window.statusBar().showMessage("Scanning the active photo workspace")
+        selector_font = self.window.viewSelector.font()
+        selector_font.setPointSize(selector_font.pointSize() + 6)
+        self.window.viewSelector.setFont(selector_font)
         self.window.resize(1100, 700)
         self.app.processEvents()
 
@@ -322,7 +675,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     ) -> None:
         self.window._dispatch_command("duplicates", [])
 
-        self.window._dispatch_command("addfolder", [])
+        self.window._dispatch_command("addtag", [])
 
         self.assertTrue(self.window.duplicateReviewView.isVisible())
         self.assertEqual(
@@ -1059,7 +1412,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery.results[folder] = RuntimeError("discovery failed")
 
         self._choose_folder(folder)
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.discovery_runner.run_discovery()
 
         self.assertEqual(self.window.all_file_paths(), [])
@@ -1084,7 +1439,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         root = self.window._index_root
         self.assertIsNotNone(root)
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.window.backgroundDiscoveryEvent.emit(
                 IndexWriteFailed(
                     root=root,
@@ -1099,7 +1456,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         critical.assert_not_called()
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as information:
             self.window._dispatch_command("errors", [])
 
         self.assertIn("Index update: index failed", information.call_args.args[2])
@@ -1535,7 +1894,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertEqual(FakePhotoIndex.states_by_path[second].merged, ["confirmed"])
         self.assertIn("1 succeeded, 1 failed", self.window.statusBar().currentMessage())
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as information:
             self.window._dispatch_command("errors", [])
 
         self.assertIn(
@@ -1963,7 +2324,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 shortcut, ["+".join(route.sequence) for route in action.key_routes]
             )
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as information:
             self.window._dispatch_command("listcommands", [])
 
         command_list = information.call_args.args[2]
@@ -2383,7 +2746,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(self.window._refresh_discovery_timer.isActive())
 
     def test_errors_command_reports_an_empty_session(self) -> None:
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as information:
             self.window._dispatch_command("errors", [])
 
         information.assert_called_once_with(
@@ -2404,7 +2769,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
         )
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.information") as information:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as information:
             self.window._dispatch_command("errors", [])
 
         message = information.call_args.args[2]
@@ -2436,7 +2803,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {stale_path}
         self.window.dbSearchEdit.setText("tag:bird")
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.window.apply_db_search()
             self.discovery_runner.run_index_work()
             self.app.processEvents()
@@ -2507,7 +2876,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         missing_path = "C:/photos/missing.jpg"
         FakeExifTool.metadata_read_error = RuntimeError("File not found")
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.window.replace_photo_workspace([missing_path])
             self._wait_until(
                 lambda: self.window.statusBar().currentMessage() == "Error"
@@ -2525,7 +2896,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakePhotoIndex.search_results = {path}
         self.window.dbSearchEdit.setText("tag:broken")
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.window.apply_db_search()
             self.discovery_runner.run_index_work()
             self.app.processEvents()
@@ -2901,7 +3274,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         FakePhotoIndex.iptc_empty_error = RuntimeError("simulated filter failure")
 
-        with patch("tagger_app.ui.main_window.QtWidgets.QMessageBox.critical") as critical:
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.critical"
+        ) as critical:
             self.window.onlyUntagged.setChecked(True)
             self._wait_until(
                 lambda: (

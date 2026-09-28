@@ -94,15 +94,30 @@ Photo Workspace filter mode.
 4. TAGGER displays candidate groups and the detector's evidence.
 5. TAGGER shows confirmed canonical IPTC tags for each member; metadata read
    failures are `unknown`, not `no tags`.
-6. User assesses a group and explicitly chooses one source and one or more
-   targets.
-7. TAGGER previews the tag additions and asks for confirmation.
-8. Confirmed changes use the existing tag-mutation workflow.
+6. User assesses a group and chooses one readable, settled, non-empty source.
+7. TAGGER preselects every readable, settled, confirmed-empty target; the user
+   may deselect or reselect each target independently.
+8. TAGGER previews the exact copied tags and all selected targets and asks for
+   confirmation.
+9. Confirmed changes use the existing tag-mutation workflow.
 
-A source is a single choice and targets are independent checkboxes. A source
-cannot also be a target. A sole tagged member may be suggested as the source,
-but no candidate is accepted automatically. Existing target tags are retained;
-source tags are merged as additions rather than replacing target tags.
+A source cannot also be a target. A sole tagged member may be suggested as the
+source, but no candidate is accepted automatically. A target with existing tags,
+unknown tag state, or pending mutation intent is ineligible; propagation does not
+merge into already-tagged photos.
+
+Duplicate Review uses an explicit Edit mode. `e` enters the mode and `Esc` leaves
+it; edit commands never apply in text inputs. `h`/`l` move between the horizontal
+group queue, `j`/`k` move through photo cards in grid reading order, `s` chooses
+the focused source, `t` toggles the focused target, `c` opens copy confirmation,
+and `i` ignores the group. Relevant controls show visible key hints. In the
+confirmation preview, `y` confirms and `n` or `Esc` cancels.
+
+After confirmation, review advances immediately while the submitted group
+collapses to a compact pending row with a spinner and then a completed state. A
+partial failure remains as a prominent reopenable row with per-target outcomes
+and retry only for failed targets. Ignore similarly collapses a group to a
+recoverable `Ignored` row and advances; it lasts only for the current scan.
 
 Returning to normal tagging preserves its selection, filters, and search state.
 Review source/target choices remain local to duplicate review.
@@ -113,10 +128,11 @@ Review source/target choices remain local to duplicate review.
 - Filesystem and metadata work stays off the Qt UI thread.
 - Every active result carries scan identity, detector identity, and scope.
 - Starting another scan invalidates the previous active result.
-- Source tags are refreshed before confirmation; pending source mutations must
-  resolve before copying confirmed file truth.
-- A propagation plan records the assessed group, source, targets, and intended
-  additions. It cannot be applied to paths outside its scan result.
+- Source and target tags are refreshed before confirmation. The source must
+  remain readable, settled, and non-empty; every target must remain readable,
+  settled, and confirmed empty.
+- A propagation plan records the assessed group, source, targets, and exact tags
+  to copy. It cannot be applied to paths outside its scan result.
 - Writes use existing canonical IPTC/XMP behavior, backup settings, keyword
   limits, pending/failed state, retry behavior, and Session errors.
 - Partial success remains visible: successful targets stay successful and failed
@@ -129,8 +145,8 @@ Review source/target choices remain local to duplicate review.
    tests.
 2. **Assessment UI:** dedicated review view populated from stable candidate
    results, with evidence and source/target selection.
-3. **Propagation:** additions preview, confirmation, fresh-source validation, and
-   submission through the existing tag-mutation coordinator.
+3. **Propagation:** exact-copy preview, confirmation, fresh source/target
+   validation, and submission through the existing tag-mutation coordinator.
 4. **Later detectors:** add only when actual usage justifies them.
 
 This sequence intentionally prioritizes an end-to-end review workflow over a

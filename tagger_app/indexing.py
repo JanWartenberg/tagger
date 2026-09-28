@@ -291,7 +291,8 @@ class PhotoIndex:
 
             CREATE TABLE IF NOT EXISTS refresh_directory_state(
               path TEXT PRIMARY KEY,
-              mtime_ns INTEGER NOT NULL
+              mtime_ns INTEGER NOT NULL,
+              entry_count INTEGER
             );
             """
         )
@@ -308,6 +309,19 @@ class PhotoIndex:
             conn.execute(
                 "ALTER TABLE refresh_checkpoint "
                 "ADD COLUMN manifest_version INTEGER NOT NULL DEFAULT 0"
+            )
+
+        directory_state_columns = {
+            str(row["name"])
+            for row in conn.execute(
+                "PRAGMA table_info(refresh_directory_state)"
+            ).fetchall()
+        }
+        if "entry_count" not in directory_state_columns:
+            # Existing checkpoints have no safe directory-entry baseline. NULL
+            # makes reconciliation rescan those directories conservatively.
+            conn.execute(
+                "ALTER TABLE refresh_directory_state ADD COLUMN entry_count INTEGER"
             )
 
         photo_columns = {
@@ -831,8 +845,8 @@ class PhotoIndex:
 
         # Reconciliation deliberately happens once, after streamed discovery.  It
         # observes mtime/size changes in every discovered file and rescans only
-        # directories whose state changed during the run.  This preserves the
-        # concurrent-addition guarantee without traversing an unchanged root twice.
+        # directories whose state changed during the run. A direct-entry count
+        # backs up directory mtimes without recursively restating unchanged files.
         paths = self._refresh_reconciliation_paths()
         reconciled = self._sync_paths(
             exif,
@@ -880,9 +894,13 @@ class PhotoIndex:
                 for row in conn.execute("SELECT path FROM refresh_seen_paths")
             }
             directory_states = [
-                (str(row[0]), int(row[1]))
+                (
+                    str(row[0]),
+                    int(row[1]),
+                    int(row[2]) if row[2] is not None else None,
+                )
                 for row in conn.execute(
-                    "SELECT path, mtime_ns FROM refresh_directory_state"
+                    "SELECT path, mtime_ns, entry_count FROM refresh_directory_state"
                 )
             ]
 
@@ -900,10 +918,19 @@ class PhotoIndex:
             for path in seen
             if Path(path).is_file() and Path(path).suffix.lower() in SUPPORTED_EXTS
         }
-        for directory, recorded_mtime_ns in directory_states:
+        for directory, recorded_mtime_ns, recorded_entry_count in directory_states:
             directory_path = Path(directory)
             try:
                 changed = directory_path.stat().st_mtime_ns != recorded_mtime_ns
+                if not changed:
+                    # Windows and some network filesystems can retain a directory
+                    # timestamp when an entry is added. The direct-entry count is
+                    # a cheap fallback that preserves concurrent-addition safety.
+                    changed = (
+                        recorded_entry_count is None
+                        or sum(1 for _entry in directory_path.iterdir())
+                        != recorded_entry_count
+                    )
             except OSError:
                 continue
             if not changed:
@@ -977,9 +1004,13 @@ class PhotoIndex:
                 # being enumerated, reconciliation will observe that difference
                 # and rescan it instead of missing a concurrent addition.
                 conn.execute(
-                    "INSERT OR REPLACE INTO refresh_directory_state(path, mtime_ns) "
-                    "VALUES (?, ?)",
-                    (normalize_path(directory_path), scan_start_mtime_ns),
+                    "INSERT OR REPLACE INTO refresh_directory_state("
+                    "path, mtime_ns, entry_count) VALUES (?, ?, ?)",
+                    (
+                        normalize_path(directory_path),
+                        scan_start_mtime_ns,
+                        len(children),
+                    ),
                 )
 
         rows = conn.execute(
