@@ -1,10 +1,10 @@
 # 03 — Propagate Tags from Assessed Candidates
 
-Status: ready-for-agent
+Status: ready-for-human
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
-Blocked by: None
+Blocked by: Windows/offscreen acceptance and maintainer approval
 
 ## Goal
 
@@ -82,3 +82,42 @@ tag-mutation workflow.
 ## Design Reference
 
 See the accepted [design direction](../design-notes.md).
+
+## Implementation and Validation
+
+Implementation is on `prototype/duplicate-review-ui`; keep it isolated from
+`main` until an explicit integration decision.
+
+- Added a Qt-free, immutable propagation-plan API with fresh eligibility and
+  scan-identity validation. Preview and confirmation both read file truth in
+  background workers; writes and retries reject non-empty or unknown targets.
+- Added Edit mode, default/subset target selection, exact copy confirmation,
+  captured backup settings, advancing review, compact outcome rows, failed-target
+  retry, and recoverable current-scan Ignore.
+- Queued writes discarded on workspace replacement now report cancellation;
+  failure restoration excludes paths already discarded from the queue.
+- Automated coverage exercises the agreed propagation-plan, Qt adapter, and
+  mutation-coordinator seams. It also covers bounded status/preview layouts and
+  literal tag text in confirmation.
+- Linux validation: `ruff check .`; `QT_QPA_PLATFORM=offscreen python -m pytest -q`
+  (321 tests and 31 subtests passed). One full run hit the unchanged
+  `test_latest_selection_is_not_queued_behind_stale_preview_loads` timing
+  assertion; its isolated rerun and the subsequent full suite both passed.
+- Pyright: new propagation/preview modules and the mutation coordinator have no
+  errors. Existing `MainWindow` errors decreased from 182 to 177, with no new
+  diagnostic categories or counts.
+- Local two-axis review against `63bab54`: no documented-standard violations;
+  one low-priority duplication advisory in preview/confirmation worker plumbing.
+  Fixed the unbounded status-row layout, made large previews scrollable, and
+  removed stale future-workflow wording.
+
+## Remaining Human Acceptance
+
+The acceptance checkboxes above remain pending final Windows validation rather
+than claiming acceptance from Linux-only checks.
+
+- Run and record the Windows/offscreen command in `tests/README.md`.
+- Verify Edit-mode navigation, cancellation without writes, exact confirmed copy
+  with backups on/off, partial failure and failed-only retry, current-scan Ignore
+  restoration, and large result/target sets on disposable photo copies.
+- Approve the delivered workflow; decide integration into `main` separately.

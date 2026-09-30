@@ -1,6 +1,6 @@
 # Duplicate Photo Detection and Tag Propagation
 
-Status: ready-for-agent
+Status: ready-for-human
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
 
@@ -83,4 +83,7 @@ sophisticated matching methods.
 
 - 2026-09-23: Detection foundation was accepted in commit `c39d6a9`.
 - Duplicate assessment and Add Folder workflows are accepted. Tag propagation
-  remains under ticket 03, so this specification remains active.
+  is implemented under ticket 03 on `prototype/duplicate-review-ui`, with Linux
+  automated validation and local two-axis review complete. Windows/offscreen
+  acceptance and maintainer approval remain pending, so this specification stays
+  active. Integration into `main` requires a separate explicit decision.

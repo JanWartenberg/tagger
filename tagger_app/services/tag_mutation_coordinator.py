@@ -32,6 +32,7 @@ class TagMutationLifecycleKind(Enum):
     PENDING = "pending"
     COMPLETED = "completed"
     FAILED = "failed"
+    DISCARDED = "discarded"
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ class TagMutationLifecycle:
     restored_states: tuple[tuple[str, KeywordState], ...] = ()
     emptiness_by_path: tuple[tuple[str, bool], ...] = ()
     failed_paths: tuple[str, ...] = ()
+    discarded_paths: tuple[str, ...] = ()
     status_message: str | None = None
     error: str | None = None
 
@@ -149,6 +151,15 @@ class TagMutationCoordinator:
             ]
             if departed_paths and queued.pending_mutation is not None:
                 self._pending.discard(queued.pending_mutation, departed_paths)
+                self._event_sink(
+                    TagMutationLifecycle(
+                        TagMutationLifecycleKind.DISCARDED,
+                        queued.pending_mutation,
+                        self._workspace_generation,
+                        False,
+                        discarded_paths=tuple(departed_paths),
+                    )
+                )
             if retained_paths:
                 surviving.append(
                     _QueuedTagMutation(
@@ -225,7 +236,7 @@ class TagMutationCoordinator:
         self._inflight = False
         restored: dict[str, KeywordState] = {}
         if queued.pending_mutation is not None:
-            restored = self._pending.fail(queued.pending_mutation)
+            restored = self._pending.fail(queued.pending_mutation, list(queued.paths))
         render_workspace = queued.workspace_generation == self._workspace_generation
         self._event_sink(
             TagMutationLifecycle(

@@ -45,6 +45,7 @@ if PYQT_AVAILABLE:
         IndexWriteFailed,
     )
     from tagger_app.services.duplicate_detection import DuplicateScopeKind
+    from tagger_app.services.pending_tag_mutation import TagIntent
     from tagger_app.ui.main_window import MainWindow, ResolveKeywordsDialog
 
 
@@ -274,10 +275,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("Space s", self.window.duplicateStartScanButton.toolTip())
         self.assertIn("Esc", self.window.duplicateCancelScanButton.toolTip())
         self.assertIn(
-            "e / Alt+E", self.window.duplicateExcludeEmptyCandidatesCheck.toolTip()
+            "Alt+E", self.window.duplicateExcludeEmptyCandidatesCheck.toolTip()
         )
-        self.assertIn("x", self.window.duplicateIgnoreButton.toolTip())
-        self.assertIn("Space p", self.window.duplicateApplyTagsButton.toolTip())
+        self.assertIn("i in Edit mode", self.window.duplicateIgnoreButton.toolTip())
+        self.assertIn("c in Edit mode", self.window.duplicateApplyTagsButton.toolTip())
 
     def test_ctrl_o_opens_add_folder_from_duplicate_review(self) -> None:
         self.window.show_duplicate_review()
@@ -403,6 +404,451 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(self.window.duplicateScopeSizeLabel.text(), "2 photos ready")
 
+    def _scan_copy_candidates(self, *, two_groups=False):
+        names = ("0-source", "1-empty-a", "2-empty-b", "3-tagged", "4-unknown")
+        paths = [normalize_path(f"C:/photos/{name}.jpg") for name in names]
+        FakePhotoIndex.snapshot_paths = list(paths)
+        FakeExifTool.states_by_path = {
+            paths[0]: KeywordState(["Holiday"], ["mirror"], "first"),
+            paths[1]: KeywordState([], [], "first"),
+            paths[2]: KeywordState([], ["old mirror"], "first"),
+            paths[3]: KeywordState(["Other"], [], "first"),
+            paths[4]: KeywordState([], [], "first", iptc_readable=False),
+        }
+        if two_groups:
+            more = [normalize_path(f"C:/photos/later-{i}.jpg") for i in range(2)]
+            FakePhotoIndex.snapshot_paths.extend(more)
+            FakeExifTool.states_by_path.update(
+                {path: KeywordState([], [], "second") for path in more}
+            )
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        return paths
+
+    def _copy_control(self, path, role):
+        kind = QtWidgets.QRadioButton if role == "source" else QtWidgets.QCheckBox
+        return next(
+            control
+            for control in self.window.duplicateResultsBody.findChildren(kind)
+            if control.accessibleName() == f"Use {path} as {role}"
+        )
+
+    def test_duplicate_copy_preselects_only_eligible_targets_and_preserves_subset(self):
+        source, first, second, tagged, unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self.assertTrue(self._copy_control(first, "target").isChecked())
+        self.assertTrue(self._copy_control(second, "target").isChecked())
+        for path in (source, tagged, unknown):
+            self.assertFalse(self._copy_control(path, "target").isEnabled())
+        for path in (first, second, unknown):
+            self.assertFalse(self._copy_control(path, "source").isEnabled())
+        self._copy_control(second, "target").click()
+        self.window.toggle_empty_duplicate_groups()
+        self.assertFalse(self._copy_control(second, "target").isChecked())
+        self.assertTrue(self.window.duplicateApplyTagsButton.isEnabled())
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_duplicate_copy_preview_is_exact_and_cancellation_writes_nothing(self):
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        self.window.keepBackup.setChecked(True)
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        text = " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
+        self.assertIn(source, text)
+        self.assertIn(first, text)
+        self.assertNotIn(second, text)
+        self.assertIn("Holiday", text)
+        self.assertIn("Backup: on", text)
+        self.assertEqual(FakeExifTool.write_calls, [])
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_N)
+        self.app.processEvents()
+        self.assertFalse(dialog.isVisible())
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_confirmed_duplicate_copy_advances_and_retries_only_failed_targets(self):
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates(
+            two_groups=True
+        )
+        self._copy_control(source, "source").click()
+        FakeExifTool.block_writes()
+        FakeExifTool.write_failures = [False, True]
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_Y)
+        self._wait_for_ui(lambda: FakeExifTool.write_started.is_set())
+        self.assertIn(
+            "Pending",
+            " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            ),
+        )
+        self.assertTrue(
+            all(
+                "later" in control.accessibleName()
+                for control in self.window.duplicateResultsBody.findChildren(
+                    QtWidgets.QRadioButton
+                )
+            )
+        )
+        FakeExifTool.release_writes()
+        self._wait_until(
+            lambda: len(FakeExifTool.write_calls) == 2
+            and "Failed"
+            in " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            )
+        )
+        self.assertEqual(FakeExifTool.states_by_path[first].iptc, ["Holiday"])
+        failed_row = next(
+            button
+            for button in self.window.duplicateStatusRows.findChildren(
+                QtWidgets.QPushButton
+            )
+            if "Failed" in button.text()
+        )
+        failed_row.click()
+        text = " ".join(
+            label.text()
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+        )
+        self.assertIn(f"{first}: successful", text)
+        self.assertIn(f"{second}: failed", text)
+        retry = next(
+            button
+            for button in self.window.duplicateResultsBody.findChildren(
+                QtWidgets.QPushButton
+            )
+            if "Retry" in button.text()
+        )
+        retry.click()
+        self._wait_until(
+            lambda: len(FakeExifTool.write_calls) == 3
+            and "Completed"
+            in " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            )
+        )
+        self.assertEqual(
+            [path for path, _tags in FakeExifTool.write_calls], [first, second, second]
+        )
+        self.assertEqual(FakeExifTool.states_by_path[second].iptc, ["Holiday"])
+        self.assertEqual(FakeExifTool.states_by_path[second].xmp, ["Holiday"])
+
+    def test_duplicate_edit_keys_are_modal_and_ignore_is_recoverable(self):
+        source, first, _second, _tagged, _unknown = self._scan_copy_candidates(
+            two_groups=True
+        )
+        control = self._copy_control(source, "source")
+        control.setFocus()
+        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_S)
+        self.assertFalse(control.isChecked())
+        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_E)
+        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_S)
+        self.assertTrue(control.isChecked())
+        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_J)
+        self.assertIs(self.window.focusWidget(), self._copy_control(first, "target"))
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_T)
+        self.assertFalse(self._copy_control(first, "target").isChecked())
+        self.window.cmdLine.show()
+        self.window.cmdLine.setFocus()
+        QtTest.QTest.keyClicks(self.window.cmdLine, "scti")
+        self.assertEqual(FakeExifTool.write_calls, [])
+        self.window.cmdLine.hide()
+        self._copy_control(first, "target").setFocus()
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_Escape)
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertIn("Edit mode: off", self.window.duplicateEditModeButton.text())
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
+        ignored = next(
+            button
+            for button in self.window.duplicateStatusRows.findChildren(
+                QtWidgets.QPushButton
+            )
+            if "Ignored" in button.text()
+        )
+        ignored.click()
+        self.assertTrue(self._copy_control(source, "source").isChecked())
+        self.assertFalse(self._copy_control(first, "target").isChecked())
+
+    def test_duplicate_copy_refresh_rejects_changed_source_before_preview(self):
+        source, _first, _second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        FakeExifTool.states_by_path[source] = KeywordState(["Changed"], [])
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: "changed since assessment"
+            in self.window.statusBar().currentMessage()
+        )
+        self.assertIsNone(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        )
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_duplicate_copy_confirmation_refresh_rejects_external_target_tags(self):
+        source, first, _second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        FakeExifTool.states_by_path[first] = KeywordState(["External"], [])
+        QtTest.QTest.keyClick(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
+            QtCore.Qt.Key.Key_Y,
+        )
+        self._wait_for_ui(
+            lambda: "changed since assessment"
+            in self.window.statusBar().currentMessage()
+        )
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_duplicate_copy_navigation_invalidates_a_background_preview(self):
+        source, _first, _second, _tagged, _unknown = self._scan_copy_candidates(
+            two_groups=True
+        )
+        self._copy_control(source, "source").click()
+        FakeExifTool.read_delay_seconds = 0.03
+        self.window.duplicateApplyTagsButton.click()
+        self.window.show_next_duplicate_group()
+        self.assertTrue(self.window.pool.waitForDone(5000))
+        self.app.processEvents()
+        self.assertIsNone(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        )
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_duplicate_copy_retry_rejects_targets_that_acquired_external_tags(self):
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        FakeExifTool.write_failures = [True]
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        QtTest.QTest.keyClick(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
+            QtCore.Qt.Key.Key_Y,
+        )
+        self._wait_until(
+            lambda: "Failed"
+            in " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            )
+        )
+        FakeExifTool.states_by_path[first] = KeywordState(["External"], [])
+        self.window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)[0].click()
+        retry = next(
+            button
+            for button in self.window.duplicateResultsBody.findChildren(
+                QtWidgets.QPushButton
+            )
+            if "Retry" in button.text()
+        )
+        retry.click()
+        self.assertTrue(self.window.pool.waitForDone(5000))
+        self.app.processEvents()
+        self.assertEqual(FakeExifTool.write_calls, [(first, ["Holiday"])])
+        self.assertEqual(FakeExifTool.states_by_path[first].iptc, ["External"])
+
+    def test_duplicate_copy_backup_setting_is_captured_by_the_preview(self):
+        source, _first, second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        self.window.keepBackup.setChecked(True)
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        self.window.keepBackup.setChecked(False)
+        QtTest.QTest.keyClick(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
+            QtCore.Qt.Key.Key_Y,
+        )
+        self._wait_until(lambda: bool(FakeExifTool.backup_settings))
+        self.assertEqual(FakeExifTool.backup_settings, [True])
+
+    def test_duplicate_copy_rejects_pending_intent_before_preview(self):
+        source, first, _second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self.window._tag_mutation_coordinator.begin_intents(
+            {first: [TagIntent.add("Pending")]}, {first: KeywordState([], [])}
+        )
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: "Pending tag changes must settle"
+            in self.window.statusBar().currentMessage()
+        )
+        self.assertIsNone(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        )
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_duplicate_copy_leaving_review_invalidates_background_confirmation(self):
+        source, _first, _second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        FakeExifTool.read_delay_seconds = 0.03
+        QtTest.QTest.keyClick(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
+            QtCore.Qt.Key.Key_Y,
+        )
+        self.window.show_tagging_workspace()
+        self.assertTrue(self.window.pool.waitForDone(5000))
+        self.app.processEvents()
+        self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_queued_duplicate_copy_reports_cancellation_after_workspace_replacement(
+        self,
+    ):
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates()
+        blocker = normalize_path("C:/photos/blocker.jpg")
+        FakeExifTool.states_by_path[blocker] = KeywordState([], [])
+        FakeExifTool.block_writes()
+        coordinator = self.window._tag_mutation_coordinator
+        mutation = coordinator.begin_intents(
+            {blocker: [TagIntent.add("Blocker")]}, {blocker: KeywordState([], [])}
+        )
+        coordinator.enqueue(
+            [blocker],
+            lambda paths: self.window.tag_mutations.add_tags(
+                paths, ["Blocker"], False, self.window.exif.read_keywords
+            ),
+            mutation,
+        )
+        self._wait_for_ui(lambda: FakeExifTool.write_started.is_set())
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        QtTest.QTest.keyClick(
+            self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
+            QtCore.Qt.Key.Key_Y,
+        )
+        self._wait_for_ui(
+            lambda: "Pending"
+            in " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            )
+        )
+        self.window.replace_photo_workspace([])
+        self.assertIn(
+            "Cancelled",
+            " ".join(
+                button.text()
+                for button in self.window.duplicateStatusRows.findChildren(
+                    QtWidgets.QPushButton
+                )
+            ),
+        )
+        FakeExifTool.release_writes()
+        self.assertTrue(self.window.pool.waitForDone(5000))
+        self.app.processEvents()
+        self.assertNotIn(first, [path for path, _tags in FakeExifTool.write_calls])
+
+    def test_many_duplicate_status_rows_do_not_expand_the_review_window(self):
+        paths = [
+            normalize_path(f"C:/photos/group-{group}-{member}.jpg")
+            for group in range(20)
+            for member in range(2)
+        ]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], f"2024:01:{position // 2 + 1:02} 12:00:00")
+            for position, path in enumerate(paths)
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        original_height = self.window.minimumSizeHint().height()
+        for _ in range(20):
+            self.window.ignore_active_duplicate_group()
+        QtTest.QTest.qWait(1)
+        self.assertLessEqual(
+            self.window.minimumSizeHint().height(), original_height + 40
+        )
+        self.assertEqual(
+            len(self.window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)), 20
+        )
+
+    def test_duplicate_copy_preview_remains_usable_with_many_targets(self):
+        paths = [
+            normalize_path(f"C:/photos/photo-{number:03}.jpg") for number in range(60)
+        ]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], "same-time") for path in paths
+        }
+        FakeExifTool.states_by_path[paths[0]] = KeywordState(
+            ["<b>Literal tag</b>"], [], "same-time"
+        )
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        self._copy_control(paths[0], "source").click()
+        self.window.duplicateApplyTagsButton.click()
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        self.assertLessEqual(dialog.minimumSizeHint().height(), 420)
+        labels = dialog.findChildren(QtWidgets.QLabel)
+        self.assertIn(paths[-1], " ".join(label.text() for label in labels))
+        self.assertTrue(
+            all(
+                label.textFormat() == QtCore.Qt.TextFormat.PlainText for label in labels
+            )
+        )
+        QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_Escape)
+        self.assertEqual(FakeExifTool.write_calls, [])
+
     def test_duplicate_scan_renders_evidence_tags_and_assessment_rules(self) -> None:
         first = normalize_path("C:/photos/a.jpg")
         second = normalize_path("C:/photos/b.jpg")
@@ -458,12 +904,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         first_source.click()
         self.assertTrue(first_source.isChecked())
         second_target.setChecked(True)
-        second_source.setChecked(True)
-        self.assertFalse(first_source.isChecked())
-        self.assertFalse(second_target.isChecked())
-        self.assertEqual(self.window._duplicate_assessments[group_id]["source"], second)
+        second_source.click()
+        self.assertTrue(first_source.isChecked())
+        self.assertTrue(second_target.isChecked())
+        self.assertFalse(second_source.isEnabled())
+        self.assertEqual(self.window._duplicate_assessments[group_id]["source"], first)
 
-    def test_duplicate_review_uses_horizontal_queue_and_read_only_actions(
+    def test_duplicate_review_uses_horizontal_queue_and_edit_actions(
         self,
     ) -> None:
         paths = [
@@ -501,7 +948,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertFalse(self.window.duplicateApplyTagsButton.isEnabled())
         self.assertIn(
-            "coming propagation workflow",
+            "e enters Edit mode",
             self.window.duplicateAssessmentHint.text(),
         )
 
@@ -511,14 +958,15 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         first_button.setFocus()
         QtTest.QTest.keyClick(first_button, QtCore.Qt.Key.Key_Right)
         self.assertEqual(self.window._active_duplicate_group_id, second_group_id)
+        self.window.toggle_duplicate_edit_mode()
         QtTest.QTest.keyClick(
             self.window._duplicate_group_buttons[second_group_id],
-            QtCore.Qt.Key.Key_K,
+            QtCore.Qt.Key.Key_H,
         )
         self.assertEqual(self.window._active_duplicate_group_id, first_group_id)
         QtTest.QTest.keyClick(
             self.window._duplicate_group_buttons[first_group_id],
-            QtCore.Qt.Key.Key_J,
+            QtCore.Qt.Key.Key_L,
         )
         self.assertEqual(self.window._active_duplicate_group_id, second_group_id)
 
@@ -526,25 +974,24 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         member_paths = [member.path for member in result.groups[1].members]
         active_button = self.window._duplicate_group_buttons[second_group_id]
         active_button.setFocus()
-        QtTest.QTest.keyClick(active_button, QtCore.Qt.Key.Key_L)
+        QtTest.QTest.keyClick(active_button, QtCore.Qt.Key.Key_J)
         self.assertIs(self.window.focusWidget(), active_controls[member_paths[0]][0])
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
-        self.assertIs(self.window.focusWidget(), active_controls[member_paths[1]][0])
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_S)
         self.assertEqual(
             self.window._duplicate_assessments[second_group_id]["source"],
-            member_paths[1],
-        )
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_H)
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_T)
-        self.assertIn(
             member_paths[0],
+        )
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_J)
+        self.assertIs(self.window.focusWidget(), active_controls[member_paths[1]][1])
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_T)
+        self.assertNotIn(
+            member_paths[1],
             self.window._duplicate_assessments[second_group_id]["targets"],
         )
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
+        self.window.toggle_empty_duplicate_groups()
         self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
 
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_X)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
         self.assertNotIn(second_group_id, self.window._visible_duplicate_group_ids)
         self.assertEqual(len(self.window._duplicate_group_buttons), 1)
         self.assertEqual(
@@ -3761,6 +4208,7 @@ class FakeExifTool:
     write_failures: ClassVar[list[bool]] = []
     write_calls: ClassVar[list[tuple[str, list[str]]]] = []
     field_write_calls: ClassVar[list[tuple[str, list[str], list[str]]]] = []
+    backup_settings: ClassVar[list[bool]] = []
     states_by_path: ClassVar[dict[str, KeywordState]] = {}
     metadata_read_started = threading.Event()
     write_started = threading.Event()
@@ -3775,6 +4223,7 @@ class FakeExifTool:
         cls.write_failures = []
         cls.write_calls = []
         cls.field_write_calls = []
+        cls.backup_settings = []
         cls.states_by_path = {}
         cls.metadata_read_started = threading.Event()
         cls.write_started = threading.Event()
@@ -3820,7 +4269,7 @@ class FakeExifTool:
         xmp: list[str],
         keep_backup: bool,
     ) -> None:
-        del keep_backup
+        type(self).backup_settings.append(keep_backup)
         path = normalize_path(paths[0])
         type(self).write_calls.append((path, list(iptc)))
         type(self).field_write_calls.append((path, list(iptc), list(xmp)))

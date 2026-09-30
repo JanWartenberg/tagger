@@ -8,7 +8,7 @@ are ordered by dependency:
 1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — completed
 2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — completed and accepted
 3. [Add Folder action to duplicate review](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02a-add-folder-action-to-duplicate-view.md) — completed and accepted
-4. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — ready for agent; workflow decisions accepted
+4. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — implemented on `prototype/duplicate-review-ui`; Windows/offscreen acceptance and maintainer approval pending
 
 The read-only detection foundation is accepted. Keep assessment and metadata
 mutation as separate delivery stages.

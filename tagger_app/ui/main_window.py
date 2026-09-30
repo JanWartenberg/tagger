@@ -3,6 +3,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
+from typing import TypedDict
 
 from PyQt6 import QtCore, QtGui, QtWidgets
 
@@ -95,6 +96,13 @@ from tagger_app.services.tag_mutation_coordinator import (
     TagMutationLifecycle,
     TagMutationLifecycleKind,
 )
+from tagger_app.services.tag_propagation import (
+    TagPropagationPlan,
+    prepare_propagation,
+    require_empty_target,
+    validate_propagation,
+)
+from tagger_app.ui.duplicate_copy_preview import DuplicateCopyPreview
 from tagger_app.storage import (
     add_recent_tag,
     load_config,
@@ -104,6 +112,16 @@ from tagger_app.storage import (
 from tagger_app.ui.actions import ActionSpec, KeyRoute, build_action_specs
 from tagger_app.ui.tag_completion import TagCompletion
 from tagger_app.utils import dedupe_casefold, normalize_path
+
+
+class DuplicateAssessment(TypedDict):
+    source: str | None
+    targets: set[str]
+    ignored: bool
+    submitted: bool
+    outcomes: dict[str, str]
+    keep_backup: bool
+
 
 DEFAULT_INDEX_ROOT = Path.home() / "Pictures"
 METADATA_READ_DEBOUNCE_MS = 25
@@ -908,13 +926,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateScanEvent.connect(self._handle_duplicate_scan_event)
         self._active_duplicate_scan_id: str | None = None
         self._duplicate_scan_result: ScanResult | None = None
-        self._duplicate_assessments: dict[str, dict[str, object]] = {}
+        self._duplicate_assessments: dict[str, DuplicateAssessment] = {}
         self._duplicate_member_controls: dict[
             str, dict[str, tuple[QtWidgets.QRadioButton, QtWidgets.QCheckBox]]
         ] = {}
         self._active_duplicate_group_id: str | None = None
         self._visible_duplicate_group_ids: list[str] = []
         self._duplicate_group_buttons: dict[str, QtWidgets.QPushButton] = {}
+        self._duplicate_edit_mode = False
+        self._duplicate_mutations: dict[int, tuple[ScanResult, str]] = {}
+        self._duplicate_copy_generation = 0
+        self._duplicate_copy_workers: set[Worker] = set()
+        self._duplicate_copy_preview: DuplicateCopyPreview | None = None
         self._duplicate_preview_generation = 0
         self._duplicate_preview_workers: set[Worker] = set()
         self._duplicate_folder_scope_after_load: str | None = None
@@ -1521,7 +1544,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.duplicateExcludeEmptyCandidatesCheck.setToolTip(
             "Hide groups only when every member has a readable, empty IPTC tag "
-            "list (e / Alt+E)"
+            "list (Alt+E)"
         )
         self.duplicateExcludeEmptyCandidatesCheck.toggled.connect(
             self._filter_duplicate_candidates
@@ -1550,6 +1573,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateCandidateQueue.hide()
         results_layout.addWidget(self.duplicateCandidateQueue)
 
+        self.duplicateStatusRows = QtWidgets.QWidget()
+        self.duplicateStatusRowsLayout = QtWidgets.QVBoxLayout(self.duplicateStatusRows)
+        self.duplicateStatusRowsScroll = QtWidgets.QScrollArea()
+        self.duplicateStatusRowsScroll.setWidgetResizable(True)
+        self.duplicateStatusRowsScroll.setMaximumHeight(160)
+        self.duplicateStatusRowsScroll.setWidget(self.duplicateStatusRows)
+        self.duplicateStatusRowsScroll.hide()
+        results_layout.addWidget(self.duplicateStatusRowsScroll)
+
         self.duplicateResultsScroll = QtWidgets.QScrollArea()
         self.duplicateResultsScroll.setWidgetResizable(True)
         self.duplicateResultsBody = QtWidgets.QWidget()
@@ -1565,21 +1597,28 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         assessment_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.duplicateAssessmentHint = QtWidgets.QLabel(
-            "Choose a source and targets to prepare the future tag workflow."
+            "Choose a tagged source and empty targets, then preview the copy."
         )
         self.duplicateAssessmentHint.setWordWrap(True)
         assessment_actions_layout.addWidget(self.duplicateAssessmentHint, 1)
-        self.duplicateIgnoreButton = QtWidgets.QPushButton("Ignore candidate")
+        self.duplicateEditModeButton = QtWidgets.QPushButton("Edit mode: off (e)")
+        self.duplicateEditModeButton.clicked.connect(self.toggle_duplicate_edit_mode)
+        assessment_actions_layout.addWidget(self.duplicateEditModeButton)
+        self.duplicateEditModeButton.installEventFilter(self)
+        self.duplicateIgnoreButton = QtWidgets.QPushButton("Ignore candidate (i)")
         self.duplicateIgnoreButton.setToolTip(
-            "Remove this group from the current review queue (x)"
+            "Ignore this group for this scan (i in Edit mode); reopen its Ignored row to restore"
         )
         self.duplicateIgnoreButton.clicked.connect(self.ignore_active_duplicate_group)
         assessment_actions_layout.addWidget(self.duplicateIgnoreButton)
-        self.duplicateApplyTagsButton = QtWidgets.QPushButton("Apply tags…")
+        self.duplicateApplyTagsButton = QtWidgets.QPushButton("Copy tags… (c)")
         self.duplicateApplyTagsButton.setEnabled(False)
         self.duplicateApplyTagsButton.setToolTip(
-            "Coming workflow: apply source tags (Ctrl+Enter / Space p)"
+            "Preview copied tags (c in Edit mode); y confirms, n / Esc cancels"
         )
+        self.duplicateApplyTagsButton.installEventFilter(self)
+        self.duplicateIgnoreButton.installEventFilter(self)
+        self.duplicateApplyTagsButton.clicked.connect(self.preview_duplicate_copy)
         assessment_actions_layout.addWidget(self.duplicateApplyTagsButton)
         self.duplicateAssessmentActions.hide()
         results_layout.addWidget(self.duplicateAssessmentActions)
@@ -1884,8 +1923,11 @@ class MainWindow(QtWidgets.QMainWindow):
                 MainWindow._clear_layout(child_layout)
 
     def _clear_duplicate_results(self) -> None:
+        self._invalidate_duplicate_copy()
         self._duplicate_preview_generation += 1
         self._duplicate_assessments.clear()
+        self._clear_layout(self.duplicateStatusRowsLayout)
+        self.duplicateStatusRowsScroll.hide()
         self._duplicate_member_controls.clear()
         self._active_duplicate_group_id = None
         self._visible_duplicate_group_ids.clear()
@@ -1917,6 +1959,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "source": None,
                 "targets": set(),
                 "ignored": False,
+                "submitted": False,
+                "outcomes": {},
+                "keep_backup": False,
             }
         self._filter_duplicate_candidates()
 
@@ -1935,9 +1980,11 @@ class MainWindow(QtWidgets.QMainWindow):
             group.group_id
             for group in result.groups
             if not self._duplicate_assessments[group.group_id]["ignored"]
+            and not self._duplicate_assessments[group.group_id]["submitted"]
             and not (exclude_empty and self._duplicate_group_is_confirmed_empty(group))
         ]
         self._render_duplicate_candidate_queue()
+        self._render_duplicate_status_rows()
         if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
             self._show_duplicate_candidate_group(self._active_duplicate_group_id)
         elif self._visible_duplicate_group_ids:
@@ -1980,7 +2027,7 @@ class MainWindow(QtWidgets.QMainWindow):
             button.setMinimumWidth(190)
             button.setAccessibleName(f"Open candidate group {position}")
             button.setToolTip(
-                "Open candidate group (j/k or Left/Right to move between groups)"
+                "Open candidate group (h/l in Edit mode or Left/Right in queue)"
             )
             button.setProperty("duplicateGroupId", group_id)
             button.installEventFilter(self)
@@ -1996,8 +2043,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _show_duplicate_candidate_group(self, group_id: str) -> None:
         group = self._duplicate_group(group_id)
-        if group is None or group_id not in self._visible_duplicate_group_ids:
+        if group is None:
             return
+        assessment = self._duplicate_assessments[group_id]
+        if assessment["submitted"]:
+            self._show_duplicate_outcomes(group_id)
+            return
+        if group_id not in self._visible_duplicate_group_ids:
+            return
+        self._invalidate_duplicate_copy()
         self._duplicate_preview_generation += 1
         generation = self._duplicate_preview_generation
         self._active_duplicate_group_id = group_id
@@ -2018,8 +2072,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         explanation = QtWidgets.QLabel(
             "These photos share capture-time evidence. Compare their previews and "
-            "confirmed IPTC tags, then choose a source and targets for the future "
-            "tag-copy workflow—or ignore this candidate for the current scan."
+            "confirmed IPTC tags, then choose a tagged source and empty targets. "
+            "Preview and confirm the tag copy—or ignore this candidate for this scan."
         )
         explanation.setWordWrap(True)
         explanation.setStyleSheet(
@@ -2053,6 +2107,9 @@ class MainWindow(QtWidgets.QMainWindow):
         for index, member in enumerate(group.members):
             card = QtWidgets.QFrame()
             card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+            card.setProperty("duplicateMemberPath", member.path)
+            card.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+            card.installEventFilter(self)
             card.setMinimumWidth(210)
             card_layout = QtWidgets.QVBoxLayout(card)
             preview = QtWidgets.QLabel("Loading preview…")
@@ -2093,11 +2150,17 @@ class MainWindow(QtWidgets.QMainWindow):
             card_layout.addWidget(tags)
 
             choices = QtWidgets.QHBoxLayout()
-            source = QtWidgets.QRadioButton("Source")
+            source = QtWidgets.QRadioButton("Source (s)")
             source.setAutoExclusive(False)
             source.setAccessibleName(f"Use {member.path} as source")
             source.setToolTip("Use this photo as the tag source (s)")
-            target = QtWidgets.QCheckBox("Target")
+            source.setEnabled(
+                self._duplicate_member_eligible(group_id, member.path, source=True)
+            )
+            target = QtWidgets.QCheckBox("Target (t)")
+            target.setEnabled(
+                self._duplicate_member_eligible(group_id, member.path, source=False)
+            )
             target.setAccessibleName(f"Use {member.path} as target")
             target.setToolTip("Include this photo as a tag target (t)")
             source.toggled.connect(
@@ -2110,6 +2173,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     self._set_duplicate_target(selected_group, path, checked)
                 )
             )
+            source.installEventFilter(self)
+            target.installEventFilter(self)
             choices.addWidget(source)
             choices.addWidget(target)
             choices.addStretch(1)
@@ -2191,6 +2256,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsLayout.addWidget(failures)
 
     def _show_no_active_duplicate_group(self, message: str) -> None:
+        self._invalidate_duplicate_copy()
         self._duplicate_preview_generation += 1
         self._active_duplicate_group_id = None
         self._duplicate_member_controls.clear()
@@ -2238,6 +2304,8 @@ class MainWindow(QtWidgets.QMainWindow):
         group_id = self._active_duplicate_group_id
         controls = self._duplicate_member_controls.get(group_id or "", {})
         focus = self.focusWidget()
+        if focus is not None and focus.property("duplicateMemberPath") in controls:
+            return str(focus.property("duplicateMemberPath"))
         for path, member_controls in controls.items():
             if focus in member_controls:
                 return path
@@ -2257,14 +2325,25 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         paths = [member.path for member in group.members if member.path in controls]
         current_path = self._focused_duplicate_member_path()
-        if self.focusWidget() not in {
+        focus = self.focusWidget()
+        if focus not in {
             control for pair in controls.values() for control in pair
-        }:
+        } and (focus is None or focus.property("duplicateMemberPath") not in controls):
             next_index = 0
         else:
             current = paths.index(current_path) if current_path in paths else 0
             next_index = max(0, min(current + delta, len(paths) - 1))
-        controls[paths[next_index]][0].setFocus()
+        path = paths[next_index]
+        source, target = controls[path]
+        if source.isEnabled():
+            source.setFocus()
+        elif target.isEnabled():
+            target.setFocus()
+        else:
+            for card in self.duplicateResultsBody.findChildren(QtWidgets.QFrame):
+                if card.property("duplicateMemberPath") == path:
+                    card.setFocus()
+                    break
 
     def focus_previous_duplicate_member(self) -> None:
         self._focus_duplicate_member(-1)
@@ -2277,7 +2356,9 @@ class MainWindow(QtWidgets.QMainWindow):
         path = self._focused_duplicate_member_path()
         if group_id is not None and path is not None:
             self._set_duplicate_source(group_id, path)
-            self._duplicate_member_controls[group_id][path][0].setFocus()
+            source = self._duplicate_member_controls[group_id][path][0]
+            if source.isEnabled():
+                source.setFocus()
 
     def toggle_focused_duplicate_target(self) -> None:
         group_id = self._active_duplicate_group_id
@@ -2293,23 +2374,395 @@ class MainWindow(QtWidgets.QMainWindow):
         group_id = self._active_duplicate_group_id
         if group_id is None or group_id not in self._visible_duplicate_group_ids:
             return
-        index = self._visible_duplicate_group_ids.index(group_id)
+        self._invalidate_duplicate_copy()
         self._duplicate_assessments[group_id]["ignored"] = True
-        self._visible_duplicate_group_ids.remove(group_id)
-        self._render_duplicate_candidate_queue()
-        if not self._visible_duplicate_group_ids:
-            self._show_no_active_duplicate_group(
-                "All candidate groups from this scan have been ignored. "
-                "Ignored choices are not saved after this scan."
-            )
-        else:
-            next_index = min(index, len(self._visible_duplicate_group_ids) - 1)
-            self._show_duplicate_candidate_group(
-                self._visible_duplicate_group_ids[next_index]
-            )
+        self._advance_duplicate_review(group_id)
         self.statusBar().showMessage(
             "Candidate ignored for this scan; the decision was not saved"
         )
+
+    def toggle_duplicate_edit_mode(self) -> None:
+        self._duplicate_edit_mode = not self._duplicate_edit_mode
+        self.duplicateEditModeButton.setText(
+            "Edit mode: on (Esc)" if self._duplicate_edit_mode else "Edit mode: off (e)"
+        )
+        if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
+            self._refresh_duplicate_assessment_hint()
+
+    def _duplicate_edit_key_handler(
+        self, event: QtGui.QKeyEvent
+    ) -> Callable[[], None] | None:
+        if self.mainViews.currentWidget() is not self.duplicateReviewView:
+            return None
+        focus = self.focusWidget()
+        if (
+            isinstance(
+                focus,
+                (QtWidgets.QLineEdit, QtWidgets.QTextEdit, QtWidgets.QPlainTextEdit),
+            )
+            or event.modifiers() != QtCore.Qt.KeyboardModifier.NoModifier
+        ):
+            return None
+        if event.key() == QtCore.Qt.Key.Key_E:
+            return self.toggle_duplicate_edit_mode
+        if not self._duplicate_edit_mode:
+            return None
+        if (
+            event.key() == QtCore.Qt.Key.Key_Escape
+            and self._active_duplicate_scan_id is not None
+        ):
+            return self.cancel_duplicate_scan
+        handlers: dict[int, Callable[[], None]] = {
+            QtCore.Qt.Key.Key_H: self.show_previous_duplicate_group,
+            QtCore.Qt.Key.Key_L: self.show_next_duplicate_group,
+            QtCore.Qt.Key.Key_J: self.focus_next_duplicate_member,
+            QtCore.Qt.Key.Key_K: self.focus_previous_duplicate_member,
+            QtCore.Qt.Key.Key_S: self.set_focused_duplicate_source,
+            QtCore.Qt.Key.Key_T: self.toggle_focused_duplicate_target,
+            QtCore.Qt.Key.Key_C: self.preview_duplicate_copy,
+            QtCore.Qt.Key.Key_I: self.ignore_active_duplicate_group,
+            QtCore.Qt.Key.Key_Escape: self.toggle_duplicate_edit_mode,
+        }
+        return handlers.get(event.key())
+
+    def _handle_duplicate_key_event(self, event: QtCore.QEvent) -> bool:
+        if not isinstance(event, QtGui.QKeyEvent) or event.type() not in (
+            QtCore.QEvent.Type.ShortcutOverride,
+            QtCore.QEvent.Type.KeyPress,
+        ):
+            return False
+        handler = self._duplicate_edit_key_handler(event)
+        if handler is None:
+            return False
+        if event.type() == QtCore.QEvent.Type.KeyPress:
+            handler()
+        event.accept()
+        return True
+
+    def _duplicate_status_message(self, message: str) -> None:
+        status_bar = self.statusBar()
+        assert status_bar is not None
+        status_bar.showMessage(message)
+
+    def _invalidate_duplicate_copy(self) -> None:
+        self._duplicate_copy_generation += 1
+        if self._duplicate_copy_preview is not None:
+            self._duplicate_copy_preview.reject()
+            self._duplicate_copy_preview = None
+
+    def preview_duplicate_copy(self) -> None:
+        result = self._duplicate_scan_result
+        group_id = self._active_duplicate_group_id
+        if result is None or group_id is None:
+            return
+        assessment = self._duplicate_assessments[group_id]
+        source = assessment["source"]
+        if source is None or not assessment["targets"]:
+            return
+        self._invalidate_duplicate_copy()
+        generation = self._duplicate_copy_generation
+        targets = tuple(sorted(assessment["targets"]))
+        keep_backup = self.keepBackup.isChecked()
+        statuses = {
+            path: self._tag_mutation_coordinator.status_for(path)
+            for path in (source, *targets)
+        }
+        self.duplicateApplyTagsButton.setEnabled(False)
+        self._duplicate_status_message("Refreshing source and target tags…")
+        worker = Worker(
+            prepare_propagation,
+            result,
+            group_id,
+            source,
+            targets,
+            keep_backup,
+            self.exif.read_keywords,
+            statuses.get,
+        )
+        self._duplicate_copy_workers.add(worker)
+
+        def ready(plan: TagPropagationPlan) -> None:
+            self._duplicate_copy_workers.discard(worker)
+            if (
+                generation != self._duplicate_copy_generation
+                or result is not self._duplicate_scan_result
+            ):
+                return
+            if any(
+                self._tag_mutation_coordinator.status_for(path)
+                is MutationStatus.PENDING
+                for path in (plan.source, *plan.targets)
+            ):
+                failed("Pending tag changes must settle before copying")
+                return
+            self._refresh_duplicate_assessment_hint()
+            dialog = DuplicateCopyPreview(plan, self)
+            self._duplicate_copy_preview = dialog
+            dialog.accepted.connect(
+                lambda: self._confirm_duplicate_copy(plan, result, generation)
+            )
+            dialog.finished.connect(
+                lambda _result: setattr(self, "_duplicate_copy_preview", None)
+            )
+            dialog.finished.connect(dialog.deleteLater)
+            dialog.open()
+
+        def failed(message: str) -> None:
+            self._duplicate_copy_workers.discard(worker)
+            if generation == self._duplicate_copy_generation:
+                self._refresh_duplicate_assessment_hint()
+                self._duplicate_status_message(message)
+
+        worker.signals.finished.connect(ready)
+        worker.signals.error.connect(failed)
+        assert self.pool is not None
+        self.pool.start(worker)
+
+    def _confirm_duplicate_copy(
+        self, plan: TagPropagationPlan, result: ScanResult, generation: int
+    ) -> None:
+        if (
+            generation != self._duplicate_copy_generation
+            or result is not self._duplicate_scan_result
+        ):
+            return
+        statuses = {
+            path: self._tag_mutation_coordinator.status_for(path)
+            for path in (plan.source, *plan.targets)
+        }
+        self.duplicateApplyTagsButton.setEnabled(False)
+        worker = Worker(
+            validate_propagation, plan, result, self.exif.read_keywords, statuses.get
+        )
+        self._duplicate_copy_workers.add(worker)
+
+        def ready(states: dict[str, KeywordState]) -> None:
+            self._duplicate_copy_workers.discard(worker)
+            if (
+                generation != self._duplicate_copy_generation
+                or result is not self._duplicate_scan_result
+            ):
+                return
+            if any(
+                self._tag_mutation_coordinator.status_for(path)
+                is MutationStatus.PENDING
+                for path in states
+            ):
+                failed("Pending tag changes must settle before copying")
+                return
+            self._tag_mutation_coordinator.remember_confirmed(states)
+            assessment = self._duplicate_assessments[plan.group_id]
+            assessment["submitted"] = True
+            assessment["keep_backup"] = plan.keep_backup
+            assessment["outcomes"] = {path: "pending" for path in plan.targets}
+            mutation = self._tag_mutation_coordinator.begin_intents(
+                {
+                    path: [TagIntent.add(tag) for tag in plan.tags]
+                    for path in plan.targets
+                },
+                states,
+            )
+            if mutation is None:
+                return
+            self._duplicate_mutations[mutation.sequence] = (result, plan.group_id)
+            self._advance_duplicate_review(plan.group_id)
+
+            def copy(paths: list[str]) -> TagMutationResult:
+                source = self.exif.read_keywords(plan.source)
+                if not source.iptc_readable or tuple(source.iptc) != plan.tags:
+                    raise ValueError("Source tags changed after confirmation")
+
+                def exact_copy(_path: str, state: KeywordState) -> list[str]:
+                    require_empty_target(state)
+                    return list(plan.tags)
+
+                return self.tag_mutations.replace_keywords(
+                    paths, plan.keep_backup, self.exif.read_keywords, exact_copy
+                )
+
+            self._enqueue_tag_mutation(
+                list(plan.targets), copy, mutation, "Tag copy completed"
+            )
+
+        def failed(message: str) -> None:
+            self._duplicate_copy_workers.discard(worker)
+            if generation == self._duplicate_copy_generation:
+                self._refresh_duplicate_assessment_hint()
+                self._duplicate_status_message(message)
+
+        worker.signals.finished.connect(ready)
+        worker.signals.error.connect(failed)
+        assert self.pool is not None
+        self.pool.start(worker)
+
+    def _advance_duplicate_review(self, group_id: str) -> None:
+        index = (
+            self._visible_duplicate_group_ids.index(group_id)
+            if group_id in self._visible_duplicate_group_ids
+            else 0
+        )
+        self._visible_duplicate_group_ids = [
+            candidate
+            for candidate in self._visible_duplicate_group_ids
+            if candidate != group_id
+        ]
+        self._render_duplicate_candidate_queue()
+        self._render_duplicate_status_rows()
+        if self._visible_duplicate_group_ids:
+            self._show_duplicate_candidate_group(
+                self._visible_duplicate_group_ids[
+                    min(index, len(self._visible_duplicate_group_ids) - 1)
+                ]
+            )
+        else:
+            self._show_no_active_duplicate_group(
+                "Review complete. Reopen a status row to inspect outcomes or restore an ignored candidate."
+            )
+
+    def _render_duplicate_status_rows(self) -> None:
+        self._clear_layout(self.duplicateStatusRowsLayout)
+        for group_id, assessment in self._duplicate_assessments.items():
+            if not assessment["ignored"] and not assessment["submitted"]:
+                continue
+            outcomes = assessment["outcomes"]
+            pending = sum(value == "pending" for value in outcomes.values())
+            failed = sum(value == "failed" for value in outcomes.values())
+            successful = sum(value == "successful" for value in outcomes.values())
+            cancelled = sum(value == "cancelled" for value in outcomes.values())
+            status = (
+                "Ignored"
+                if assessment["ignored"]
+                else "Pending"
+                if pending
+                else "Failed"
+                if failed
+                else "Cancelled"
+                if cancelled
+                else "Completed"
+            )
+            row = QtWidgets.QWidget()
+            layout = QtWidgets.QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            button = QtWidgets.QPushButton(
+                f"{status} · {group_id[:8]} · {successful} successful / {failed} failed / {pending} pending — reopen"
+            )
+            if failed:
+                button.setStyleSheet("font-weight: bold; border: 2px solid #dc2626;")
+            button.clicked.connect(
+                lambda _checked=False, selected=group_id: self._reopen_duplicate_status(
+                    selected
+                )
+            )
+            layout.addWidget(button, 1)
+            if pending:
+                spinner = QtWidgets.QProgressBar()
+                spinner.setRange(0, 0)
+                spinner.setMaximumWidth(100)
+                layout.addWidget(spinner)
+            self.duplicateStatusRowsLayout.addWidget(row)
+        self.duplicateStatusRowsScroll.setVisible(
+            self.duplicateStatusRowsLayout.count() > 0
+        )
+
+    def _reopen_duplicate_status(self, group_id: str) -> None:
+        assessment = self._duplicate_assessments[group_id]
+        if assessment["ignored"]:
+            assessment["ignored"] = False
+            self._active_duplicate_group_id = group_id
+            self._filter_duplicate_candidates()
+        else:
+            self._show_duplicate_outcomes(group_id)
+
+    def _show_duplicate_outcomes(self, group_id: str) -> None:
+        self._invalidate_duplicate_copy()
+        self._duplicate_preview_generation += 1
+        self._active_duplicate_group_id = group_id
+        self._duplicate_member_controls.clear()
+        self._clear_layout(self.duplicateResultsLayout)
+        assessment = self._duplicate_assessments[group_id]
+        for path, outcome in assessment["outcomes"].items():
+            label = QtWidgets.QLabel(f"{path}: {outcome}")
+            label.setWordWrap(True)
+            self.duplicateResultsLayout.addWidget(label)
+        retry = QtWidgets.QPushButton("Retry failed targets")
+        retry.setEnabled(
+            any(value == "failed" for value in assessment["outcomes"].values())
+            and not any(value == "pending" for value in assessment["outcomes"].values())
+        )
+        retry.clicked.connect(lambda: self.retry_duplicate_copy(group_id))
+        self.duplicateResultsLayout.addWidget(retry)
+        self.duplicateResultsLayout.addStretch(1)
+        self.duplicateAssessmentActions.hide()
+
+    def retry_duplicate_copy(self, group_id: str) -> None:
+        result = self._duplicate_scan_result
+        if result is None:
+            return
+        assessment = self._duplicate_assessments[group_id]
+        failed = [
+            path
+            for path, outcome in assessment["outcomes"].items()
+            if outcome == "failed"
+        ]
+        retry = self._tag_mutation_coordinator.retry_failed(failed)
+        if retry is None:
+            self._duplicate_status_message("No failed tag intent remains to retry")
+            return
+        self._duplicate_mutations[retry.sequence] = (result, group_id)
+        paths = list(retry.intents_by_path)
+        assessment["outcomes"].update({path: "pending" for path in paths})
+        keep_backup = assessment["keep_backup"]
+        self._render_duplicate_status_rows()
+        self._show_duplicate_outcomes(group_id)
+
+        def retry_empty_target(path: str, state: KeywordState) -> KeywordState:
+            require_empty_target(state)
+            return retry.apply(path, state)
+
+        self._enqueue_tag_mutation(
+            paths,
+            lambda paths: self.tag_mutations.replace_keyword_states(
+                paths,
+                keep_backup=keep_backup,
+                load_state=self.exif.read_keywords,
+                transform=retry_empty_target,
+            ),
+            retry,
+            "Retried failed copy targets",
+        )
+
+    def _handle_duplicate_mutation_lifecycle(self, event: TagMutationLifecycle) -> None:
+        if event.mutation is None:
+            return
+        tracked = self._duplicate_mutations.get(event.mutation.sequence)
+        if tracked is None:
+            return
+        result, group_id = tracked
+        if result is not self._duplicate_scan_result:
+            if event.kind is not TagMutationLifecycleKind.PENDING:
+                self._duplicate_mutations.pop(event.mutation.sequence, None)
+            return
+        assessment = self._duplicate_assessments[group_id]
+        if event.kind is TagMutationLifecycleKind.COMPLETED:
+            assessment["outcomes"].update(
+                {path: "successful" for path, _state in event.confirmed_states}
+            )
+            assessment["outcomes"].update(
+                {path: "failed" for path in event.failed_paths}
+            )
+        elif event.kind is TagMutationLifecycleKind.FAILED:
+            assessment["outcomes"].update(
+                {path: "failed" for path, _state in event.restored_states}
+            )
+        elif event.kind is TagMutationLifecycleKind.DISCARDED:
+            assessment["outcomes"].update(
+                {path: "cancelled" for path in event.discarded_paths}
+            )
+        if not any(value == "pending" for value in assessment["outcomes"].values()):
+            self._duplicate_mutations.pop(event.mutation.sequence, None)
+        self._render_duplicate_status_rows()
+        if self._active_duplicate_group_id == group_id:
+            self._show_duplicate_outcomes(group_id)
 
     def _refresh_duplicate_assessment_hint(self) -> None:
         group_id = self._active_duplicate_group_id
@@ -2318,16 +2771,37 @@ class MainWindow(QtWidgets.QMainWindow):
         assessment = self._duplicate_assessments[group_id]
         source = assessment["source"]
         target_count = len(assessment["targets"])
-        if source is not None and target_count:
-            self.duplicateAssessmentHint.setText(
-                f"Assessment ready: 1 source and {target_count} target(s). "
-                "Apply tags will be enabled in the propagation workflow."
+        ready = source is not None and bool(target_count)
+        self.duplicateApplyTagsButton.setEnabled(ready)
+        self.duplicateAssessmentHint.setText(
+            (
+                f"Ready: 1 source, {target_count} target(s). "
+                if ready
+                else "Choose a tagged source and empty targets. "
             )
-        else:
-            self.duplicateAssessmentHint.setText(
-                "Choose one source and one or more targets. Apply tags is shown "
-                "for the coming propagation workflow and remains disabled here."
+            + (
+                "Edit: h/l groups · j/k photos · s source · t target · c preview · i ignore · Esc leave Edit"
+                if self._duplicate_edit_mode
+                else "e enters Edit mode; mouse controls remain available."
             )
+        )
+
+    def _duplicate_member_eligible(
+        self, group_id: str, path: str, *, source: bool
+    ) -> bool:
+        group = self._duplicate_group(group_id)
+        member = (
+            next((member for member in group.members if member.path == path), None)
+            if group
+            else None
+        )
+        return bool(
+            member
+            and member.iptc_readable
+            and bool(member.iptc_tags) == source
+            and self._tag_mutation_coordinator.status_for(path)
+            is not MutationStatus.PENDING
+        )
 
     def _toggle_duplicate_source(self, group_id: str, path: str, checked: bool) -> None:
         assessment = self._duplicate_assessments[group_id]
@@ -2342,8 +2816,23 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_duplicate_source(self, group_id: str, path: str) -> None:
         assessment = self._duplicate_assessments[group_id]
+        if not self._duplicate_member_eligible(group_id, path, source=True):
+            return
+        self._invalidate_duplicate_copy()
+        changed_source = assessment["source"] != path
         assessment["source"] = path
         targets = assessment["targets"]
+        if changed_source:
+            targets.clear()
+            group = self._duplicate_group(group_id)
+            if group:
+                targets.update(
+                    member.path
+                    for member in group.members
+                    if self._duplicate_member_eligible(
+                        group_id, member.path, source=False
+                    )
+                )
         controls = self._duplicate_member_controls[group_id]
         for member_path, (source, target) in controls.items():
             should_check = member_path == path
@@ -2351,17 +2840,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 source.blockSignals(True)
                 source.setChecked(should_check)
                 source.blockSignals(False)
-            target.setEnabled(not should_check)
-            if should_check and target.isChecked():
-                target.setChecked(False)
-                targets.discard(member_path)
+            target.setEnabled(
+                self._duplicate_member_eligible(group_id, member_path, source=False)
+            )
+            target.blockSignals(True)
+            target.setChecked(member_path in targets)
+            target.blockSignals(False)
         self._refresh_duplicate_assessment_hint()
 
     def _set_duplicate_target(self, group_id: str, path: str, checked: bool) -> None:
+        self._invalidate_duplicate_copy()
         assessment = self._duplicate_assessments[group_id]
         targets = assessment["targets"]
         if checked:
-            if assessment["source"] == path:
+            if assessment["source"] == path or not self._duplicate_member_eligible(
+                group_id, path, source=False
+            ):
                 control = self._duplicate_member_controls[group_id][path][1]
                 control.blockSignals(True)
                 control.setChecked(False)
@@ -2386,6 +2880,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateReviewBackButton.setFocus()
 
     def show_tagging_workspace(self) -> None:
+        self._invalidate_duplicate_copy()
+        if self._duplicate_edit_mode:
+            self.toggle_duplicate_edit_mode()
         self.mainViews.setCurrentWidget(self.taggingWorkspaceView)
         self.taggingViewAction.setChecked(True)
         self.viewSelector.setAccessibleName("Current application view: Tagging")
@@ -2596,6 +3093,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         et = event.type()
+        if self._handle_duplicate_key_event(event):
+            return True
         if (
             et == QtCore.QEvent.Type.KeyPress
             and isinstance(obj, QtWidgets.QPushButton)
@@ -3141,6 +3640,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.mainViews.currentWidget() is self.duplicateReviewView:
             if self._active_duplicate_scan_id is not None:
                 self.cancel_duplicate_scan()
+            elif self._duplicate_edit_mode:
+                self.toggle_duplicate_edit_mode()
             else:
                 self.show_tagging_workspace()
             return
@@ -5255,6 +5756,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _handle_tag_mutation_lifecycle(self, event: TagMutationLifecycle) -> None:
+        self._handle_duplicate_mutation_lifecycle(event)
+        if event.kind is TagMutationLifecycleKind.DISCARDED:
+            return
         if event.kind is TagMutationLifecycleKind.PENDING:
             self._keywords_cache.update(dict(event.displayed_states))
             self._refresh_file_mutation_indicators(

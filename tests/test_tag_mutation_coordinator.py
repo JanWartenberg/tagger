@@ -161,6 +161,23 @@ class TagMutationCoordinatorTests(unittest.TestCase):
         self.assertEqual(generation, 1)
         self.assertEqual(self.coordinator.status_for(self.two), None)
         self.assertEqual(self.runner.scheduled, [])
+        discarded = [event for event in self.events if event.kind.value == "discarded"]
+        self.assertEqual(len(discarded), 1)
+        self.assertEqual(discarded[0].discarded_paths, (self.two,))
+        self.assertEqual(discarded[0].mutation, second)
+
+    def test_failure_of_retained_queued_work_does_not_restore_discarded_paths(self):
+        blocker = self.begin(["/photos/blocker.jpg"])
+        queued = self.begin([self.one, self.two])
+        self.coordinator.enqueue(
+            ["/photos/blocker.jpg"], lambda paths: result(), blocker
+        )
+        self.coordinator.enqueue([self.one, self.two], lambda paths: result(), queued)
+        self.coordinator.replace_workspace([self.one])
+        self.runner.succeed()
+        self.runner.fail("write failure")
+        self.assertEqual(tuple(dict(self.events[-1].restored_states)), (self.one,))
+        self.assertEqual(self.coordinator.status_for(self.two), None)
 
     def test_inflight_completion_updates_state_but_cannot_render_replacement(
         self,
