@@ -36,7 +36,15 @@ tag-mutation workflow.
 - In Edit mode, `h`/`l` move between groups, `j`/`k` move through photos in grid
   reading order, `s` chooses the focused photo as source, `t` toggles it as a
   target, `c` starts copy confirmation, and `i` ignores the group.
-- Visible key hints accompany the relevant group and photo controls.
+- Visible key hints accompany the relevant group and photo controls. Photo
+  navigation visibly outlines the focused card, reports its position/name, and
+  scrolls it into view after layout settles.
+- `:help` / F1 lists only commands and shortcuts for the current view, including
+  keyboard-only actions and explicit Edit-mode annotations. Duplicate scan/scope
+  shortcuts remain available when focus returns to the main window, but never
+  trigger a duplicate scan in Tagging or while typing command text.
+- Full photo paths use the normal readable text color rather than a muted border
+  color; the header states that Copy requires confirmation.
 - After confirmation, review advances immediately. The submitted group collapses
   to a compact status row with a spinner while writes are pending and a completed
   state when they finish.
@@ -68,6 +76,8 @@ tag-mutation workflow.
 - [ ] Edit-mode shortcuts, visible key hints, confirmation cancellation, and
       current-scan Ignore behavior match the accepted interaction decisions.
 - [ ] Workspace or review navigation cannot redirect an old plan to new paths.
+- [ ] Current-view help, visible/scrolled photo focus, readable dark-theme paths,
+      and duplicate scan shortcuts match the accepted feedback decisions.
 - [ ] Tests cover eligibility, default and subset target selection, confirmation
       cancellation, refreshed state, pending intent, stale plans, partial
       success, retry, compact status rows, and modal keyboard behavior.
@@ -121,3 +131,40 @@ than claiming acceptance from Linux-only checks.
   with backups on/off, partial failure and failed-only retry, current-scan Ignore
   restoration, and large result/target sets on disposable photo copies.
 - Approve the delivered workflow; decide integration into `main` separately.
+
+## Acceptance Feedback and Follow-up
+
+Human report for `5d4b887`: **NOT READY — 1 PASS, 1 FAIL, 8 NOT ASSESSED**.
+AT-01 passed (deselecting b-empty worked); AT-02 failed. The reviewer reported
+that `Space s` appeared not to work, `h/l` worked only after `e`, `j/k` did not
+visibly navigate, full paths were dark grey on dark grey, and help should show
+only the current view's commands/shortcuts. Tester name was not supplied.
+
+Follow-up, still requiring Windows retest:
+
+- Reproduced `Space s` failure after command-line execution returned focus to the
+  main window. The shortcut's review-child scope was the cause; changing only
+  focus to a review child made it work. View-scoped shortcut availability now
+  permits window-level scan/scope shortcuts without exposing them in Tagging.
+- Reproduced `j/k` changing focus to an offscreen control. Immediate scrolling
+  was also too early after a grid rebuild (scroll range still zero). Deferred,
+  generation-guarded scrolling reveals focus after Qt layout settles; card
+  outlining and a visible photo-position/name indicator make movement explicit.
+- Reproduced unreadable path contrast with a dark palette. Removing only the
+  `palette(mid)` text override restored normal foreground contrast.
+- Added action view metadata shared by dispatch, shortcut availability and help;
+  registered Edit keys so help includes keyboard-only actions with mode hints.
+- Replaced the stale read-only header with `Copy requires confirmation`.
+- Regression coverage uses the agreed Qt adapter seam: real key/command events,
+  modal help content, focused-control visibility, dark-palette contrast, and
+  scan shortcuts from window/scope/card focus with view/text-input guards.
+
+Local follow-up validation: `ruff check .` and the modified-file format check
+passed; `QT_QPA_PLATFORM=offscreen python -m pytest -q` passed **328 tests and
+33 subtests**. Pyright reports no errors in actions, propagation, mutation
+coordination, or copy preview; `MainWindow` has 176 existing errors (no new
+diagnostic categories/counts). Local Standards/Spec review found no new blocking
+code findings; Windows acceptance remains the validation gap.
+
+Do not change the recorded human failure to PASS based on automated checks.
+Retest AT-02 first on Windows, then run the remaining acceptance checks.

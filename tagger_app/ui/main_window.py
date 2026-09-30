@@ -930,6 +930,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._duplicate_member_controls: dict[
             str, dict[str, tuple[QtWidgets.QRadioButton, QtWidgets.QCheckBox]]
         ] = {}
+        self._duplicate_member_cards: dict[str, QtWidgets.QFrame] = {}
         self._active_duplicate_group_id: str | None = None
         self._visible_duplicate_group_ids: list[str] = []
         self._duplicate_group_buttons: dict[str, QtWidgets.QPushButton] = {}
@@ -1452,9 +1453,8 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.duplicateAddFolderButton.clicked.connect(self.add_folder_dialog)
         header.addWidget(self.duplicateAddFolderButton)
-        read_only = QtWidgets.QLabel("Read-only assessment view")
-        read_only.setStyleSheet("color: palette(mid);")
-        header.addWidget(read_only)
+        confirmation_hint = QtWidgets.QLabel("Copy requires confirmation")
+        header.addWidget(confirmation_hint)
         layout.addLayout(header)
 
         content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
@@ -1572,6 +1572,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateCandidateQueue.setWidget(self.duplicateCandidateQueueBody)
         self.duplicateCandidateQueue.hide()
         results_layout.addWidget(self.duplicateCandidateQueue)
+
+        self.duplicateFocusedPhotoLabel = QtWidgets.QLabel()
+        self.duplicateFocusedPhotoLabel.setObjectName("duplicateFocusedPhoto")
+        self.duplicateFocusedPhotoLabel.setWordWrap(True)
+        self.duplicateFocusedPhotoLabel.hide()
+        results_layout.addWidget(self.duplicateFocusedPhotoLabel)
 
         self.duplicateStatusRows = QtWidgets.QWidget()
         self.duplicateStatusRowsLayout = QtWidgets.QVBoxLayout(self.duplicateStatusRows)
@@ -1929,6 +1935,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._clear_layout(self.duplicateStatusRowsLayout)
         self.duplicateStatusRowsScroll.hide()
         self._duplicate_member_controls.clear()
+        self._duplicate_member_cards.clear()
+        self.duplicateFocusedPhotoLabel.hide()
         self._active_duplicate_group_id = None
         self._visible_duplicate_group_ids.clear()
         self._duplicate_group_buttons.clear()
@@ -2059,6 +2067,11 @@ class MainWindow(QtWidgets.QMainWindow):
             button.setChecked(candidate_id == group_id)
         self._clear_layout(self.duplicateResultsLayout)
         self._duplicate_member_controls.clear()
+        self._duplicate_member_cards.clear()
+        self.duplicateFocusedPhotoLabel.setText(
+            "No focused photo — e enters Edit mode; j/k focuses photos."
+        )
+        self.duplicateFocusedPhotoLabel.show()
 
         position = self._visible_duplicate_group_ids.index(group_id) + 1
         heading = QtWidgets.QLabel(
@@ -2107,6 +2120,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for index, member in enumerate(group.members):
             card = QtWidgets.QFrame()
             card.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+            card.setObjectName("duplicatePhotoCard")
+            card.setStyleSheet(
+                "QFrame#duplicatePhotoCard { border: 2px solid palette(mid); border-radius: 4px; }"
+                'QFrame#duplicatePhotoCard[duplicateFocused="true"] { border-color: palette(highlight); }'
+            )
+            card.setProperty("duplicateFocused", False)
+            self._duplicate_member_cards[member.path] = card
             card.setProperty("duplicateMemberPath", member.path)
             card.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             card.installEventFilter(self)
@@ -2129,7 +2149,6 @@ class MainWindow(QtWidgets.QMainWindow):
             card_layout.addWidget(name)
             path_label = QtWidgets.QLabel(member.path)
             path_label.setWordWrap(True)
-            path_label.setStyleSheet("color: palette(mid);")
             card_layout.addWidget(path_label)
             provenance = QtWidgets.QLabel(
                 f"{member.timestamp} via {member.source_field}"
@@ -2260,6 +2279,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._duplicate_preview_generation += 1
         self._active_duplicate_group_id = None
         self._duplicate_member_controls.clear()
+        self._duplicate_member_cards.clear()
+        self.duplicateFocusedPhotoLabel.hide()
         self._clear_layout(self.duplicateResultsLayout)
         label = QtWidgets.QLabel(message)
         label.setWordWrap(True)
@@ -2344,6 +2365,44 @@ class MainWindow(QtWidgets.QMainWindow):
                 if card.property("duplicateMemberPath") == path:
                     card.setFocus()
                     break
+        self._reveal_focused_duplicate_photo()
+
+    def _reveal_focused_duplicate_photo(self) -> None:
+        generation = self._duplicate_preview_generation
+
+        def reveal_focused_photo() -> None:
+            # A rebuilt grid gets its scrollbar range on the next Qt layout turn.
+            if generation != self._duplicate_preview_generation:
+                return
+            focused = self.focusWidget()
+            if focused is not None and self.duplicateResultsBody.isAncestorOf(focused):
+                self.duplicateResultsScroll.ensureWidgetVisible(focused, 16, 16)
+
+        QtCore.QTimer.singleShot(0, reveal_focused_photo)
+
+    def _highlight_focused_duplicate_photo(self, widget: QtWidgets.QWidget) -> None:
+        current: QtWidgets.QWidget | None = widget
+        while current is not None and current is not self.duplicateResultsBody:
+            path = current.property("duplicateMemberPath")
+            if path in self._duplicate_member_cards:
+                group = self._duplicate_group(self._active_duplicate_group_id or "")
+                if group is None:
+                    return
+                paths = [member.path for member in group.members]
+                self.duplicateFocusedPhotoLabel.setText(
+                    f"Photo {paths.index(path) + 1} of {len(paths)} — {Path(path).name}"
+                )
+                self.duplicateFocusedPhotoLabel.setToolTip(path)
+                for member_path, card in self._duplicate_member_cards.items():
+                    card.setProperty("duplicateFocused", member_path == path)
+                    style = card.style()
+                    if style is not None:
+                        style.unpolish(card)
+                        style.polish(card)
+                    card.update()
+                self._reveal_focused_duplicate_photo()
+                return
+            current = current.parentWidget()
 
     def focus_previous_duplicate_member(self) -> None:
         self._focus_duplicate_member(-1)
@@ -2403,27 +2462,22 @@ class MainWindow(QtWidgets.QMainWindow):
             or event.modifiers() != QtCore.Qt.KeyboardModifier.NoModifier
         ):
             return None
-        if event.key() == QtCore.Qt.Key.Key_E:
-            return self.toggle_duplicate_edit_mode
-        if not self._duplicate_edit_mode:
+        if event.key() == QtCore.Qt.Key.Key_Escape:
+            if self._active_duplicate_scan_id is not None:
+                return self.cancel_duplicate_scan
+            if self._duplicate_edit_mode:
+                return self.toggle_duplicate_edit_mode
             return None
-        if (
-            event.key() == QtCore.Qt.Key.Key_Escape
-            and self._active_duplicate_scan_id is not None
-        ):
-            return self.cancel_duplicate_scan
-        handlers: dict[int, Callable[[], None]] = {
-            QtCore.Qt.Key.Key_H: self.show_previous_duplicate_group,
-            QtCore.Qt.Key.Key_L: self.show_next_duplicate_group,
-            QtCore.Qt.Key.Key_J: self.focus_next_duplicate_member,
-            QtCore.Qt.Key.Key_K: self.focus_previous_duplicate_member,
-            QtCore.Qt.Key.Key_S: self.set_focused_duplicate_source,
-            QtCore.Qt.Key.Key_T: self.toggle_focused_duplicate_target,
-            QtCore.Qt.Key.Key_C: self.preview_duplicate_copy,
-            QtCore.Qt.Key.Key_I: self.ignore_active_duplicate_group,
-            QtCore.Qt.Key.Key_Escape: self.toggle_duplicate_edit_mode,
-        }
-        return handlers.get(event.key())
+        token = self._event_token(event)
+        for spec in self._actions_by_id.values():
+            for route in spec.key_routes:
+                if route.kind != "single" or route.sequence != (token,):
+                    continue
+                if route.scope == "duplicate_review" or (
+                    route.scope == "duplicate_edit" and self._duplicate_edit_mode
+                ):
+                    return lambda action_id=spec.id: self._dispatch_action(action_id)
+        return None
 
     def _handle_duplicate_key_event(self, event: QtCore.QEvent) -> bool:
         if not isinstance(event, QtGui.QKeyEvent) or event.type() not in (
@@ -2678,6 +2732,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._duplicate_preview_generation += 1
         self._active_duplicate_group_id = group_id
         self._duplicate_member_controls.clear()
+        self._duplicate_member_cards.clear()
+        self.duplicateFocusedPhotoLabel.hide()
         self._clear_layout(self.duplicateResultsLayout)
         assessment = self._duplicate_assessments[group_id]
         for path, outcome in assessment["outcomes"].items():
@@ -2901,6 +2957,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._widget_refs = self._build_widget_refs()
         self._commands_by_name = {}
         self._install_shortcuts_from_actions()
+        self.mainViews.currentChanged.connect(self._refresh_shortcut_availability)
         self._index_commands_from_actions()
 
     def _build_widget_refs(self) -> dict[str, QtCore.QObject]:
@@ -2965,10 +3022,17 @@ class MainWindow(QtWidgets.QMainWindow):
                     continue
                 shortcut = QtGui.QShortcut(QtGui.QKeySequence(binding.sequence), widget)
                 shortcut.setContext(binding.context)
+                shortcut.setProperty("actionId", spec.id)
+                shortcut.setEnabled(self._action_available_in_current_view(spec))
                 shortcut.activated.connect(
                     lambda action_id=spec.id: self._dispatch_action(action_id)
                 )
                 self._shortcuts.append(shortcut)
+
+    def _refresh_shortcut_availability(self) -> None:
+        for shortcut in self._shortcuts:
+            spec = self._actions_by_id[str(shortcut.property("actionId"))]
+            shortcut.setEnabled(self._action_available_in_current_view(spec))
 
     def _index_commands_from_actions(self) -> None:
         for spec in self._listed_actions:
@@ -2979,39 +3043,25 @@ class MainWindow(QtWidgets.QMainWindow):
             for alias in command.aliases:
                 self._commands_by_name[alias] = spec
 
+    def _action_available_in_current_view(self, spec: ActionSpec) -> bool:
+        view = (
+            "duplicate_review"
+            if self.mainViews.currentWidget() is self.duplicateReviewView
+            else "tagging"
+        )
+        return view in spec.views
+
     def _dispatch_action(
         self, action_id: str, *, command_args: list[str] | None = None
     ) -> None:
         spec = self._actions_by_id.get(action_id)
         if spec is None:
             raise RuntimeError(f"Unknown action: {action_id}")
-        allowed_in_duplicate_review = {
-            "addfolder",
-            "cancelduplicates",
-            "focusduplicatescope",
-            "ignoreduplicate",
-            "nextduplicategroup",
-            "nextduplicatemember",
-            "previousduplicategroup",
-            "previousduplicatemember",
-            "scanduplicates",
-            "setduplicatesource",
-            "showduplicates",
-            "showtagging",
-            "toggleduplicatetarget",
-            "toggleemptyduplicates",
-            "open_command_line",
-            "complete_command_line",
-            "listcommands",
-            "quit",
-            "escape",
-        }
-        if (
-            self.mainViews.currentWidget() is self.duplicateReviewView
-            and action_id not in allowed_in_duplicate_review
-        ):
-            self.statusBar().showMessage(
+        if not self._action_available_in_current_view(spec):
+            self._duplicate_status_message(
                 "Return to the tagging workspace to use tagging commands"
+                if self.mainViews.currentWidget() is self.duplicateReviewView
+                else "Open duplicate review to use duplicate commands"
             )
             return
         accepts_arguments = spec.command is not None and spec.command.accepts_arguments
@@ -3058,10 +3108,13 @@ class MainWindow(QtWidgets.QMainWindow):
             labels.append(f":{command.name}")
             labels.extend(f":{alias}" for alias in command.aliases)
         labels.extend(
-            binding.sequence for binding in spec.shortcuts if binding.show_in_help
+            "Space s" if binding.sequence == "Space, S" else binding.sequence
+            for binding in spec.shortcuts
+            if binding.show_in_help
         )
         labels.extend(
             self._format_key_route_label(route)
+            + (" (Edit mode)" if route.scope == "duplicate_edit" else "")
             for route in spec.key_routes
             if route.show_in_help
         )
@@ -3093,6 +3146,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:
         et = event.type()
+        if et == QtCore.QEvent.Type.FocusIn and isinstance(obj, QtWidgets.QWidget):
+            self._highlight_focused_duplicate_photo(obj)
         if self._handle_duplicate_key_event(event):
             return True
         if (
@@ -3774,21 +3829,35 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _cmd_list_commands(self, _args: list[str] | None = None) -> None:
         lines: list[str] = []
+        duplicate = self.mainViews.currentWidget() is self.duplicateReviewView
         for spec in sorted(
-            self._listed_actions,
+            self._actions_by_id.values(),
             key=lambda action: action.command.name if action.command else action.id,
         ):
+            if not spec.show_in_help or not self._action_available_in_current_view(
+                spec
+            ):
+                continue
             command = spec.command
-            if command is None:
+            labels = self._action_help_labels(spec)
+            if command is None and not labels:
                 continue
             alias = (
-                f" (aliases: {', '.join(command.aliases)})" if command.aliases else ""
+                f" (aliases: {', '.join(command.aliases)})"
+                if command and command.aliases
+                else ""
             )
-            labels = self._action_help_labels(spec)
+            prefix = f"{command.name}{alias} — " if command else ""
+            description = (
+                "Cancel scan / leave Edit mode / return to tagging"
+                if duplicate and spec.id == "escape"
+                else spec.description
+            )
             shorts = f" [{', '.join(labels)}]" if labels else ""
-            lines.append(f"{command.name}{alias} — {spec.description}{shorts}")
+            lines.append(f"{prefix}{description}{shorts}")
         text = "\n".join(lines) if lines else "(no commands)"
-        QtWidgets.QMessageBox.information(self, "Commands", text)
+        view = "Duplicate review" if duplicate else "Tagging"
+        QtWidgets.QMessageBox.information(self, f"Commands — {view}", text)
 
     def _cmd_quit(self, _args: list[str] | None = None) -> None:
         self.close()

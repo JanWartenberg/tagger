@@ -113,6 +113,13 @@ the focused source, `t` toggles the focused target, `c` opens copy confirmation,
 and `i` ignores the group. Relevant controls show visible key hints. In the
 confirmation preview, `y` confirms and `n` or `Esc` cancels.
 
+Focused photo navigation outlines the card and shows its position/name. It scrolls
+the focused control into view after a rebuilt grid's Qt layout settles. Full paths
+use the theme's normal text color. `:help` / F1 shows only the current view's
+commands and shortcuts, including keyboard-only actions with Edit-mode hints.
+Scan/scope shortcuts remain usable when focus is on the main window after a
+command closes; duplicate scan shortcuts are inactive in Tagging and text inputs.
+
 After confirmation, review advances immediately while the submitted group
 collapses to a compact pending row with a spinner and then a completed state. A
 partial failure remains as a prominent reopenable row with per-target outcomes

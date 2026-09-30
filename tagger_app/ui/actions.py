@@ -28,7 +28,13 @@ class NativeTrigger:
 class KeyRoute:
     kind: Literal["single", "sequence", "widget_specific"]
     sequence: tuple[str, ...]
-    scope: Literal["global_non_input", "list_widgets", "widget_exact"]
+    scope: Literal[
+        "global_non_input",
+        "list_widgets",
+        "widget_exact",
+        "duplicate_review",
+        "duplicate_edit",
+    ]
     widget_refs: tuple[str, ...] = ()
     timeout_ms: int | None = None
     show_in_help: bool = True
@@ -44,29 +50,32 @@ class ActionSpec:
     key_routes: tuple[KeyRoute, ...] = ()
     native_triggers: tuple[NativeTrigger, ...] = ()
     show_in_help: bool = True
+    views: tuple[Literal["tagging", "duplicate_review"], ...] = ("tagging",)
 
 
 def build_action_specs() -> tuple[ActionSpec, ...]:
     widget_shortcut = QtCore.Qt.ShortcutContext.WidgetShortcut
     filter_shortcut = QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
-    duplicate_shortcut = QtCore.Qt.ShortcutContext.WidgetWithChildrenShortcut
 
     return (
         ActionSpec(
             id="listcommands",
-            description="List all commands",
+            views=("tagging", "duplicate_review"),
+            description="Show commands and shortcuts for the current view",
             handler_name="_cmd_list_commands",
             command=CommandBinding("listcommands", aliases=("ls", "list", "h", "help")),
             shortcuts=(ShortcutBinding("F1"),),
         ),
         ActionSpec(
             id="quit",
+            views=("tagging", "duplicate_review"),
             description="Quit the app",
             handler_name="_cmd_quit",
             command=CommandBinding("quit", aliases=("q",)),
         ),
         ActionSpec(
             id="addfolder",
+            views=("tagging", "duplicate_review"),
             description="Add files from a folder",
             handler_name="add_folder_dialog",
             command=CommandBinding("addfolder"),
@@ -74,6 +83,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="showduplicates",
+            views=("tagging", "duplicate_review"),
             description="Open duplicate candidate review",
             handler_name="show_duplicate_review",
             command=CommandBinding("duplicates"),
@@ -89,6 +99,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="showtagging",
+            views=("tagging", "duplicate_review"),
             description="Return to the tagging workspace",
             handler_name="show_tagging_workspace",
             command=CommandBinding("tagging"),
@@ -104,81 +115,121 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="focusduplicatescope",
+            views=("duplicate_review",),
             description="Focus duplicate scan scope",
             handler_name="focus_duplicate_scope",
-            shortcuts=(
-                ShortcutBinding(
-                    "Alt+S", "duplicateReviewView", context=duplicate_shortcut
-                ),
-            ),
+            shortcuts=(ShortcutBinding("Alt+S"),),
         ),
         ActionSpec(
             id="scanduplicates",
+            views=("duplicate_review",),
             description="Start duplicate candidate scan",
             handler_name="start_duplicate_scan",
             command=CommandBinding("scanduplicates"),
-            shortcuts=(
-                ShortcutBinding(
-                    "Space, S", "duplicateReviewView", context=duplicate_shortcut
-                ),
-            ),
+            shortcuts=(ShortcutBinding("Space, S"),),
         ),
         ActionSpec(
             id="cancelduplicates",
+            views=("duplicate_review",),
             description="Cancel duplicate candidate scan",
             handler_name="cancel_duplicate_scan",
             command=CommandBinding("cancelduplicates"),
         ),
         ActionSpec(
             id="previousduplicategroup",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("h",), scope="duplicate_edit"),
+            ),
             description="Open previous duplicate candidate group",
             handler_name="show_previous_duplicate_group",
             command=CommandBinding("previousduplicate"),
         ),
         ActionSpec(
             id="nextduplicategroup",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("l",), scope="duplicate_edit"),
+            ),
             description="Open next duplicate candidate group",
             handler_name="show_next_duplicate_group",
             command=CommandBinding("nextduplicate"),
         ),
         ActionSpec(
             id="toggleemptyduplicates",
+            views=("duplicate_review",),
             description="Hide candidate groups where no photo has tags",
             handler_name="toggle_empty_duplicate_groups",
             command=CommandBinding("toggleemptyduplicates"),
-            shortcuts=(
-                ShortcutBinding(
-                    "Alt+E", "duplicateReviewView", context=duplicate_shortcut
-                ),
-            ),
+            shortcuts=(ShortcutBinding("Alt+E"),),
         ),
         ActionSpec(
             id="previousduplicatemember",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("k",), scope="duplicate_edit"),
+            ),
             description="Focus previous photo in duplicate candidate group",
             handler_name="focus_previous_duplicate_member",
         ),
         ActionSpec(
             id="nextduplicatemember",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("j",), scope="duplicate_edit"),
+            ),
             description="Focus next photo in duplicate candidate group",
             handler_name="focus_next_duplicate_member",
         ),
         ActionSpec(
             id="setduplicatesource",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("s",), scope="duplicate_edit"),
+            ),
             description="Set focused candidate photo as tag source",
             handler_name="set_focused_duplicate_source",
             command=CommandBinding("duplicatesource"),
         ),
         ActionSpec(
             id="toggleduplicatetarget",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("t",), scope="duplicate_edit"),
+            ),
             description="Toggle focused candidate photo as tag target",
             handler_name="toggle_focused_duplicate_target",
             command=CommandBinding("duplicatetarget"),
         ),
         ActionSpec(
             id="ignoreduplicate",
+            views=("duplicate_review",),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("i",), scope="duplicate_edit"),
+            ),
             description="Ignore active candidate group for this scan",
             handler_name="ignore_active_duplicate_group",
             command=CommandBinding("ignorecandidate"),
+        ),
+        ActionSpec(
+            id="editduplicates",
+            views=("duplicate_review",),
+            description="Toggle Edit mode (Esc leaves Edit mode)",
+            handler_name="toggle_duplicate_edit_mode",
+            command=CommandBinding("duplicateedit"),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("e",), scope="duplicate_review"),
+            ),
+        ),
+        ActionSpec(
+            id="copyduplicatetags",
+            views=("duplicate_review",),
+            description="Preview tag copy; y confirms, n / Esc cancels",
+            handler_name="preview_duplicate_copy",
+            command=CommandBinding("copyduplicatetags"),
+            key_routes=(
+                KeyRoute(kind="single", sequence=("c",), scope="duplicate_edit"),
+            ),
         ),
         ActionSpec(
             id="reindex",
@@ -624,6 +675,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="escape",
+            views=("tagging", "duplicate_review"),
             description="Reset focus / close command line",
             handler_name="_escape_action",
             command=CommandBinding("escape"),
@@ -639,6 +691,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="open_command_line",
+            views=("tagging", "duplicate_review"),
             description="Open command line",
             handler_name="_open_command_line",
             key_routes=(
@@ -648,6 +701,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
         ),
         ActionSpec(
             id="complete_command_line",
+            views=("tagging", "duplicate_review"),
             description="Complete command line input",
             handler_name="_tab_complete_command_line",
             key_routes=(

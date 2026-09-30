@@ -268,6 +268,15 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
         self.assertIsNone(self.window._duplicate_scan_result)
 
+    def test_duplicate_review_header_does_not_claim_confirmed_copy_is_readonly(self):
+        self.window.show_duplicate_review()
+        text = " ".join(
+            label.text()
+            for label in self.window.duplicateReviewView.findChildren(QtWidgets.QLabel)
+        )
+        self.assertNotIn("Read-only assessment view", text)
+        self.assertIn("Copy requires confirmation", text)
+
     def test_duplicate_review_controls_describe_shortcuts(self) -> None:
         self.assertIn("Ctrl+O", self.window.duplicateAddFolderButton.toolTip())
         self.assertIn("Ctrl+Alt+T", self.window.duplicateReviewBackButton.toolTip())
@@ -378,6 +387,79 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_Escape
         )
         self.assertTrue(self.window.taggingWorkspaceView.isVisible())
+
+    def test_duplicate_space_s_starts_scan_from_scope_and_candidate_controls(self):
+        paths = [normalize_path("C:/photos/a.jpg"), normalize_path("C:/photos/b.jpg")]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], "2024:01:02 12:00:00") for path in paths
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        self.window.duplicateReviewBackButton.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_E
+        )
+        for control in (
+            self.window.duplicateScopeCombo,
+            self.window.duplicateStartScanButton,
+        ):
+            with self.subTest(control=control):
+                control.setFocus()
+                QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_Space)
+                QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_S)
+                self.app.processEvents()
+                self.assertTrue(self.window.duplicateCancelScanButton.isEnabled())
+                self.window.cancel_duplicate_scan()
+                self.discovery_runner.run()
+                self.app.processEvents()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        target = self._copy_control(paths[0], "target")
+        target.setFocus()
+        QtTest.QTest.keyClick(target, QtCore.Qt.Key.Key_Space)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_S)
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateCancelScanButton.isEnabled())
+
+    def test_duplicate_space_s_starts_scan_when_focus_returns_to_the_window(self):
+        path = normalize_path("C:/photos/a.jpg")
+        FakePhotoIndex.snapshot_paths = [path]
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], "2024:01:02 12:00:00")
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        self.window.cmdLine.show()
+        self.window.cmdLine.setText(":cancelduplicates")
+        self.window.cmdLine.setFocus()
+        QtTest.QTest.keyClick(self.window.cmdLine, QtCore.Qt.Key.Key_Return)
+        self.assertIs(self.window.focusWidget(), self.window)
+        QtTest.QTest.keyClick(self.window, QtCore.Qt.Key.Key_Space)
+        QtTest.QTest.keyClick(self.window, QtCore.Qt.Key.Key_S)
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateCancelScanButton.isEnabled())
+
+    def test_duplicate_scan_shortcut_is_inactive_in_tagging_and_text_inputs(self):
+        self._scan_copy_candidates()
+        self.window.show_tagging_workspace()
+        self.window.setFocus()
+        QtTest.QTest.keyClick(self.window, QtCore.Qt.Key.Key_Space)
+        QtTest.QTest.keyClick(self.window, QtCore.Qt.Key.Key_S)
+        self.assertFalse(self.window.duplicateCancelScanButton.isEnabled())
+        self.window.show_duplicate_review()
+        self.window.cmdLine.show()
+        self.window.cmdLine.setText(":")
+        self.window.cmdLine.setFocus()
+        QtTest.QTest.keyClick(self.window.cmdLine, QtCore.Qt.Key.Key_Space)
+        QtTest.QTest.keyClick(self.window.cmdLine, QtCore.Qt.Key.Key_S)
+        self.assertEqual(self.window.cmdLine.text(), ": s")
+        self.assertFalse(self.window.duplicateCancelScanButton.isEnabled())
 
     def test_duplicate_review_prepares_selected_subfolder_in_background(self) -> None:
         folder = normalize_path("C:/review")
@@ -556,6 +638,85 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(FakeExifTool.states_by_path[second].iptc, ["Holiday"])
         self.assertEqual(FakeExifTool.states_by_path[second].xmp, ["Holiday"])
+
+    def test_duplicate_card_paths_have_readable_contrast_in_a_dark_palette(self):
+        palette = QtGui.QPalette(self.window.palette())
+        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#303030"))
+        palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#f4f4f4"))
+        palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#f4f4f4"))
+        palette.setColor(QtGui.QPalette.ColorRole.Mid, QtGui.QColor("#3b3b3b"))
+        self.window.setPalette(palette)
+        source, *_targets = self._scan_copy_candidates()
+        label = next(
+            label
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+            if label.text() == source
+        )
+        label.ensurePolished()
+
+        def luminance(color):
+            channels = [
+                value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+                for value in (color.redF(), color.greenF(), color.blueF())
+            ]
+            return sum(
+                weight * value
+                for weight, value in zip((0.2126, 0.7152, 0.0722), channels)
+            )
+
+        foreground = luminance(label.palette().color(label.foregroundRole()))
+        background = luminance(label.palette().color(label.backgroundRole()))
+        contrast = (max(foreground, background) + 0.05) / (
+            min(foreground, background) + 0.05
+        )
+        self.assertGreaterEqual(
+            contrast, 4.5, "Full paths must be readable on dark duplicate cards"
+        )
+
+    def test_duplicate_jk_keeps_the_focused_photo_visible_after_group_navigation(self):
+        paths = [
+            normalize_path(f"C:/photos/photo-{number:02}.jpg") for number in range(4)
+        ]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState([], [], "2024:01:02 12:00:00") for path in paths
+        }
+        FakeExifTool.states_by_path[paths[0]] = KeywordState(
+            ["Source"], [], "2024:01:02 12:00:00"
+        )
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+        self.window.resize(900, 700)
+        self.window.duplicateEditModeButton.setFocus()
+        QtTest.QTest.keyClick(self.window.duplicateEditModeButton, QtCore.Qt.Key.Key_E)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
+        QtTest.QTest.qWait(1)
+        for index in range(4):
+            QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_J)
+            QtTest.QTest.qWait(1)
+            expected = self._copy_control(
+                paths[index], "source" if index == 0 else "target"
+            )
+            self.assertIs(self.window.focusWidget(), expected)
+            indicator = self.window.findChild(QtWidgets.QLabel, "duplicateFocusedPhoto")
+            self.assertIsNotNone(
+                indicator, "Photo navigation needs a visible focus indicator"
+            )
+            self.assertIn(f"Photo {index + 1} of 4", indicator.text())
+            self.assertIn(Path(paths[index]).name, indicator.text())
+            self.assertTrue(indicator.isVisible())
+            viewport = self.window.duplicateResultsScroll.viewport()
+            center = expected.mapTo(viewport, expected.rect().center())
+            self.assertTrue(
+                viewport.rect().contains(center),
+                f"Photo {index + 1} focus is outside the visible review area",
+            )
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_K)
+        self.assertIs(self.window.focusWidget(), self._copy_control(paths[2], "target"))
 
     def test_duplicate_edit_keys_are_modal_and_ignore_is_recoverable(self):
         source, first, _second, _tagged, _unknown = self._scan_copy_candidates(
@@ -1116,6 +1277,49 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.statusBar().currentMessage(),
             "Scanning the active photo workspace",
         )
+
+    def _open_help_text(self):
+        captured = []
+
+        def read_and_close():
+            dialog = self.app.activeModalWidget()
+            if isinstance(dialog, QtWidgets.QMessageBox):
+                captured.append((dialog.windowTitle(), dialog.text()))
+                dialog.accept()
+
+        self.window.cmdLine.show()
+        self.window.cmdLine.setText(":help")
+        self.window.cmdLine.setFocus()
+        QtCore.QTimer.singleShot(0, read_and_close)
+        QtTest.QTest.keyClick(self.window.cmdLine, QtCore.Qt.Key.Key_Return)
+        self.assertTrue(captured, "The :help command must open its help dialog")
+        return captured[0]
+
+    def test_help_only_lists_current_view_commands_and_shortcuts(self):
+        self.window.show_duplicate_review()
+        title, text = self._open_help_text()
+        self.assertNotIn("addtag", text)
+        self.assertIn("Duplicate review", title)
+        self.assertIn("scanduplicates", text)
+        self.assertIn("Space s", text)
+        self.assertIn("[e]", text)
+        for key in ("h", "j", "k", "l", "s", "t", "c", "i"):
+            self.assertIn(f"{key} (Edit mode)", text)
+        for irrelevant in ("addtag", "retryall", "filterfiles", "reindex"):
+            self.assertNotIn(irrelevant, text)
+        self.window.show_tagging_workspace()
+        title, text = self._open_help_text()
+        self.assertIn("Tagging", title)
+        self.assertIn("addtag", text)
+        self.assertIn("listdown", text)
+        self.assertIn("[j, Down]", text)
+        for irrelevant in (
+            "scanduplicates",
+            "previousduplicate",
+            "ignorecandidate",
+            "Edit mode",
+        ):
+            self.assertNotIn(irrelevant, text)
 
     def test_duplicate_review_blocks_tagging_commands_but_remains_command_accessible(
         self,

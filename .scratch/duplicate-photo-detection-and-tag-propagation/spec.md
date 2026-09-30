@@ -28,6 +28,10 @@ files are duplicates and never changes metadata by itself.
   individually.
 - Propagation copies the source's canonical tags only into selected empty
   targets; images with existing or unknown tags are ineligible.
+- Help lists only the current view's commands/shortcuts and explains Edit-mode
+  keys. Photo navigation visibly highlights and scrolls focused cards, and full
+  paths remain readable in dark themes. Scan shortcuts work with window focus
+  after command execution, not just with focus inside the review view.
 
 The accepted design is detailed in [design-notes.md](design-notes.md).
 
@@ -86,4 +90,7 @@ sophisticated matching methods.
   is implemented under ticket 03 on `prototype/duplicate-review-ui`, with Linux
   automated validation and local two-axis review complete. Windows/offscreen
   acceptance and maintainer approval remain pending, so this specification stays
-  active. Integration into `main` requires a separate explicit decision.
+  active. Human acceptance at `5d4b887` passed AT-01 but failed AT-02; navigation,
+  scan-shortcut scope, path contrast, and context-help fixes are covered by
+  follow-up Qt regressions and still need a Windows retest. Integration into
+  `main` requires a separate explicit decision.
