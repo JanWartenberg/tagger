@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Acceptance: Duplicate tag propagation</title>
+<style>
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #172033; background: #f3f5f8; }
+body { max-width: 1040px; margin: auto; padding: 20px; }
+h1 { font-size: 1.55rem; margin: 0 0 8px; } h2 { font-size: 1.15rem; }
+p, li { line-height: 1.45; } code, pre, textarea { font-family: ui-monospace, monospace; }
+code { overflow-wrap: anywhere; } pre { background: #edf1f6; padding: 12px; white-space: pre-wrap; overflow-wrap: anywhere; border-radius: 6px; }
+header, article, .panel { background: white; border: 1px solid #c7d0dc; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+.meta { font-size: .88rem; } .toolbar { position: sticky; top: 0; background: #172033; color: white; padding: 10px 14px; border-radius: 6px; z-index: 1; display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+.toolbar strong { margin-left: auto; } .heading { display: flex; gap: 16px; flex-wrap: wrap; justify-content: space-between; align-items: center; }
+.heading h2 { margin: 0; } .choice { display: inline-flex; align-items: center; gap: 5px; margin-left: 12px; font-weight: 650; cursor: pointer; }
+input[type=checkbox] { width: 20px; height: 20px; accent-color: #164c93; }
+input[type=text] { padding: 7px; border: 1px solid #7f8da0; border-radius: 4px; max-width: 100%; }
+textarea { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #7f8da0; border-radius: 4px; }
+textarea.comment { min-height: 58px; margin-top: 8px; } #summary { min-height: 350px; }
+button { background: #164c93; color: white; padding: 9px 13px; border: 0; border-radius: 5px; cursor: pointer; }
+button.secondary { background: #485465; } button:focus-visible, input:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 3px solid #ce6d00; outline-offset: 3px; }
+summary { cursor: pointer; padding: 5px 0; } .requirement { font-size: .9rem; color: #42516a; margin: 8px 0; }
+.note { border-left: 4px solid #a86700; padding-left: 10px; } .status { font-size: .85rem; font-weight: bold; color: #42516a; }
+article[data-status="FAIL"] { border-left: 5px solid #ac2020; } article[data-status="PASS"] { border-left: 5px solid #237144; }
+ol { padding-left: 24px; } .fields { display: flex; flex-wrap: wrap; gap: 14px; }
+@media print { .toolbar { position: static; } button { display: none; } body { background: white; } }
+</style>
+</head>
+<body>
+<header>
+<h1>Acceptance: Duplicate tag propagation</h1>
+<p class="meta">Ticket: <code>.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md</code><br>
+Spec/design: <code>.scratch/duplicate-photo-detection-and-tag-propagation/spec.md</code> · <code>design-notes.md</code><br>
+Intended implementation: <code>429cc6c</code> on <code>prototype/duplicate-review-ui</code>. Required manual platform: <strong>Windows desktop, PyQt6, real ExifTool, disposable JPEG copies.</strong></p>
+<div class="fields"><label>Tester <input id="tester" type="text" placeholder="Name"></label><label>Tested commit <input id="commit" type="text" value="429cc6c"></label></div>
+<p class="note">Previous Windows report at <code>5d4b887</code>: AT-01 PASS, AT-02 FAIL, eight NOT ASSESSED — NOT READY. This checklist now targets the navigation/help/contrast follow-up. Retest AT-02 first; previous results are historical evidence, not automatically selected controls.</p>
+<p class="meta">No network, storage, accounts, or shell execution. Opening/reloading this file starts fresh. Copy the summary before closing. Every required check starts NOT ASSESSED; agent test results below are evidence, not checked controls.</p>
+</header>
+<div class="panel">
+<h2>Prerequisites and fixture (once)</h2>
+<p>Work from the TAGGER project directory at the intended commit, with an activated development environment. Follow <code>README.md</code> and <code>tests/README.md</code>; install <code>python -m pip install -r requirements-dev.txt</code> and confirm <code>exiftool -ver</code>. Use a second terminal for metadata edits/locks while TAGGER runs. Never use your original photo library.</p>
+<p class="note">No real-photo fixture is shipped. Supply one readable JPEG, then create the disposable fixture below. Manual Windows/ExifTool steps were not run in the agent container (no Windows desktop or ExifTool). Unknown IPTC state and deterministic pending/write races are exercised by AT-09's existing test adapters; do not invent a corrupt-photo fixture or mark those cases passed by inspection.</p>
+<details><summary>Fixture setup/reset and metadata observation commands</summary>
+<p>Create a new sibling folder <code>../tagger-acceptance</code> and copy a JPEG into it as <code>seed.jpg</code>. Use an unused location without a parent <code>.tagger</code> marker. Commands below modify only these copies. To reset, close TAGGER, release any lock, remove only fixture <code>*_original</code> backups and its <code>.tagger</code> cache if present, then repeat setup. Do not reuse backups from an earlier check.</p>
+<strong>Windows PowerShell</strong>
+<pre>New-Item -ItemType Directory -Force -Path ../tagger-acceptance
+Copy-Item "C:/path/to/disposable-copy.jpg" ../tagger-acceptance/seed.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/source.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/a-empty.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/b-empty.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/c-tagged.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/next-a.jpg
+Copy-Item ../tagger-acceptance/seed.jpg ../tagger-acceptance/next-b.jpg</pre>
+<strong>Bash (Linux/macOS)</strong>
+<pre>mkdir -p ../tagger-acceptance
+cp /path/to/disposable-copy.jpg ../tagger-acceptance/seed.jpg
+for name in source a-empty b-empty c-tagged next-a next-b; do
+  cp ../tagger-acceptance/seed.jpg "../tagger-acceptance/$name.jpg"
+done</pre>
+<strong>Common commands (PowerShell or Bash; ExifTool must be on PATH)</strong>
+<pre>exiftool -overwrite_original -IPTC:Keywords= -XMP-dc:Subject= -EXIF:DateTimeOriginal="2024:01:02 12:00:00" -EXIF:CreateDate="2024:01:02 12:00:00" "../tagger-acceptance/*.jpg"
+exiftool -overwrite_original -IPTC:Keywords=Holiday -IPTC:Keywords+=Family -XMP-dc:Subject=MirrorOnly ../tagger-acceptance/source.jpg
+exiftool -overwrite_original -XMP-dc:Subject=LegacyMirror ../tagger-acceptance/b-empty.jpg
+exiftool -overwrite_original -IPTC:Keywords=Other ../tagger-acceptance/c-tagged.jpg
+exiftool -overwrite_original -EXIF:DateTimeOriginal="2024:01:03 12:00:00" ../tagger-acceptance/seed.jpg ../tagger-acceptance/next-a.jpg ../tagger-acceptance/next-b.jpg</pre>
+<p>Open TAGGER, load this folder with <strong>Add folder / Ctrl+O</strong>, open <strong>Duplicate review</strong>, select the <strong>Choose subfolder…</strong> scope and choose <code>../tagger-acceptance</code> explicitly, then wait for the scope count. Click <strong>Start scan</strong>. Expect the main timestamp group (source, a-empty, b-empty, c-tagged) and a separate next/seed group. Clear <strong>Hide groups where no photo has tags</strong> when you need to see the next group.</p>
+<p>Observe actual files, independent of the UI:</p>
+<pre>exiftool -G1 -s -IPTC:Keywords -XMP-dc:Subject "../tagger-acceptance/*.jpg"
+python -c "import hashlib;from pathlib import Path;print('\n'.join(str(p)+': '+hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(Path('../tagger-acceptance').glob('*.jpg'))))"</pre>
+<p>Record hashes before/after no-write workflows; the hashes must be identical. Metadata-writing fixture commands change hashes deliberately, so take a new baseline after those commands. Tags may be sorted: compare the set <code>Family, Holiday</code>, not UI ordering.</p>
+<p>Start a visible UI after offscreen testing:</p>
+<strong>PowerShell</strong><pre>Remove-Item Env:QT_QPA_PLATFORM -ErrorAction SilentlyContinue
+python tagger.py</pre>
+<strong>Bash</strong><pre>unset QT_QPA_PLATFORM
+python tagger.py</pre>
+</details>
+<p class="meta">Observed during checklist update, Linux at <code>429cc6c</code>: <code>QT_QPA_PLATFORM=offscreen python -m pytest -q tests/test_tag_propagation.py tests/test_tag_mutation_coordinator.py</code> → 15 passed, 15 subtests passed; <code>QT_QPA_PLATFORM=offscreen python -m pytest -q tests/test_main_window_characterization.py -k 'duplicate or help_only'</code> → 35 passed, 130 deselected, 2 subtests passed. Follow-up handoff full Linux run: 328 passed, 33 subtests passed. The earlier 5d4b887 handoff noted one unchanged preview-debounce timing failure before isolated/full reruns passed. None of this replaces Windows acceptance.</p>
+</div>
+<div class="toolbar" aria-live="polite"><span id="counter">0 PASS · 0 FAIL · 10 NOT ASSESSED</span><strong id="decision">NOT READY</strong></div>
+<main id="checks">
+<article data-id="AT-01" data-title="Choose a valid source and target subset">
+<div class="heading"><h2>AT-01 — Choose a valid source and target subset</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: explicit assessment; readable non-empty source; empty-target eligibility; default selection; independent subset adjustment; no automatic writes.</p>
+<ol><li><strong>Manual, Windows:</strong> Start a fresh fixture scan. Inspect evidence, previews, paths and canonical tags. No source is automatically chosen and Copy is disabled.</li><li>Click <strong>Source (s)</strong> on <code>source.jpg</code>. All eligible empty targets (<code>a-empty.jpg</code>, <code>b-empty.jpg</code>) become checked. The source cannot be a target; <code>c-tagged.jpg</code> cannot be a target, and empty photos cannot be sources. Source XMP-only <code>MirrorOnly</code> is not offered as canonical copy content.</li><li>Deselect/reselect <code>b-empty.jpg</code>; switch to the next group and back using queue buttons. The final subset remains selected. File hashes stay unchanged.</li></ol>
+</article>
+<article data-id="AT-02" data-title="Edit keys are modal and tagging state is preserved">
+<div class="heading"><h2>AT-02 — Edit keys are modal and tagging state is preserved</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: current-view help; scan shortcuts after command execution; e enters Edit, Esc leaves; visible/scrolled h/l and j/k navigation; s/t selection; text-input guards; readable full paths; independent review state.</p>
+<ol><li><strong>Manual, Windows:</strong> In Tagging select a photo, apply a filename filter and record its search/filter/selection. Open <code>:help</code> (or F1): title names Tagging, normal tagging commands/shortcuts are listed, and duplicate-only scan/edit commands are absent. Enter Duplicate review and scan the fixture.</li><li>Open <code>:help</code> here: title names Duplicate review; scan/scope actions and e/h/j/k/l/s/t/c/i are shown with Edit-mode annotations; addtag, retryall, filterfiles and reindex are absent. Close help, leaving focus on the window, and type <strong>Space then s</strong>: scan starts. Cancel with Esc; explicitly scan again and wait for results. Focus a photo control; s/t/c/i while Edit is off must not edit, preview or Ignore.</li><li>Press e: the control says <strong>Edit mode: on (Esc)</strong>. h/l moves between groups; j/k follows grid reading order, including ineligible photos. The focused card is outlined, <strong>Photo N of M — filename</strong> changes, and its controls scroll into view rather than moving offscreen. Full paths are readable against the card background, including with a dark theme. On source press s; on an empty target press t to toggle only that target.</li><li>Open the command line with : and type <code>scti</code>, then Space and s: these remain text and do not edit or start a scan. Cancel the command line. Press Esc once to leave Edit without leaving review, then return to Tagging: recorded filter/search/selection are preserved. Space s in Tagging must not start a duplicate scan. Record the Windows version/theme/scaling and any remaining navigation problem.</li></ol>
+</article>
+<article data-id="AT-03" data-title="Exact preview and cancellation make no changes">
+<div class="heading"><h2>AT-03 — Exact preview and cancellation make no changes</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: exact source/tags/targets/backup preview; c then explicit confirmation; n and Esc cancellation; no premature metadata writes.</p>
+<ol><li><strong>Manual, Windows:</strong> Select <code>source.jpg</code> and only <code>a-empty.jpg</code>. Record fixture hashes. Enter Edit and press <code>c</code>. <strong>Confirm tag copy</strong> lists the full source path, only a-empty as target, canonical Family/Holiday tags and the current Backup on/off value.</li><li>Before confirming, check hashes in the second terminal: unchanged. Press <code>n</code>. Repeat the preview and cancel with Esc. Both close without changing file hashes, selection/subset or creating new <code>*_original</code> files.</li></ol>
+</article>
+<article data-id="AT-04" data-title="Confirmed copies, mirrors and backup setting are correct">
+<div class="heading"><h2>AT-04 — Confirmed copies, mirrors and backup setting are correct</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: writes only after y; canonical IPTC/XMP behavior; captured backup setting; advance and compact pending/completed outcomes; no changes outside targets.</p>
+<p class="note">The follow-up header should say <strong>Copy requires confirmation</strong>, not claim this is a read-only view. Check that the confirmation step makes its metadata-write effect clear.</p>
+<ol><li><strong>Manual, Windows:</strong> Reset the fixture. In Tagging turn <strong>Keep backups</strong> on (Ctrl+Shift+B toggles it), then return to review and scan. Choose source and both empty targets. Record source, c-tagged and next-group hashes. Press c, verify <strong>Backup: on</strong>, then y.</li><li>Review advances to the next group without waiting for writes. Submitted work has a compact Pending row/spinner if writes are long enough to observe, then Completed. Reopen it: each target is successful. If writes finish too quickly to see Pending, record that caveat; AT-09 deterministically covers it.</li><li>Use the common ExifTool observation command: a-empty and b-empty IPTC each contain exactly Family/Holiday. Intentionally empty XMP on a-empty remains empty; b-empty's existing XMP becomes the canonical Family/Holiday mirror, not MirrorOnly or LegacyMirror. Source/c-tagged/next hashes are unchanged. Target <code>*_original</code> backups retain their pre-copy tags.</li><li>Reset with no old backups. Repeat with backups off; preview says off, the same canonical results hold, and no target <code>*_original</code> appears. Restart TAGGER and read the files again: confirmed metadata survives restart. Captured-setting changes after preview are covered by AT-09.</li></ol>
+</article>
+<article data-id="AT-05" data-title="External changes and missing targets invalidate the plan">
+<div class="heading"><h2>AT-05 — External changes and missing targets invalidate the plan</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: fresh file truth before preview and confirmation; unreadable/changed state rejected; stale data is never written.</p>
+<ol><li><strong>Manual, Windows:</strong> Fresh scan, choose source and a-empty. Before c, run the command below. Press c: a visible changed-since-assessment message appears and no copy preview/write occurs. a-empty remains empty.</li></ol>
+<pre>exiftool -overwrite_original -IPTC:Keywords=External ../tagger-acceptance/source.jpg</pre>
+<ol start="2"><li>Reset/rescan and open c preview for a-empty. In the second terminal add External to a-empty using the command below, then press y. Copy is rejected; a-empty still contains External only, b-empty remains empty, and no successful copy row is falsely shown.</li></ol>
+<pre>exiftool -overwrite_original -IPTC:Keywords=External ../tagger-acceptance/a-empty.jpg</pre>
+<ol start="3"><li>Reset/rescan, choose source and b-empty only, then rename <code>b-empty.jpg</code> to <code>b-missing.jpg</code> in Explorer before c. Preview is refused with a missing/unreadable-path message, and no other file gets tags. Restore the filename and rescan. Truly unknown IPTC-field flags are separately covered by AT-09.</li></ol>
+</article>
+<article data-id="AT-06" data-title="Partial failure stays visible and retries only failed targets">
+<div class="heading"><h2>AT-06 — Partial failure stays visible and retries only failed targets</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: successful writes retained; non-interrupting partial failure; per-target failed/retryable outcomes; failed-only retry; Session error; safe retry after external edits.</p>
+<ol><li><strong>Manual, Windows file-sharing environment required:</strong> Reset/rescan; backups off; select source and both empty targets; open c preview. In the second PowerShell terminal acquire a read-share-only lock on b-empty (reads allowed, replacement/writes denied). Keep that terminal open.</li></ol>
+<pre>$lockedPath = (Resolve-Path ../tagger-acceptance/b-empty.jpg).Path
+$lock = [System.IO.File]::Open($lockedPath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)</pre>
+<ol start="2"><li>Press y in TAGGER. a-empty succeeds; b-empty fails. Review remains on the next candidate without an interrupting partial-failure dialog. Reopen the prominent Failed row: a-empty successful, b-empty failed; b-empty IPTC is still empty. Save a-empty's current hash. Return to Tagging and run <code>:errors</code>: the session has a tag-mutation failure record.</li><li>Release the lock, return to Duplicate review and reopen the Failed row. Click <strong>Retry failed targets</strong>. Only b-empty is copied; row becomes Completed, both targets have Family/Holiday, and a-empty's hash is unchanged by retry.</li></ol>
+<pre>$lock.Dispose()</pre>
+<p class="note">Always dispose the lock, including after a failed step. If this environment does not produce a real write failure, leave this check NOT ASSESSED with a comment; it requires test design for a reliable OS write-denial fixture. The Linux shell has no equivalent mandatory Windows sharing lock; use AT-09 for deterministic failure/race coverage, not as a replacement for this check. AT-09 also proves that retry refuses a failed target that acquired external tags.</p>
+</article>
+<article data-id="AT-07" data-title="Ignore is reversible for this scan only">
+<div class="heading"><h2>AT-07 — Ignore is reversible for this scan only</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: i collapses to recoverable Ignored row; immediate advance; restored assessment/subset; no persistence across scans.</p>
+<ol><li><strong>Manual, Windows:</strong> Reset/rescan, source selected, b-empty deselected. Enter Edit and press i. Group leaves the active queue, review advances, and an Ignored row appears. No photo hash changes.</li><li>Reopen the Ignored row: candidate returns with source and target subset preserved. Ignore it again and explicitly Start scan again: the candidate returns; previous Ignore is not remembered. Metadata still has not changed.</li></ol>
+</article>
+<article data-id="AT-08" data-title="Large queues and complete previews remain usable">
+<div class="heading"><h2>AT-08 — Large queues and complete previews remain usable</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: compact scrollable status rows; all target paths/literal tags inspectable; usable cancellation and responsive background reads.</p>
+<details><summary>Create the large disposable fixture (common PowerShell/Bash commands)</summary>
+<p>After resetting the small fixture, these commands create 60 photos in one group and 20 extra two-photo groups from seed.jpg. They require no additional Python modules. Do not run outside the disposable fixture setup.</p>
+<pre>python -c "import shutil;from pathlib import Path;p=Path('../tagger-acceptance');[shutil.copyfile(p/'seed.jpg',p/f'bulk-{i:03}.jpg') for i in range(60)]"
+exiftool -overwrite_original -IPTC:Keywords= -XMP-dc:Subject= -EXIF:DateTimeOriginal="2024:01:04 12:00:00" "../tagger-acceptance/bulk-*.jpg"
+exiftool -overwrite_original "-IPTC:Keywords=&lt;b&gt;Literal tag&lt;/b&gt;" ../tagger-acceptance/bulk-000.jpg
+python -c "import shutil,subprocess;from pathlib import Path;p=Path('../tagger-acceptance');[(shutil.copyfile(p/'seed.jpg',p/f'g-{g:02}-{m}.jpg'),subprocess.run(['exiftool','-overwrite_original','-IPTC:Keywords=','-XMP-dc:Subject=',f'-EXIF:DateTimeOriginal=2024:02:{g+1:02} 12:00:00',str(p/f'g-{g:02}-{m}.jpg')],check=True)) for g in range(20) for m in range(2)]"</pre>
+</details>
+<ol><li><strong>Manual, Windows:</strong> Reload Add folder, clear the empty-group filter, and scan again. During scope/scan reads the window still repaints/responds; cancellation remains usable. Start a fresh complete scan after cancellation.</li><li>Open the bulk timestamp group. Choose bulk-000 as source. c preview contains all 59 eligible targets; scroll to confirm <code>bulk-059.jpg</code> is present. Literal <code>&lt;b&gt;Literal tag&lt;/b&gt;</code> is displayed as text, not formatted bold. Copy/Cancel controls remain accessible without the dialog exceeding the screen. Cancel.</li><li>Ignore each of the 20 February groups. The status area scrolls within a bounded height; it does not stretch the window off-screen or hide the active-photo review. Scroll to and reopen an Ignored row. Record screen size/scaling and any layout problem.</li></ol>
+</article>
+<article data-id="AT-09" data-title="Deterministic safety and recovery seams pass">
+<div class="heading"><h2>AT-09 — Deterministic safety and recovery seams pass</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: unknown IPTC and pending-intent rejection; keyword limits; scan-bound plans; stale preview/confirmation navigation; queued cancellation; captured backup setting; partial success/retry; modal keys and bounded layouts.</p>
+<p><strong>Automated:</strong> From the activated development environment, run both commands. Expected: 15 core/coordinator tests pass (plus subtests), then 35 duplicate/help Qt tests pass (plus subtests), none skipped. If PyQt6 is missing/skipped, this check is not PASS. Record OS, Python/PyQt6 versions and command output.</p>
+<strong>Windows PowerShell</strong><pre>$env:QT_QPA_PLATFORM = "offscreen"
+python -m pytest -q tests/test_tag_propagation.py tests/test_tag_mutation_coordinator.py
+python -m pytest -q tests/test_main_window_characterization.py -k "duplicate or help_only"</pre>
+<strong>Bash (Linux/macOS)</strong><pre>QT_QPA_PLATFORM=offscreen python -m pytest -q tests/test_tag_propagation.py tests/test_tag_mutation_coordinator.py
+QT_QPA_PLATFORM=offscreen python -m pytest -q tests/test_main_window_characterization.py -k "duplicate or help_only"</pre>
+<p class="meta">These existing test adapters supply unknown-field flags, blocked writes, pending intent, superseded scans and navigation races; no new harness or source inspection is needed.</p>
+</article>
+<article data-id="AT-10" data-title="Windows integrated metadata workflow passes">
+<div class="heading"><h2>AT-10 — Windows integrated metadata workflow passes</h2><div><label class="choice"><input type="checkbox" data-result="PASS">PASS</label><label class="choice"><input type="checkbox" data-result="FAIL">FAIL</label></div></div>
+<p class="requirement">Verifies: required Windows/offscreen acceptance; regression coverage for canonical IPTC/XMP, keyword limits, backups, reliable mutation/refresh/retry integrations.</p>
+<p><strong>Automated, Windows required for PASS:</strong> Run the repository's complete suite from <code>tests/README.md</code>. Expected at 429cc6c: 328 passed, with no failures or skipped Qt adapter tests (pytest versions may report unittest subtests separately). Record the exact commit, Windows/Python/PyQt6 versions and output. If the known preview-debounce timing assertion fails, record the failure and any isolated/full rerun; do not silently ignore it.</p>
+<strong>Windows PowerShell</strong><pre>$env:QT_QPA_PLATFORM = "offscreen"
+python -m pytest -q</pre>
+<strong>Bash equivalent (supplemental, not Windows acceptance)</strong><pre>QT_QPA_PLATFORM=offscreen python -m pytest -q</pre>
+</article>
+</main>
+<section class="panel" aria-labelledby="summary-heading">
+<h2 id="summary-heading">Copy/paste acceptance summary</h2>
+<p><button id="copy" type="button">Copy summary</button> <button id="clear" type="button" class="secondary">Clear all</button> <span id="copy-message" role="status"></span></p>
+<label for="summary">Live Markdown (every check included)</label><textarea id="summary" readonly spellcheck="false"></textarea>
+<p class="meta">ACCEPT means all 10 required checks are PASS. Otherwise NOT READY. Put blockers, reviewer questions, unexpected results and environmental exceptions in that check's comment.</p>
+</section>
+<script>
+'use strict';
+const ticket = '.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md';
+const checks = Array.from(document.querySelectorAll('article[data-id]'));
+const tester = document.getElementById('tester');
+const commit = document.getElementById('commit');
+const summary = document.getElementById('summary');
+const message = document.getElementById('copy-message');
+function statusOf(check) {
+  const selected = check.querySelector('input[data-result]:checked');
+  return selected ? selected.dataset.result : 'NOT ASSESSED';
+}
+function update() {
+  const counts = {PASS: 0, FAIL: 0, 'NOT ASSESSED': 0};
+  for (const check of checks) {
+    const status = statusOf(check);
+    counts[status]++;
+    check.dataset.status = status;
+    check.querySelector('.status').textContent = status;
+  }
+  const result = `${counts.PASS} PASS · ${counts.FAIL} FAIL · ${counts['NOT ASSESSED']} NOT ASSESSED`;
+  const decision = counts.PASS === checks.length ? 'ACCEPT' : 'NOT READY';
+  document.getElementById('counter').textContent = result;
+  document.getElementById('decision').textContent = decision;
+  const lines = ['# Acceptance: Duplicate tag propagation', '', `- Ticket/spec: ${ticket}`, `- Commit: ${commit.value.trim() || '(not supplied)'}`, `- Tester: ${tester.value.trim() || '(not supplied)'}`, `- Result: ${result}`, `- Decision: ${decision}`, ''];
+  for (const check of checks) {
+    const status = statusOf(check);
+    lines.push(`- [${status === 'NOT ASSESSED' ? ' ' : 'x'}] ${check.dataset.id} — ${check.dataset.title}: ${status}`);
+    const comment = check.querySelector('.comment').value.trim();
+    if (comment) lines.push('  Comment: ' + comment.replace(/\r?\n/g, '\n  '));
+  }
+  summary.value = lines.join('\n') + '\n';
+  message.textContent = '';
+}
+for (const check of checks) {
+  const status = document.createElement('p');
+  status.className = 'status';
+  check.appendChild(status);
+  const details = document.createElement('details');
+  const caption = document.createElement('summary');
+  caption.textContent = 'Comment / evidence / blocker';
+  const label = document.createElement('label');
+  label.textContent = `${check.dataset.id} comment`;
+  const comment = document.createElement('textarea');
+  comment.className = 'comment';
+  comment.id = `${check.dataset.id}-comment`;
+  comment.rows = 2;
+  label.htmlFor = comment.id;
+  details.append(caption, label, comment);
+  check.appendChild(details);
+  comment.addEventListener('input', update);
+  for (const checkbox of check.querySelectorAll('input[data-result]')) {
+    checkbox.addEventListener('change', () => {
+      if (checkbox.checked) {
+        for (const peer of check.querySelectorAll('input[data-result]')) {
+          if (peer !== checkbox) peer.checked = false;
+        }
+      }
+      update();
+    });
+  }
+}
+tester.addEventListener('input', update);
+commit.addEventListener('input', update);
+document.getElementById('copy').addEventListener('click', async () => {
+  try {
+    if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(summary.value);
+    message.textContent = 'Summary copied.';
+  } catch (_) {
+    summary.focus();
+    summary.select();
+    summary.setSelectionRange(0, summary.value.length);
+    message.textContent = 'Clipboard unavailable. Summary selected: press Ctrl+C (Cmd+C on macOS) to copy manually.';
+  }
+});
+document.getElementById('clear').addEventListener('click', () => {
+  if (!window.confirm('Clear all PASS/FAIL selections, comments and tester?')) return;
+  for (const check of checks) {
+    for (const checkbox of check.querySelectorAll('input[data-result]')) checkbox.checked = false;
+    check.querySelector('.comment').value = '';
+  }
+  tester.value = '';
+  commit.value = '429cc6c';
+  update();
+});
+update();
+</script>
+</body>
+</html>
