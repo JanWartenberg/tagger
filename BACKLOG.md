@@ -2,16 +2,15 @@
 
 ## Current milestone
 
-**M8 — Duplicate candidate review and tag propagation** is active. Its tickets
-are ordered by dependency:
+**M9 — Repeatable real-file acceptance** is active following the maintainer's
+acceptance of M8 and request to prioritize automated integration acceptance.
 
-1. [Implement duplicate-candidate detection foundation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/01-implement-duplicate-candidate-detection-foundation.md) — completed
-2. [Build duplicate-candidate assessment view](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02-build-duplicate-candidate-assessment-view.md) — completed and accepted
-3. [Add Folder action to duplicate review](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02a-add-folder-action-to-duplicate-view.md) — completed and accepted
-4. [Propagate tags from assessed candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/03-propagate-tags-from-assessed-candidates.md) — implemented on `prototype/duplicate-review-ui`; AT-02 failed at `5d4b887`; navigation/help/contrast fixes await Windows retest and maintainer approval
+1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — high priority; confirm test seams before implementation.
+2. [Make Scan setup collapsible](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02b-collapse-scan-setup.md) — medium-priority UI follow-up.
 
-The read-only detection foundation is accepted. Keep assessment and metadata
-mutation as separate delivery stages.
+M8 tag propagation is accepted and its ticket completed by maintainer decision.
+Unrun manual checks were waived, not marked passed. Work remains on
+`prototype/duplicate-review-ui`; integration into `main` needs a separate decision.
 
 ## Future milestone
 

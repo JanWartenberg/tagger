@@ -1,6 +1,6 @@
 # Duplicate Photo Detection and Tag Propagation
 
-Status: ready-for-human
+Status: completed
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
 
@@ -86,11 +86,11 @@ sophisticated matching methods.
 ## Delivery status
 
 - 2026-09-23: Detection foundation was accepted in commit `c39d6a9`.
-- Duplicate assessment and Add Folder workflows are accepted. Tag propagation
-  is implemented under ticket 03 on `prototype/duplicate-review-ui`, with Linux
-  automated validation and local two-axis review complete. Windows/offscreen
-  acceptance and maintainer approval remain pending, so this specification stays
-  active. Human acceptance at `5d4b887` passed AT-01 but failed AT-02; navigation,
-  scan-shortcut scope, path contrast, and context-help fixes are covered by
-  follow-up Qt regressions and still need a Windows retest. Integration into
-  `main` requires a separate explicit decision.
+- Duplicate assessment, Add Folder and tag propagation are accepted. The
+  maintainer closed ticket 03 after a Windows suite pass, explicit AT-02 PASS,
+  cancellation evidence and correct real-file copying/backups. Remaining manual
+  checks were explicitly waived, not recorded as passed; see ticket 03 for the
+  precise evidence and gaps. A [real-file integration subproject](../windows-integration-suite/spec.md)
+  replaces repeated manual acceptance. The collapsible Scan setup request is
+  tracked separately as ticket 02b. Integration of `prototype/duplicate-review-ui`
+  into `main` still requires a separate explicit decision.

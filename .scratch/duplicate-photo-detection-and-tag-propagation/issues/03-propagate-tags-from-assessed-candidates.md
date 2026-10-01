@@ -1,10 +1,10 @@
 # 03 — Propagate Tags from Assessed Candidates
 
-Status: ready-for-human
+Status: completed
 Category: feature
 Priority: medium
 Milestone: M8 — Duplicate candidate review and tag propagation
-Blocked by: Windows/offscreen acceptance and maintainer approval
+Acceptance: maintainer accepted with remaining manual coverage explicitly waived
 
 ## Goal
 
@@ -121,10 +121,11 @@ Implementation is on `prototype/duplicate-review-ui`; keep it isolated from
   Fixed the unbounded status-row layout, made large previews scrollable, and
   removed stale future-workflow wording.
 
-## Remaining Human Acceptance
+## Historical Human Acceptance Plan
 
-The acceptance checkboxes above remain pending final Windows validation rather
-than claiming acceptance from Linux-only checks.
+The acceptance checkboxes above record the original validation plan, not a claim
+that every manual scenario was executed. The final maintainer disposition below
+supersedes this historical pending-acceptance section.
 
 - Run and record the Windows/offscreen command in `tests/README.md`.
 - Verify Edit-mode navigation, cancellation without writes, exact confirmed copy
@@ -168,3 +169,37 @@ code findings; Windows acceptance remains the validation gap.
 
 Do not change the recorded human failure to PASS based on automated checks.
 Retest AT-02 first on Windows, then run the remaining acceptance checks.
+
+### Reviewer Update (historical)
+
+The reviewer confirmed that `Space s` and `j/k` worked after the follow-up fixes.
+Full acceptance was still pending at that point.
+
+## Comments
+
+### Final maintainer disposition
+
+The maintainer explicitly accepted the implementation and requested closure to
+prioritize a repeatable integration suite instead of continuing repetitive manual
+checks. Remaining manual checks are waived for this delivery, not recorded as PASS.
+
+Reported evidence:
+
+- Windows, Python 3.14.7: `python -m pytest` collected and passed 328 tests in
+  16.98s. The shell was PowerShell and used cmd-style `set QT_QPA_PLATFORM=offscreen`;
+  this does not establish that the environment variable was set. Record this as
+  a Windows suite pass, not a verified offscreen-environment run.
+- AT-02 explicitly reported PASS after the navigation/help fixes.
+- Cancellation checks reported unchanged JPEG hashes; preview completeness,
+  selection preservation and backup checks were not separately confirmed.
+- Confirmed copies with backups on and off produced Family/Holiday IPTC tags,
+  preserved absent XMP on a-empty, updated b-empty's mirror, and produced backups
+  only when enabled. Restart persistence and untouched-file checks were not
+  separately reported.
+- External-change rejection, partial-failure/retry, Ignore and large-layout manual
+  scenarios were not completed in this conversation.
+
+Follow-ups: [integration-suite subproject](../../windows-integration-suite/spec.md)
+and [collapsible Scan setup](02b-collapse-scan-setup.md).
+Integration into `main` remains a separate decision; closing this ticket does not
+merge the implementation branch.
