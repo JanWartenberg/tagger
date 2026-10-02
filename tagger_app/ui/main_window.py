@@ -111,6 +111,10 @@ from tagger_app.storage import (
 )
 from tagger_app.ui.actions import ActionSpec, KeyRoute, build_action_specs
 from tagger_app.ui.tag_completion import TagCompletion
+from tagger_app.ui.photo_context_menu import (
+    PhotoContextActions,
+    build_photo_context_menu,
+)
 from tagger_app.utils import dedupe_casefold, normalize_path
 
 
@@ -1446,6 +1450,16 @@ class MainWindow(QtWidgets.QMainWindow):
         title_font.setBold(True)
         title.setFont(title_font)
         header.addWidget(title)
+        self.duplicateScanSetupToggle = QtWidgets.QToolButton()
+        self.duplicateScanSetupToggle.setText("Hide Scan setup")
+        self.duplicateScanSetupToggle.setCheckable(True)
+        self.duplicateScanSetupToggle.setChecked(True)
+        self.duplicateScanSetupToggle.setArrowType(QtCore.Qt.ArrowType.DownArrow)
+        self.duplicateScanSetupToggle.setToolTip("Show or hide Scan setup (Alt+U)")
+        self.duplicateScanSetupToggle.toggled.connect(
+            self._set_duplicate_scan_setup_visible
+        )
+        header.addWidget(self.duplicateScanSetupToggle)
         header.addStretch(1)
         self.duplicateAddFolderButton = QtWidgets.QPushButton("Add folder")
         self.duplicateAddFolderButton.setToolTip(
@@ -1458,7 +1472,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.addLayout(header)
 
         content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.duplicateContentSplitter = content
+        self._duplicate_setup_sizes: list[int] | None = None
         setup = QtWidgets.QGroupBox("Scan setup")
+        self.duplicateScanSetup = setup
         setup_layout = QtWidgets.QFormLayout(setup)
         self.duplicateScopeCombo = QtWidgets.QComboBox()
         self.duplicateScopeCombo.setToolTip("Choose duplicate scan scope (Alt+S)")
@@ -1543,14 +1560,27 @@ class MainWindow(QtWidgets.QMainWindow):
             "Hide groups where no photo has tags"
         )
         self.duplicateExcludeEmptyCandidatesCheck.setToolTip(
-            "Hide groups only when every member has a readable, empty IPTC tag "
-            "list (Alt+E)"
+            "In Show all candidates mode, hide groups only when every member "
+            "has readable, empty IPTC tags (Alt+E). Actionable-only mode already "
+            "requires a tagged source."
         )
         self.duplicateExcludeEmptyCandidatesCheck.toggled.connect(
             self._filter_duplicate_candidates
         )
         self.duplicateExcludeEmptyCandidatesCheck.setEnabled(False)
         result_summary_layout.addWidget(self.duplicateExcludeEmptyCandidatesCheck)
+        self.duplicateShowAllCandidatesCheck = QtWidgets.QCheckBox(
+            "Show all candidates"
+        )
+        self.duplicateShowAllCandidatesCheck.setToolTip(
+            "Include groups without a readable tagged source and readable empty "
+            "target (Alt+A). The non-empty group filter still applies in this mode."
+        )
+        self.duplicateShowAllCandidatesCheck.setEnabled(False)
+        self.duplicateShowAllCandidatesCheck.toggled.connect(
+            self._filter_duplicate_candidates
+        )
+        result_summary_layout.addWidget(self.duplicateShowAllCandidatesCheck)
         results_layout.addWidget(result_summary)
 
         self.duplicateCandidateQueue = QtWidgets.QScrollArea()
@@ -1636,6 +1666,27 @@ class MainWindow(QtWidgets.QMainWindow):
         content.setChildrenCollapsible(False)
         layout.addWidget(content, 1)
         return view
+
+    def toggle_duplicate_scan_setup(self) -> None:
+        self.duplicateScanSetupToggle.toggle()
+
+    def _set_duplicate_scan_setup_visible(self, expanded: bool) -> None:
+        if not expanded:
+            self._duplicate_setup_sizes = self.duplicateContentSplitter.sizes()
+            focus = self.focusWidget()
+            if focus is not None and self.duplicateScanSetup.isAncestorOf(focus):
+                self.duplicateScanSetupToggle.setFocus()
+        self.duplicateScanSetup.setVisible(expanded)
+        self.duplicateScanSetupToggle.setText(
+            "Hide Scan setup" if expanded else "Show Scan setup"
+        )
+        self.duplicateScanSetupToggle.setArrowType(
+            QtCore.Qt.ArrowType.DownArrow
+            if expanded
+            else QtCore.Qt.ArrowType.RightArrow
+        )
+        if expanded and self._duplicate_setup_sizes is not None:
+            self.duplicateContentSplitter.setSizes(self._duplicate_setup_sizes)
 
     def _duplicate_scope_choice_changed(self) -> None:
         self._duplicate_scope_coordinator.invalidate()
@@ -1844,6 +1895,7 @@ class MainWindow(QtWidgets.QMainWindow):
         snapshot = self._prepared_duplicate_scope
         if snapshot is None or not snapshot.paths:
             return
+        self.duplicateScanSetupToggle.setChecked(True)
         self._duplicate_scan_result = None
         self._clear_duplicate_results()
         self.duplicateReviewEmpty.show()
@@ -1923,6 +1975,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item = layout.takeAt(0)
             widget = item.widget()
             if widget is not None:
+                widget.hide()
                 widget.deleteLater()
             child_layout = item.layout()
             if child_layout is not None:
@@ -1946,6 +1999,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsLayout.addStretch(1)
         self.duplicateResultsSummary.hide()
         self.duplicateExcludeEmptyCandidatesCheck.setEnabled(False)
+        self.duplicateShowAllCandidatesCheck.setEnabled(False)
         self.duplicateCandidateQueue.hide()
         self.duplicateResultsScroll.hide()
         self.duplicateAssessmentActions.hide()
@@ -1953,14 +2007,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _render_duplicate_scan_result(self, result: ScanResult) -> None:
         self._clear_duplicate_results()
         self.duplicateReviewEmpty.hide()
-        self.duplicateResultsSummary.setText(
-            f"{len(result.groups):,} candidate groups from "
-            f"{result.total:,} photos · Method: "
-            f"{self._duplicate_detector.display_name} ({result.detector_id}). "
-            "These are findings to assess, not confirmed duplicates."
-        )
         self.duplicateResultsSummary.show()
-        self.duplicateExcludeEmptyCandidatesCheck.setEnabled(True)
+        self.duplicateShowAllCandidatesCheck.setEnabled(True)
         self.duplicateResultsScroll.show()
         for group in result.groups:
             self._duplicate_assessments[group.group_id] = {
@@ -1979,29 +2027,69 @@ class MainWindow(QtWidgets.QMainWindow):
             member.iptc_readable and not member.iptc_tags for member in group.members
         )
 
+    @staticmethod
+    def _duplicate_group_has_copy_pair(group: CandidateGroup) -> bool:
+        readable = [member for member in group.members if member.iptc_readable]
+        return any(member.iptc_tags for member in readable) and any(
+            not member.iptc_tags for member in readable
+        )
+
+    def _refresh_duplicate_filter_summary(self) -> None:
+        result = self._duplicate_scan_result
+        if result is None:
+            return
+        mode = "Actionable only: tagged source + empty target"
+        if self.duplicateShowAllCandidatesCheck.isChecked():
+            mode = "All candidates"
+            if self.duplicateExcludeEmptyCandidatesCheck.isChecked():
+                mode += " · hiding confirmed-empty groups"
+        self.duplicateResultsSummary.setText(
+            f"{len(self._visible_duplicate_group_ids):,} shown of "
+            f"{len(result.groups):,} candidate groups from {result.total:,} photos · "
+            f"{mode} · Method: {self._duplicate_detector.display_name} "
+            f"({result.detector_id}). These are findings to assess, not confirmed duplicates."
+        )
+
     def _filter_duplicate_candidates(self) -> None:
         result = self._duplicate_scan_result
         if result is None:
             return
-        exclude_empty = self.duplicateExcludeEmptyCandidatesCheck.isChecked()
+        show_all = self.duplicateShowAllCandidatesCheck.isChecked()
+        self.duplicateExcludeEmptyCandidatesCheck.setEnabled(show_all)
+        exclude_empty = (
+            show_all and self.duplicateExcludeEmptyCandidatesCheck.isChecked()
+        )
         self._visible_duplicate_group_ids = [
             group.group_id
             for group in result.groups
             if not self._duplicate_assessments[group.group_id]["ignored"]
             and not self._duplicate_assessments[group.group_id]["submitted"]
+            and (show_all or self._duplicate_group_has_copy_pair(group))
             and not (exclude_empty and self._duplicate_group_is_confirmed_empty(group))
         ]
+        self._refresh_duplicate_filter_summary()
         self._render_duplicate_candidate_queue()
         self._render_duplicate_status_rows()
         if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
             self._show_duplicate_candidate_group(self._active_duplicate_group_id)
         elif self._visible_duplicate_group_ids:
             self._show_duplicate_candidate_group(self._visible_duplicate_group_ids[0])
-        elif result.groups and exclude_empty:
-            self._show_no_active_duplicate_group(
-                "No candidate groups match the current filter. "
-                "Clear ‘Hide groups where no photo has tags’ to review all findings."
+        elif result.groups:
+            unreviewed = any(
+                not self._duplicate_assessments[group.group_id]["ignored"]
+                and not self._duplicate_assessments[group.group_id]["submitted"]
+                for group in result.groups
             )
+            message = "Review complete. Reopen a status row to inspect outcomes or restore an ignored candidate."
+            if unreviewed:
+                message = (
+                    "No actionable candidate groups: copying needs a readable tagged "
+                    "source and readable empty target. Enable ‘Show all candidates’ to inspect other findings."
+                    if not show_all
+                    else "No candidate groups match the current filter. "
+                    "Clear ‘Hide groups where no photo has tags’ to inspect all findings."
+                )
+            self._show_no_active_duplicate_group(message)
         else:
             self._show_no_active_duplicate_group(
                 "No duplicate candidate groups were found."
@@ -2087,6 +2175,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "These photos share capture-time evidence. Compare their previews and "
             "confirmed IPTC tags, then choose a tagged source and empty targets. "
             "Preview and confirm the tag copy—or ignore this candidate for this scan."
+            if self._duplicate_group_has_copy_pair(group)
+            else "Inspection only: this candidate has no readable tagged-source/empty-target "
+            "pair. Existing tags are never overwritten by copying."
         )
         explanation.setWordWrap(True)
         explanation.setStyleSheet(
@@ -2130,10 +2221,24 @@ class MainWindow(QtWidgets.QMainWindow):
             card.setProperty("duplicateMemberPath", member.path)
             card.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
             card.installEventFilter(self)
+            card.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+            card.customContextMenuRequested.connect(
+                lambda pos,
+                path=member.path,
+                widget=card: self._show_duplicate_photo_context_menu(path, widget, pos)
+            )
             card.setMinimumWidth(210)
             card_layout = QtWidgets.QVBoxLayout(card)
             preview = QtWidgets.QLabel("Loading preview…")
             preview.setObjectName("duplicateCandidatePreview")
+            preview.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+            preview.customContextMenuRequested.connect(
+                lambda pos,
+                path=member.path,
+                widget=preview: self._show_duplicate_photo_context_menu(
+                    path, widget, pos
+                )
+            )
             preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
             preview.setMinimumSize(190, 150)
             preview.setStyleSheet("background: palette(base); color: palette(mid);")
@@ -2292,6 +2397,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateAssessmentActions.hide()
 
     def focus_duplicate_scope(self) -> None:
+        self.duplicateScanSetupToggle.setChecked(True)
         self.duplicateScopeCombo.setFocus()
 
     def _move_duplicate_group(self, delta: int) -> None:
@@ -2320,6 +2426,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def toggle_empty_duplicate_groups(self) -> None:
         if self.duplicateExcludeEmptyCandidatesCheck.isEnabled():
             self.duplicateExcludeEmptyCandidatesCheck.toggle()
+
+    def toggle_all_duplicate_candidates(self) -> None:
+        if self.duplicateShowAllCandidatesCheck.isEnabled():
+            self.duplicateShowAllCandidatesCheck.toggle()
 
     def _focused_duplicate_member_path(self) -> str | None:
         group_id = self._active_duplicate_group_id
@@ -2660,6 +2770,7 @@ class MainWindow(QtWidgets.QMainWindow):
             for candidate in self._visible_duplicate_group_ids
             if candidate != group_id
         ]
+        self._refresh_duplicate_filter_summary()
         self._render_duplicate_candidate_queue()
         self._render_duplicate_status_rows()
         if self._visible_duplicate_group_ids:
@@ -2827,11 +2938,17 @@ class MainWindow(QtWidgets.QMainWindow):
         assessment = self._duplicate_assessments[group_id]
         source = assessment["source"]
         target_count = len(assessment["targets"])
-        ready = source is not None and bool(target_count)
+        group = self._duplicate_group(group_id)
+        inspection_only = group is not None and not self._duplicate_group_has_copy_pair(
+            group
+        )
+        ready = not inspection_only and source is not None and bool(target_count)
         self.duplicateApplyTagsButton.setEnabled(ready)
         self.duplicateAssessmentHint.setText(
             (
-                f"Ready: 1 source, {target_count} target(s). "
+                "Inspection only: no readable tagged-source/empty-target pair. "
+                if inspection_only
+                else f"Ready: 1 source, {target_count} target(s). "
                 if ready
                 else "Choose a tagged source and empty targets. "
             )
@@ -4012,25 +4129,29 @@ class MainWindow(QtWidgets.QMainWindow):
         return ()
 
     def _open_selected_photos(self) -> None:
-        paths = self._paths_to_open("Open photos")
-        if not paths:
-            return
-        try:
-            self._file_actions.open_default(paths)
-        except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
-            self._report_file_action_error("Open photos", error)
+        self._open_photo_paths(self._paths_to_open("Open photos"))
 
     def _open_selected_photos_in_gimp(self) -> None:
-        paths = self._paths_to_open("Open photos in GIMP")
+        self._open_photo_paths(self._paths_to_open("Open photos in GIMP"), in_gimp=True)
+
+    def _open_photo_paths(
+        self, paths: tuple[str, ...], *, in_gimp: bool = False
+    ) -> None:
         if not paths:
             return
+        source = "Open photos in GIMP" if in_gimp else "Open photos"
         try:
-            self._file_actions.open_gimp(paths)
+            if in_gimp:
+                self._file_actions.open_gimp(paths)
+            else:
+                self._file_actions.open_default(paths)
         except Exception as error:  # noqa: BLE001 - file-action boundary reports failures
-            self._report_file_action_error("Open photos in GIMP", error)
+            self._report_file_action_error(source, error)
 
     def _copy_selected_photo_paths(self) -> None:
-        paths = tuple(self.selected_file_paths())
+        self._copy_photo_paths(tuple(self.selected_file_paths()))
+
+    def _copy_photo_paths(self, paths: tuple[str, ...]) -> None:
         if not paths:
             self.statusBar().showMessage("No active photo")
             return
@@ -4045,7 +4166,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"{len(paths)} file paths were copied")
 
     def _reveal_active_photo(self) -> None:
-        path = self.active_file_path()
+        self._reveal_photo(self.active_file_path())
+
+    def _reveal_photo(self, path: str | None) -> None:
         if path is None:
             self.statusBar().showMessage("No active photo")
             return
@@ -4085,18 +4208,35 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         self.on_selection_changed()
 
-        menu = QtWidgets.QMenu(self.files)
-        menu.addAction("Open", self._open_selected_photos)
-        menu.addAction("Open in GIMP", self._open_selected_photos_in_gimp)
-        menu.addAction("Copy file path", self._copy_selected_photo_paths)
-        menu.addAction("Reveal in Explorer", self._reveal_active_photo)
-        directory_name = Path(item.text()).parent.name
-        if directory_name:
-            menu.addAction(
-                f'Exclude folders named "{directory_name}"',
-                lambda: self._exclude_containing_folder(directory_name),
-            )
+        menu = build_photo_context_menu(
+            self.files,
+            item.text(),
+            PhotoContextActions(
+                self._open_selected_photos,
+                self._open_selected_photos_in_gimp,
+                self._copy_selected_photo_paths,
+                self._reveal_active_photo,
+                self._exclude_containing_folder,
+            ),
+        )
         menu.popup(self.files.viewport().mapToGlobal(pos))
+
+    def _show_duplicate_photo_context_menu(
+        self, path: str, widget: QtWidgets.QWidget, pos: QtCore.QPoint
+    ) -> None:
+        paths = (path,)
+        menu = build_photo_context_menu(
+            widget,
+            path,
+            PhotoContextActions(
+                lambda: self._open_photo_paths(paths),
+                lambda: self._open_photo_paths(paths, in_gimp=True),
+                lambda: self._copy_photo_paths(paths),
+                lambda: self._reveal_photo(path),
+                self._exclude_containing_folder,
+            ),
+        )
+        menu.popup(widget.mapToGlobal(pos))
 
     def _exclude_containing_folder(self, directory_name: str) -> None:
         """Add the clicked photo's containing folder name as an exclusion."""

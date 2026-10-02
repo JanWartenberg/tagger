@@ -4,7 +4,7 @@ Status: needs-info
 Category: testing
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows safety/retry run and visual acceptance
+Blocked by: maintainer Windows UI regression and visual acceptance
 
 ## Goal
 
@@ -13,23 +13,23 @@ can repeat metadata acceptance without manual fixture setup, copy/paste or clean
 
 ## Next action
 
-Run the newly expanded refusal and sharing-lock/retry matrix on Windows:
+The full 32-case matrix passed twice on Windows. Duplicate review UI follow-ups
+(02b/02c/02d) are now implemented; rerun the same command as a Windows regression:
 `.\.venv\Scripts\python tests\acceptance\run.py` from the repo root.
-Normal-path and native cleanup coverage already passed on Windows. This new
-slice is implemented, portable refusals pass on Linux, and native sharing-lock
-validation is pending. Then perform the minimal `tests/acceptance/VISUAL_SMOKE.md`
-checklist; retain explicit findings and do not accept unrun checks.
+Then check `tests/acceptance/VISUAL_SMOKE.md` for collapse, candidate filters and
+right-click menus. Retain explicit findings and do not accept unrun checks.
 
 ## Acceptance
 
 - [x] Generated temporary JPEG fixtures and isolated settings/index/workspace.
 - [x] Real ExifTool exercised through production workflow at confirmed seams.
 - [x] Cancel/confirm, subset, canonical IPTC/XMP, backups and persistence coverage.
-- [ ] External-change/missing-file rejection and Windows partial-failure/retry.
+- [x] External-change/missing-file rejection and Windows partial-failure/retry.
 - [x] Explicit runner fails on missing required dependencies; useful evidence report.
-- [ ] Guaranteed cleanup, bounded waits and no original-photo access.
+- [x] Guaranteed cleanup, bounded waits and no original-photo access.
 - [x] Documented one-command Windows run and minimal visual smoke checklist.
 - [x] Review recorded, findings addressed and existing suite/lint still passing.
+- [ ] Changed Qt UI passes Windows regression and maintainer visual smoke acceptance.
 
 ## Comments
 
@@ -128,3 +128,16 @@ repetitive manual tests. See the latest delivery updates below.
   330 passed, four Windows skips. Ruff/format and focused mypy pass.
 - Next: rerun the same Windows command. Native failed-only retry and backup-on
   lock coverage remain unverified; no final acceptance claim.
+
+### Full Windows matrix confirmed; UI follow-ups delivered
+
+- Verified reports `20261002T180831.153966Z` and `20261002T183244.546813Z`:
+  commit fa2be3f, all twelve phases and 32 case results passed, both backup settings
+  passed real sharing-lock/retry, native cleanup passed, temporary workspaces removed.
+- Maintainer says review works in principle but Scan setup consumes too much space
+  and fully tagged candidate pairs are dead ends. Requested collapsible setup,
+  actionable-only default with all-candidates toggle, and shared photo context menu.
+- UI follow-ups 02b/02c/02d are implemented and await Windows visual confirmation.
+  Latest portable regression: `reports/20261002T191138.290129Z`; full offscreen
+  pytest: 335 passed, four Windows-only skips. M9 remains unaccepted pending visual
+  checks and Windows regression of the changed Qt UI.

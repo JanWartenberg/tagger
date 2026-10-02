@@ -268,6 +268,187 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
         self.assertIsNone(self.window._duplicate_scan_result)
 
+    def test_scan_setup_collapse_reclaims_space_and_preserves_review_choices(self):
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates()
+        self.window.resize(1100, 800)
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        self.app.processEvents()
+        scope = (
+            self.window.duplicateScopeCombo.currentData(),
+            self.window.duplicateScopePathLabel.text(),
+        )
+        queue = [
+            button.text()
+            for button in self.window.duplicateCandidateQueue.findChildren(
+                QtWidgets.QPushButton
+            )
+        ]
+        height = self.window.duplicateResultsScroll.height()
+        self.window.duplicateScanSetupToggle.click()
+        self.app.processEvents()
+        self.assertFalse(self.window.duplicateScopeCombo.isVisible())
+        self.assertTrue(self.window.duplicateScanSetupToggle.isVisible())
+        self.assertGreater(self.window.duplicateResultsScroll.height(), height)
+        self.assertTrue(self._copy_control(source, "source").isChecked())
+        self.assertTrue(self._copy_control(first, "target").isChecked())
+        self.assertFalse(self._copy_control(second, "target").isChecked())
+        self.assertEqual(
+            queue,
+            [
+                button.text()
+                for button in self.window.duplicateCandidateQueue.findChildren(
+                    QtWidgets.QPushButton
+                )
+            ],
+        )
+        QtTest.QTest.keyClick(
+            self.window.duplicateScanSetupToggle,
+            QtCore.Qt.Key.Key_U,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateScopeCombo.isVisible())
+        self.assertEqual(
+            scope,
+            (
+                self.window.duplicateScopeCombo.currentData(),
+                self.window.duplicateScopePathLabel.text(),
+            ),
+        )
+        self.assertTrue(self._copy_control(source, "source").isChecked())
+        self.assertFalse(self._copy_control(second, "target").isChecked())
+
+    def test_collapsed_scan_setup_reopens_for_scope_focus_and_new_scan(self):
+        self._scan_copy_candidates()
+        self.window.duplicateScopeCombo.setFocus()
+        self.window.duplicateScanSetupToggle.click()
+        self.app.processEvents()
+        self.assertIs(self.window.focusWidget(), self.window.duplicateScanSetupToggle)
+        QtTest.QTest.keyClick(
+            self.window.duplicateScanSetupToggle,
+            QtCore.Qt.Key.Key_S,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateScopeCombo.isVisible())
+        self.assertIs(self.window.focusWidget(), self.window.duplicateScopeCombo)
+        self.window.duplicateScanSetupToggle.click()
+        self.window.duplicateReviewBackButton.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_Space
+        )
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_S
+        )
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateScopeCombo.isVisible())
+        self.assertTrue(self.window.duplicateCancelScanButton.isVisible())
+        self.assertTrue(self.window.duplicateCancelScanButton.isEnabled())
+        self.window.cancel_duplicate_scan()
+        self.discovery_runner.run()
+
+    def test_all_candidate_and_nonempty_shortcuts_respect_filter_modes(self):
+        self._scan_copy_candidates()
+        self.window.duplicateReviewBackButton.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_E,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertFalse(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_A,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertTrue(self.window.duplicateShowAllCandidatesCheck.isChecked())
+        QtTest.QTest.keyClick(
+            self.window.duplicateReviewBackButton,
+            QtCore.Qt.Key.Key_E,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
+        self.window.cmdLine.show()
+        self.window.cmdLine.setText(":help")
+        with patch(
+            "tagger_app.ui.main_window.QtWidgets.QMessageBox.information"
+        ) as help_dialog:
+            QtTest.QTest.keyClick(self.window.cmdLine, QtCore.Qt.Key.Key_Return)
+        help_text = help_dialog.call_args.args[2]
+        self.assertIn("Alt+U", help_text)
+        self.assertIn("Alt+A", help_text)
+        self.window.show_tagging_workspace()
+        checked = self.window.duplicateShowAllCandidatesCheck.isChecked()
+        QtTest.QTest.keyClick(
+            self.window.files,
+            QtCore.Qt.Key.Key_A,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.assertEqual(
+            self.window.duplicateShowAllCandidatesCheck.isChecked(), checked
+        )
+
+    def test_candidate_photo_context_menu_reuses_file_actions_for_clicked_photo(self):
+        (workspace_photo,) = self._add_paths("workspace.jpg")
+        source, first, second, _tagged, _unknown = self._scan_copy_candidates()
+        self._copy_control(source, "source").click()
+        self._copy_control(second, "target").click()
+        before = self.window.selected_file_paths()
+        preview = next(
+            label
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+            if label.objectName() == "duplicateCandidatePreview"
+            and label.parentWidget().property("duplicateMemberPath") == first
+            and label.isVisible()
+        )
+        QtWidgets.QApplication.sendEvent(
+            preview,
+            QtGui.QContextMenuEvent(
+                QtGui.QContextMenuEvent.Reason.Mouse,
+                preview.rect().center(),
+                preview.mapToGlobal(preview.rect().center()),
+            ),
+        )
+        self.app.processEvents()
+        menus = [
+            menu
+            for menu in self.window.findChildren(QtWidgets.QMenu)
+            if menu.isVisible()
+        ]
+        self.assertEqual(len(menus), 1)
+        menu = menus[0]
+        self.assertEqual(
+            [action.text() for action in menu.actions()],
+            [
+                "Open",
+                "Open in GIMP",
+                "Copy file path",
+                "Reveal in Explorer",
+                'Exclude folders named "photos"',
+            ],
+        )
+        for action in menu.actions()[:4]:
+            action.trigger()
+        self.assertEqual(self.file_actions.default_open_calls, [(first,)])
+        self.assertEqual(self.file_actions.gimp_open_calls, [(first,)])
+        self.assertEqual(self.file_actions.copy_calls, [(first,)])
+        self.assertEqual(self.file_actions.reveal_calls, [first])
+        self.assertEqual(self.window.selected_file_paths(), before)
+        self.assertEqual(self.window.active_file_path(), workspace_photo)
+        self.assertTrue(self._copy_control(source, "source").isChecked())
+        self.assertFalse(self._copy_control(second, "target").isChecked())
+        self.file_actions.reveal_error = RuntimeError("Explorer unavailable")
+        menu.actions()[3].trigger()
+        self.assertEqual(
+            self.window.statusBar().currentMessage(), "Explorer unavailable"
+        )
+        menu.actions()[4].trigger()
+        self.assertEqual(
+            self.window.photo_workspace.snapshot().excluded_directory_names, ("photos",)
+        )
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+
     def test_duplicate_review_header_does_not_claim_confirmed_copy_is_readonly(self):
         self.window.show_duplicate_review()
         text = " ".join(
@@ -418,6 +599,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.duplicateStartScanButton.click()
         self.discovery_runner.run()
         self.app.processEvents()
+        self.window.duplicateShowAllCandidatesCheck.click()
         target = self._copy_control(paths[0], "target")
         target.setFocus()
         QtTest.QTest.keyClick(target, QtCore.Qt.Key.Key_Space)
@@ -513,11 +695,20 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
     def _copy_control(self, path, role):
         kind = QtWidgets.QRadioButton if role == "source" else QtWidgets.QCheckBox
-        return next(
-            control
-            for control in self.window.duplicateResultsBody.findChildren(kind)
-            if control.accessibleName() == f"Use {path} as {role}"
-        )
+
+        def current():
+            return next(
+                (
+                    control
+                    for control in self.window.duplicateResultsBody.findChildren(kind)
+                    if control.accessibleName() == f"Use {path} as {role}"
+                    and control.isVisible()
+                ),
+                None,
+            )
+
+        self._wait_until(current)
+        return current()
 
     def test_duplicate_copy_preselects_only_eligible_targets_and_preserves_subset(self):
         source, first, second, tagged, unknown = self._scan_copy_candidates()
@@ -529,6 +720,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         for path in (first, second, unknown):
             self.assertFalse(self._copy_control(path, "source").isEnabled())
         self._copy_control(second, "target").click()
+        self.window.duplicateShowAllCandidatesCheck.click()
         self.window.toggle_empty_duplicate_groups()
         self.assertFalse(self._copy_control(second, "target").isChecked())
         self.assertTrue(self.window.duplicateApplyTagsButton.isEnabled())
@@ -964,6 +1156,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.duplicateStartScanButton.click()
         self.discovery_runner.run()
         self.app.processEvents()
+        self.window.duplicateShowAllCandidatesCheck.click()
+        self.app.processEvents()
         original_height = self.window.minimumSizeHint().height()
         for _ in range(20):
             self.window.ignore_active_duplicate_group()
@@ -1149,8 +1343,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             member_paths[1],
             self.window._duplicate_assessments[second_group_id]["targets"],
         )
+        self.window.duplicateShowAllCandidatesCheck.click()
         self.window.toggle_empty_duplicate_groups()
         self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
+        self._copy_control(member_paths[0], "source").setFocus()
 
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
         self.assertNotIn(second_group_id, self.window._visible_duplicate_group_ids)
@@ -1159,6 +1355,102 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window._active_duplicate_group_id, result.groups[0].group_id
         )
         self.assertIn("not saved", self.window.statusBar().currentMessage())
+
+    def test_duplicate_candidate_filters_hide_dead_ends_and_combine_sensibly(self):
+        examples = (
+            ("copyable", ["Eisvogel"], [], True, True),
+            ("tagged", ["FN", "Eisvogel", "Spektiv"], ["Eisvogel"], True, True),
+            ("empty", [], [], True, True),
+            ("unknown-source", [], [], False, True),
+            ("unknown-target", ["Eisvogel"], [], True, False),
+        )
+        paths = []
+        states = {}
+        for (
+            timestamp,
+            source_tags,
+            target_tags,
+            source_readable,
+            target_readable,
+        ) in examples:
+            pair = [
+                normalize_path(f"C:/photos/{timestamp}-{role}.jpg")
+                for role in ("source", "target")
+            ]
+            paths.extend(pair)
+            states[pair[0]] = KeywordState(
+                source_tags, [], timestamp, iptc_readable=source_readable
+            )
+            states[pair[1]] = KeywordState(
+                target_tags, [], timestamp, iptc_readable=target_readable
+            )
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = states
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.app.processEvents()
+
+        def visible():
+            return {
+                button.text().split("\n")[1]
+                for button in self.window.duplicateCandidateQueue.findChildren(
+                    QtWidgets.QPushButton
+                )
+                if button.isVisible()
+            }
+
+        self.assertEqual(visible(), {"copyable"})
+        self.assertFalse(self.window.duplicateShowAllCandidatesCheck.isChecked())
+        self.assertFalse(self.window.duplicateExcludeEmptyCandidatesCheck.isEnabled())
+        source, target = paths[:2]
+        self._copy_control(source, "source").click()
+        self._copy_control(target, "target").click()
+        self.window.duplicateShowAllCandidatesCheck.click()
+        self.app.processEvents()
+        self.assertEqual(visible(), {example[0] for example in examples})
+        self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isEnabled())
+        self.window.duplicateExcludeEmptyCandidatesCheck.click()
+        self.app.processEvents()
+        self.assertEqual(
+            visible(), {"copyable", "tagged", "unknown-source", "unknown-target"}
+        )
+        tagged_button = next(
+            button
+            for button in self.window.duplicateCandidateQueue.findChildren(
+                QtWidgets.QPushButton
+            )
+            if button.isVisible() and button.text().split("\n")[1] == "tagged"
+        )
+        tagged_button.click()
+        self._copy_control(paths[2], "source").click()
+        self.assertFalse(self._copy_control(paths[2], "target").isEnabled())
+        self.assertFalse(self._copy_control(paths[3], "target").isEnabled())
+        self.assertFalse(self.window.duplicateApplyTagsButton.isEnabled())
+        self.assertIn("Inspection only", self.window.duplicateAssessmentHint.text())
+        self.assertTrue(
+            any(
+                label.isVisible() and "Inspection only" in label.text()
+                for label in self.window.duplicateResultsBody.findChildren(
+                    QtWidgets.QLabel
+                )
+            )
+        )
+        self.window.duplicateShowAllCandidatesCheck.click()
+        self.app.processEvents()
+        self.assertEqual(visible(), {"copyable"})
+        self.assertFalse(self.window.duplicateExcludeEmptyCandidatesCheck.isEnabled())
+        self.assertTrue(self._copy_control(source, "source").isChecked())
+        self.assertFalse(self._copy_control(target, "target").isChecked())
+        self.window.duplicateShowAllCandidatesCheck.click()
+        self.app.processEvents()
+        self.assertTrue(self.window.duplicateExcludeEmptyCandidatesCheck.isChecked())
+        self.assertNotIn("empty", visible())
+        self.window.duplicateExcludeEmptyCandidatesCheck.click()
+        self.app.processEvents()
+        self.assertIn("empty", visible())
 
     def test_duplicate_review_can_exclude_only_confirmed_empty_groups(self) -> None:
         paths = [
@@ -1188,6 +1480,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run()
         self.app.processEvents()
 
+        self.window.duplicateShowAllCandidatesCheck.click()
+        self.app.processEvents()
         self.assertEqual(len(self.window._duplicate_group_buttons), 3)
 
         self.window.duplicateExcludeEmptyCandidatesCheck.setChecked(True)

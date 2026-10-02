@@ -25,8 +25,11 @@ file hashes. No private widget state or database assertions.
 - Slice 3: real changed/missing source/target refusals at preview/confirmation,
   final target-write guard, and native sharing-lock partial failure/failed-only
   UI retry implemented. Portable cases pass on Linux; native lock execution pending.
-- Remaining: expanded Windows run, visual smoke execution, explicit maintainer
-  acceptance. Collapsible Scan setup remains a separate UI follow-up.
+- Full expanded Windows matrix passed twice on fa2be3f (32 results each).
+- Scan setup collapse, actionable-only default/all-candidates toggle, and shared
+  candidate photo menu are now implemented (follow-ups 02b/02c/02d).
+- Remaining: Windows regression of the changed UI, updated visual smoke execution,
+  explicit maintainer acceptance.
 
 Slice 2 uses four generated photos per backup setting: a tagged source with a
 conflicting XMP mirror, two selected empty-IPTC targets (one existing XMP mirror,

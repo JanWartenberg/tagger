@@ -5,8 +5,10 @@
 **M9 — Repeatable real-file acceptance** is active following the maintainer's
 acceptance of M8 and request to prioritize automated integration acceptance.
 
-1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — high priority, needs-info for Windows validation; normal paths and cleanup passed on Windows; refusal and sharing-lock/retry slice implemented in `tests/acceptance/`, with portable refusals passing on Linux. Next: expanded Windows run, then visual smoke/acceptance.
-2. [Make Scan setup collapsible](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02b-collapse-scan-setup.md) — medium-priority UI follow-up.
+1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — high priority, needs-info for Windows validation; full 32-case Windows matrix passed twice. UI follow-ups below are now implemented; next: Windows regression run and visual smoke/acceptance.
+2. [Make Scan setup collapsible](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02b-collapse-scan-setup.md) — implemented; Windows visual confirmation pending.
+3. [Default to actionable candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02c-default-to-actionable-candidates.md) — implemented; filter/selection visual confirmation pending.
+4. [Reuse the photo context menu](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02d-reuse-photo-context-menu.md) — implemented; native Windows action/menu confirmation pending.
 
 M8 tag propagation is accepted and its ticket completed by maintainer decision.
 Unrun manual checks were waived, not marked passed. Work remains on

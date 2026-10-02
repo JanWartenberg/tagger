@@ -93,9 +93,11 @@ predates the new refusal and sharing-lock cases.
 
 ## Remaining work
 
-The new refusal and sharing-lock/retry slice needs a Windows run of the same
-command. Linux validates portable refusal cases, not native sharing locks.
-Persistence covers metadata, not backup preferences or last view. No visual
-acceptance has been run; use [VISUAL_SMOKE.md](VISUAL_SMOKE.md). Do not claim
-full-suite acceptance from earlier normal-path/cleanup reports.
+Full Windows matrix passed twice on fa2be3f: reports `20261002T180831.153966Z`
+and `20261002T183244.546813Z` (32 cases each, including native sharing locks).
+Duplicate review UI follow-ups are now implemented; rerun the same command on
+Windows for regression, then use [VISUAL_SMOKE.md](VISUAL_SMOKE.md).
+Linux validates portable refusal cases, not native sharing locks. Persistence
+covers metadata, not backup preferences or last view. Final visual acceptance
+and main-branch integration are not implied by automated reports.
 See `PLAN.md` and `REVIEW.md`.

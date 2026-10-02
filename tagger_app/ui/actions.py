@@ -114,6 +114,14 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
+            id="togglescansetup",
+            views=("duplicate_review",),
+            description="Show or hide duplicate Scan setup",
+            handler_name="toggle_duplicate_scan_setup",
+            command=CommandBinding("togglescansetup"),
+            shortcuts=(ShortcutBinding("Alt+U"),),
+        ),
+        ActionSpec(
             id="focusduplicatescope",
             views=("duplicate_review",),
             description="Focus duplicate scan scope",
@@ -154,6 +162,14 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Open next duplicate candidate group",
             handler_name="show_next_duplicate_group",
             command=CommandBinding("nextduplicate"),
+        ),
+        ActionSpec(
+            id="toggleallduplicates",
+            views=("duplicate_review",),
+            description="Include non-actionable duplicate candidates",
+            handler_name="toggle_all_duplicate_candidates",
+            command=CommandBinding("toggleallduplicates"),
+            shortcuts=(ShortcutBinding("Alt+A"),),
         ),
         ActionSpec(
             id="toggleemptyduplicates",

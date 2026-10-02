@@ -244,3 +244,59 @@ locally, without claiming an independent sub-agent review.
 - Prevention: treat newly rendered Qt controls as asynchronous observable state,
   not immediately visible children. The shared wait helper is sufficient; no
   architectural change needed.
+
+# Duplicate review usability follow-ups
+
+## Confirmed Windows matrix
+
+Reports `20261002T180831.153966Z` and `20261002T183244.546813Z` both identify
+fa2be3f and pass twelve phases/32 results, native cleanup and both backup settings
+for real lock/retry. Temporary workspaces were removed. These reports predate the
+UI changes below; native UI regression and visual acceptance remain pending.
+
+## Standards review — baseline fa2be3f
+
+- Local two-axis review; parallel review agents unavailable. No unresolved scoped
+  standards findings. No unrelated formatting: the baseline files already passed
+  Ruff format; only modified/new files were formatted.
+- Both file-pane and candidate views import one `photo_context_menu.py` builder.
+  A typed callback record binds their different targets. Existing file-action
+  services, prompts, status/error handling and containing-folder exclusion are
+  shared, not copied. Candidate file actions never replace Workspace selection.
+- Removed layout widgets are hidden before deferred deletion so rebuilding the
+  queue/cards cannot leave old visible controls active. Tests select current
+  visible controls with a bounded wait, rather than stale deleted-layout children.
+- Ruff/format pass. Mypy passes for the menu builder and action registry. MainWindow
+  has eight pre-existing mypy diagnostics; baseline/current comparison adds none.
+
+## Spec review — 02b/02c/02d and maintainer request
+
+- Explicit user-triggered Scan setup collapse (`Alt+U`, command/help entry), no
+  automatic collapse or persisted preference. Scope/scan/results/source/target
+  state remains intact; review receives the released space. Scope focus/new scan
+  reopen controls; focus cannot remain in the hidden panel.
+- Default queue requires a readable tagged source and a different readable empty
+  target in scan evidence. Show all candidates (`Alt+A`) reveals dead ends, with
+  inspection-only explanation/hint and no enabled copy. Existing non-empty filter
+  applies only in all mode, is disabled otherwise and retains its selected value.
+  Source/target choices and ignored/submitted outcomes survive filtering. Counts
+  and empty-queue guidance reflect the effective mode. Write guards are unchanged.
+- Candidate previews/cards request the same context menu via Qt events. Tests
+  exercise Open/GIMP/copy/reveal for the clicked path, unchanged Workspace/review
+  selection, error reporting, and shared folder exclusion. Tooltip explains that
+  exclusion affects tagging, not the frozen duplicate scan.
+- No unresolved portable implementation findings. New Windows visual behavior and
+  real external app/menu integration are unverified; 02b/02c/02d stay needs-info.
+
+## Tests and evidence
+
+- Test-first failures recorded during execution: missing collapse toggle, dead-end
+  groups visible by default, no candidate context menu, and misleading choose-target
+  hint on inspection-only groups. All now pass through public Qt scan/control seams.
+- Fixtures include the reported `FN, Eisvogel, Spektiv` / `Eisvogel` pair, wholly
+  empty groups, unreadable source/target metadata, and actionable groups.
+- Focused duplicate-review tests: 39 passed. Full offscreen pytest: 335 passed,
+  four native Windows skips; `reports/review-usability-full-pytest.txt`.
+- Portable real-file regression passed: `reports/20261002T191138.290129Z`.
+- Next: same Windows runner command, then the updated VISUAL_SMOKE.md checklist.
+  M9 and merge into main remain separate maintainer acceptance decisions.

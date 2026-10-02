@@ -56,6 +56,9 @@ A named, read-only method that examines an immutable set of photo paths and repo
 Two or more photos associated by one Duplicate-candidate detector. The group remains a candidate until a person assesses its members; a photo series sharing a timestamp is therefore one valid candidate group rather than a confirmed duplicate set.
 _Avoid_: Duplicate group, confirmed duplicates
 
+**Actionable duplicate candidate group**:
+A Duplicate candidate group whose scan evidence contains a readable, tagged source photo and a different readable, confirmed-empty target photo. Actionability is an opportunity to assess a tag copy, not permission to write without fresh validation and explicit confirmation.
+
 **Duplicate scan scope**:
 The immutable photo-path set supplied to one duplicate scan. Its origin, such as the current index database or a selected subfolder, is independent from the chosen Duplicate-candidate detector.
 

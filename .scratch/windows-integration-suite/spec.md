@@ -3,7 +3,7 @@
 Status: needs-info
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows safety/retry run and visual acceptance
+Blocked by: maintainer Windows UI regression and visual acceptance
 
 ## Goal
 
