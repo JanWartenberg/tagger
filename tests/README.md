@@ -21,8 +21,8 @@ python3 -m pip install -r requirements-dev.txt
 
 `requirements.txt` requires `PyQt6>=6.6`. When PyQt6 is installed, test discovery
 runs both the core/coordinator tests and the Qt adapter tests. If PyQt6 is absent,
-only `test_main_window_characterization.py` is skipped; the remaining tests still
-run.
+the MainWindow characterization and acceptance outcome-widget tests are skipped;
+the remaining core/coordinator and process-control tests still run.
 
 ## Commands
 

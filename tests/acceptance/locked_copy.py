@@ -34,6 +34,33 @@ def status_row(window, status: str, successful: int, failed: int):
     )
 
 
+def retry_control(app, window, successful: Path, locked: Path):
+    def ready():
+        labels = {
+            label.text()
+            for label in window.findChildren(QtWidgets.QLabel)
+            if label.isVisible()
+        }
+        if not {f"{successful}: successful", f"{locked}: failed"}.issubset(labels):
+            return None
+        return next(
+            (
+                button
+                for button in window.findChildren(QtWidgets.QPushButton)
+                if button.isVisible()
+                and button.isEnabled()
+                and button.text() == "Retry failed targets"
+            ),
+            None,
+        )
+
+    # Newly added layout children become visible on a later Qt event-loop turn.
+    wait(app, "visible outcomes and enabled retry control", ready)
+    retry = ready()
+    assert retry is not None
+    return retry
+
+
 def file_identity(path: Path) -> tuple[int, int, int]:
     stat = path.stat()
     return stat.st_ino, stat.st_mtime_ns, stat.st_ctime_ns
@@ -84,19 +111,7 @@ def locked_copy_scenario(app, root: Path, backup: bool) -> None:
                 successful_target=str(successful),
             )
             click(status_row(window, "Failed", 1, 1))
-            labels = [
-                label.text()
-                for label in window.findChildren(QtWidgets.QLabel)
-                if label.isVisible()
-            ]
-            assert f"{successful}: successful" in labels, labels
-            assert f"{locked}: failed" in labels, labels
-            retry = next(
-                button
-                for button in window.findChildren(QtWidgets.QPushButton)
-                if button.isVisible() and button.text() == "Retry failed targets"
-            )
-            assert retry.isEnabled()
+            retry = retry_control(app, window, successful, locked)
         # Lock has been released. Retry is explicit, never automatic.
         assert photo_hashes(photos) == partial
         unchanged_identities = {

@@ -113,3 +113,18 @@ repetitive manual tests. See the latest delivery updates below.
   four Windows-only skips. Two-axis self-review recorded in REVIEW.md.
 - Ticket is needs-info pending the maintainer's Windows result and visual smoke;
   no final acceptance or merge into main is implied.
+
+### Windows result and outcome-visibility regression
+
+- Current-commit report `reports/20261002T172205.633827Z` passed cleanup, normal
+  paths, refusals and locked-file partial failure with backups off. It failed
+  immediately after reopening outcomes: labels existed but Qt had not shown them
+  yet. Retry and backup-on phases were not reached; workspace cleanup succeeded.
+- Harness now waits for exact visible outcome labels and an enabled visible retry
+  button using the existing bounded event-loop wait. Assertions are not weakened.
+- A real offscreen Qt-widget regression reproduces the empty-visible-label failure
+  before the fix and passes afterward. No mocked photo writes or production changes.
+- Portable matrix passed: `reports/20261002T175123.833724Z`; full offscreen pytest:
+  330 passed, four Windows skips. Ruff/format and focused mypy pass.
+- Next: rerun the same Windows command. Native failed-only retry and backup-on
+  lock coverage remain unverified; no final acceptance claim.

@@ -220,3 +220,27 @@ locally, without claiming an independent sub-agent review.
   for this refreshed container, without changing project dependencies.
 - Summary: Standards — no unresolved findings; Spec — native lock/retry run and
   visual acceptance outstanding. M9 is not marked complete.
+
+# Outcome visibility regression
+
+- Windows `reports/20261002T172205.633827Z` confirms current commit 92cc623 and
+  passing cleanup, portable cases, and backup-off sharing-lock partial failure.
+  Correct outcome labels existed, but the immediate visible-label assertion ran
+  before Qt's layout/show events. Retry and backup-on phases were not reached.
+- Minimized reproduction: real offscreen QWidget, add outcome labels and a retry
+  button after showing the window, then invoke the unchanged assertion helper.
+  Focused pytest fails with the same `AssertionError: []` before the fix:
+  `reports/outcome-wait-red.txt`; passes after: `reports/outcome-wait-green.txt`.
+- Fix: use the existing bounded event-loop wait for exact visible successful/failed
+  labels and a visible enabled retry button. No arbitrary sleeps, no assertion
+  weakening, no production change. One regression test remains in the normal suite;
+  it skips only if PyQt6 is absent. No debug instrumentation left behind.
+- Local checks: Ruff/format and focused Windows-platform mypy pass; portable matrix
+  `reports/20261002T175123.833724Z` passes. Full offscreen pytest: 330 passed, four
+  Windows-only skips; `reports/outcome-wait-full-pytest.txt`.
+- Review against 92cc623: Standards — no unresolved findings; Spec — fix retains
+  public-widget observation and bounded waits. Windows retry/backup-on validation
+  and visual acceptance remain outstanding. Parallel review agents unavailable.
+- Prevention: treat newly rendered Qt controls as asynchronous observable state,
+  not immediately visible children. The shared wait helper is sufficient; no
+  architectural change needed.
