@@ -2,7 +2,8 @@
 
 Explicit real-file matrix using generated JPEGs, production discovery/index and
 ExifTool, public Qt events, independent metadata/hash checks and fresh-process UI
-reads. No production adapters are replaced; pytest does not collect this harness.
+reads. No production adapters are replaced. Pytest collects process-control tests,
+not the real-file matrix.
 
 ## Run
 
@@ -49,11 +50,27 @@ Each run checks both backup settings in separate disposable workspaces:
 | Canonical IPTC/XMP | Source-only XMP tags are not copied; existing target XMP mirrors IPTC; empty XMP remains empty |
 | Backups off/on | No backups when off; exactly two byte-identical original backups when on |
 | Persistence | Writer exits; a separate process displays saved tags and rereads metadata; JPEGs/backups unchanged |
+| Preview/confirmation refusal | Changed or missing source/target rejected after a positive unchanged-file control; all remaining file bytes and file sets unchanged |
+| Final target write guard | Changed/missing target is reported failed without metadata or backup writes |
+| Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
 
-All eight case results across four process phases are required. Missing results
-or failed phases fail the command, not an all-skipped pass.
+Both backup settings are required. Linux requires 28 case results across ten
+process phases. Windows requires 32 results across twelve phases plus the native
+cleanup probes. Missing results or failed phases fail the command, not an
+all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
+Safety phases use public propagation/mutation services, without timing races;
+sharing-lock failure/retry uses public UI events and real production workers.
 The expanded matrix passed on Windows before relocation:
-`reports/20261002T152911.296728Z/report.json`. Rerun the new command on Windows.
+`reports/20261002T152911.296728Z/report.json`, and after relocation:
+`reports/20261002T161141.558457Z/report.json`.
+
+Windows runs now also require native cleanup probes: timeout with a descendant,
+abrupt child exit with a surviving descendant, kill-on-job-handle-close, and
+assignment refusal before script execution. Their logs are `cleanup-stdout.txt`
+and `cleanup-stderr.txt`; the report records `windows_process_cleanup`. Linux
+explicitly reports these Windows-only probes as not run. These cleanup probes
+passed on Windows in `reports/20261002T162912.910988Z/report.json`; that run
+predates the new refusal and sharing-lock cases.
 
 ## Isolation and evidence
 
@@ -66,7 +83,9 @@ The expanded matrix passed on Windows before relocation:
   and JPEG decoding, not private state or index tables.
 - Event-loop waits are bounded at 20 seconds, CLI calls at 15 seconds, and each
   child at 120 seconds. Workers drain before normal shutdown; POSIX process-group
-  termination handles hung children and descendants.
+  termination handles hung children and descendants. Windows uses a non-inheritable
+  kill-on-close Job Object: the script cannot run until assignment succeeds, and
+  shutdown terminates the job and waits for its active process count to reach zero.
 - `reports/<timestamp>/` preserves JSON and separate phase stdout/stderr logs,
   source commit/worktree, harness hashes, dependencies, process IDs and observations.
 - Harness code/docs are tracked in TAGGER. Reports and local fixtures are ignored;
@@ -74,9 +93,9 @@ The expanded matrix passed on Windows before relocation:
 
 ## Remaining work
 
-Changed/missing-file refusal and Windows sharing-lock partial-failure/retry are
-not implemented. Persistence covers metadata, not backup preferences or last view.
-No visual acceptance has been run. Windows has a taskkill timeout fallback, but
-abrupt-exit orphan cleanup still needs strengthening and Windows validation.
-Successful normal runs do not establish full-suite acceptance or guaranteed
-Windows cleanup. See `PLAN.md` and `REVIEW.md`.
+The new refusal and sharing-lock/retry slice needs a Windows run of the same
+command. Linux validates portable refusal cases, not native sharing locks.
+Persistence covers metadata, not backup preferences or last view. No visual
+acceptance has been run; use [VISUAL_SMOKE.md](VISUAL_SMOKE.md). Do not claim
+full-suite acceptance from earlier normal-path/cleanup reports.
+See `PLAN.md` and `REVIEW.md`.

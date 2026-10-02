@@ -20,9 +20,13 @@ file hashes. No private widget state or database assertions.
 - Slice 2: cancellation, subsets, canonical IPTC/existing-XMP and empty-XMP policy,
   backups off/on and fresh-process metadata persistence implemented and checked on
   Linux and Windows (`reports/20261002T152911.296728Z`).
-- Remaining: external-change/missing-file refusal, Windows sharing-lock partial
-  failures and failed-only retry, robust Windows process-tree cleanup, final
-  Windows validation and visual checklist.
+- Process containment: native Windows cleanup probes and normal matrix passed
+  (`reports/20261002T162912.910988Z`).
+- Slice 3: real changed/missing source/target refusals at preview/confirmation,
+  final target-write guard, and native sharing-lock partial failure/failed-only
+  UI retry implemented. Portable cases pass on Linux; native lock execution pending.
+- Remaining: expanded Windows run, visual smoke execution, explicit maintainer
+  acceptance. Collapsible Scan setup remains a separate UI follow-up.
 
 Slice 2 uses four generated photos per backup setting: a tagged source with a
 conflicting XMP mirror, two selected empty-IPTC targets (one existing XMP mirror,

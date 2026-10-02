@@ -139,4 +139,84 @@ remain the next delivery slice, not part of these results.
 - Required pytest command could not run: pytest is absent in this refreshed
   environment (venv creation also lacks ensurepip). Supplementary full offscreen
   unittest discovery passed all 328 tests; log: `reports/relocation-unittest.txt`.
-- Windows relocation rerun and existing safety/cleanup work remain outstanding.
+- Windows relocation subsequently passed: `reports/20261002T161141.558457Z`.
+  The old sibling folder is gone. Safety/cleanup work still remains.
+
+# Process containment slice — awaiting Windows run
+
+- Replaced taskkill with a non-inheritable kill-on-close Job Object. Windows child
+  scripts wait for a pipe token until assignment succeeds; assignment failures
+  kill the gated child rather than run an uncontained scenario. If the runner
+  exits before assignment, pipe EOF exits the child without starting descendants.
+- Termination applies to the entire job even after the immediate child exits;
+  query active process count until zero with a bounded deadline. Job handle closure
+  also kills contained descendants if the runner exits unexpectedly.
+- Added native timeout/descendant, abrupt-exit/descendant, handle-close, and
+  assignment-refusal probes. Explicit Windows runner requires their success,
+  stores separate logs, and hashes the helper and probe source. Linux reports
+  native probes as not run, not passed.
+- Review caught and fixed the gated launcher import-path difference from executing
+  a script directly: prepend the script directory before runpy execution.
+- Ruff check, formatting and diff whitespace check passed. Relocated Linux matrix
+  passed: `reports/20261002T162206.454791Z`.
+- Full offscreen unittest discovery passed 333 tests with four native Windows cases
+  skipped: `reports/process-cleanup-unittest.txt`. Pytest remains unavailable.
+- No native Windows cleanup claim yet; rerun the normal command on Windows.
+  Changed/missing-file and sharing-lock/retry cases were subsequently implemented
+  in the delivery below.
+
+# Safety slice and two-axis review
+
+Review baseline: checkpoint `f018981`, including the pending containment slice.
+Parallel review agents are unavailable in this session; both axes were reviewed
+locally, without claiming an independent sub-agent review.
+
+## Standards
+
+- Reviewed against AGENTS.md, tests/README.md and the code-review smell baseline.
+  No unresolved standards findings. Shared source/target UI selection is extracted
+  into one helper; no production code or unrelated legacy formatting changed.
+- Focused mypy checks (Windows platform, follow-imports=skip, check-untyped-defs)
+  found pipe-nullability, heterogeneous report inference and platform API issues;
+  these were addressed. PyQt's QTest keyClick stub lacks staticmethod despite its
+  runtime C++ namespace API; the single suppression is documented at the call.
+- Ruff and format checks pass. Mypy passes for run.py, process_control.py,
+  safety_cases.py, locked_copy.py and windows_lock.py.
+
+## Spec
+
+- Real generated JPEGs and real ExifTool at the approved public seams. Both backup
+  settings cover changed/missing source/target refusal at preview and confirmation,
+  with fresh unchanged-file positive controls. Final target-write guards are also
+  exercised; independent file hashes/sets prove refusal did not write anything.
+- Native Windows sharing handle allows reads while denying writes/deletion; a
+  separate CreateFile write-open verifies ERROR_SHARING_VIOLATION. UI copy must
+  produce one success/one failure, preserve originals/backups, and expose explicit
+  retry. Releasing the handle and retrying must change only the failed target;
+  successful/unselected file hashes and identities stay unchanged.
+- Lock handles are released by a context manager even on assertion failure.
+  Lock UI settings are isolated in a separate temporary sub-workspace. Every phase
+  has a bounded child deadline and exact required case-result set. Linux explicitly
+  reports native sharing locks/cleanup probes as not run.
+- Normal-path and native cleanup Windows report verified:
+  `reports/20261002T162912.910988Z`. New lock/retry cases still require Windows
+  execution. Visual checks remain unrun; VISUAL_SMOKE.md records the minimal
+  checklist and defers collapsible Scan setup to its separate UI ticket.
+- No scope creep or unresolved portable implementation findings. Final Windows
+  and visual acceptance are missing validation, not claimed success.
+
+## Execution evidence
+
+- First changed-source confirmation refusal passed:
+  `reports/first-refusal.txt`. Production already rejected this case; no artificial
+  production failure was introduced to manufacture a red-to-green claim.
+- Full portable matrix: `reports/20261002T165651.503170Z`; 28 case results in
+  ten phases, both temporary workspaces removed.
+- Fresh optimization and missing-ExifTool guard runs failed explicitly with exit 1:
+  `reports/safety-optimization-guard.txt`, `reports/safety-dependency-guard.txt`.
+- Focused pytest: 15 passed, four Windows-only skips.
+- Full offscreen pytest: 329 passed, four Windows-only skips;
+  `reports/safety-full-pytest.txt`. Pytest/mypy were installed in `/tmp/tagger-dev-tools`
+  for this refreshed container, without changing project dependencies.
+- Summary: Standards — no unresolved findings; Spec — native lock/retry run and
+  visual acceptance outstanding. M9 is not marked complete.

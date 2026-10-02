@@ -169,30 +169,34 @@ def assert_written(photos):
     return records
 
 
+def select_copy_targets(app, window, photos, keep_backup):
+    window.handle_dropped_urls([QtCore.QUrl.fromLocalFile(str(photos))])
+    wait(app, "four discovered photos", lambda: window.files.count() == 4)
+    assert not window.keepBackup.isChecked(), "Fresh backup setting must be off"
+    if keep_backup:
+        click(window.keepBackup)
+    assert window.keepBackup.isChecked() == keep_backup
+    window.show_duplicate_review()
+    wait(app, "scan enabled", window.duplicateStartScanButton.isEnabled)
+    click(window.duplicateStartScanButton)
+    wait(
+        app,
+        "source choice",
+        lambda: copy_control(window, photos / "source.jpg", "source"),
+    )
+    click(copy_control(window, photos / "source.jpg", "source"))
+    for name in PHOTO_NAMES[1:]:
+        assert copy_control(window, photos / name, "target").isChecked()
+    click(copy_control(window, photos / "excluded.jpg", "target"))
+    assert not copy_control(window, photos / "excluded.jpg", "target").isChecked()
+
+
 def copy_scenario(app, root, keep_backup):
     photos = root / "photos"
     generate_photos(photos)
     before = photo_hashes(photos)
     with application_window(app) as window:
-        window.handle_dropped_urls([QtCore.QUrl.fromLocalFile(str(photos))])
-        wait(app, "four discovered photos", lambda: window.files.count() == 4)
-        assert not window.keepBackup.isChecked(), "Fresh backup setting must be off"
-        if keep_backup:
-            click(window.keepBackup)
-        assert window.keepBackup.isChecked() == keep_backup
-        window.show_duplicate_review()
-        wait(app, "scan enabled", window.duplicateStartScanButton.isEnabled)
-        click(window.duplicateStartScanButton)
-        wait(
-            app,
-            "source choice",
-            lambda: copy_control(window, photos / "source.jpg", "source"),
-        )
-        click(copy_control(window, photos / "source.jpg", "source"))
-        for name in PHOTO_NAMES[1:]:
-            assert copy_control(window, photos / name, "target").isChecked()
-        click(copy_control(window, photos / "excluded.jpg", "target"))
-        assert not copy_control(window, photos / "excluded.jpg", "target").isChecked()
+        select_copy_targets(app, window, photos, keep_backup)
 
         for decision in (QtCore.Qt.Key.Key_N, QtCore.Qt.Key.Key_Y):
             dialog = preview(app, window)

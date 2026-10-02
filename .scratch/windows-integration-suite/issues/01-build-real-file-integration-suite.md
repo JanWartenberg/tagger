@@ -1,10 +1,10 @@
 # 01 — Build and review the real-file integration suite
 
-Status: ready-for-agent
+Status: needs-info
 Category: testing
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: --
+Blocked by: maintainer Windows safety/retry run and visual acceptance
 
 ## Goal
 
@@ -13,11 +13,12 @@ can repeat metadata acceptance without manual fixture setup, copy/paste or clean
 
 ## Next action
 
-Deliver external-change/missing-file refusal, Windows sharing-lock partial
-failure/retry and robust Windows process-tree cleanup. The normal-path matrix
-passed on Windows. Harness relocated to `tests/acceptance/`; run
-`.\.venv\Scripts\python tests\acceptance\run.py` from the repo root on Windows.
-See that folder's PLAN.md, README.md and REVIEW.md for evidence and limitations.
+Run the newly expanded refusal and sharing-lock/retry matrix on Windows:
+`.\.venv\Scripts\python tests\acceptance\run.py` from the repo root.
+Normal-path and native cleanup coverage already passed on Windows. This new
+slice is implemented, portable refusals pass on Linux, and native sharing-lock
+validation is pending. Then perform the minimal `tests/acceptance/VISUAL_SMOKE.md`
+checklist; retain explicit findings and do not accept unrun checks.
 
 ## Acceptance
 
@@ -25,10 +26,10 @@ See that folder's PLAN.md, README.md and REVIEW.md for evidence and limitations.
 - [x] Real ExifTool exercised through production workflow at confirmed seams.
 - [x] Cancel/confirm, subset, canonical IPTC/XMP, backups and persistence coverage.
 - [ ] External-change/missing-file rejection and Windows partial-failure/retry.
-- [ ] Explicit runner fails on missing required dependencies; useful evidence report.
+- [x] Explicit runner fails on missing required dependencies; useful evidence report.
 - [ ] Guaranteed cleanup, bounded waits and no original-photo access.
-- [ ] Documented one-command Windows run and minimal visual smoke checklist.
-- [ ] Review recorded, findings addressed and existing suite/lint still passing.
+- [x] Documented one-command Windows run and minimal visual smoke checklist.
+- [x] Review recorded, findings addressed and existing suite/lint still passing.
 
 ## Comments
 
@@ -81,6 +82,34 @@ repetitive manual tests. See the latest delivery updates below.
 - Harness and documentation now live in `tests/acceptance/`. All historical reports
   were preserved there; manual JPEGs and index moved to ignored `local-fixtures/`.
 - Relocated Linux runner passed: `reports/20261002T153826.873517Z/report.json`.
-- Old sibling folder contains only undeletable virtual-environment remnants;
-  Windows must remove that folder. Do not reuse the old virtual environment.
+- Old sibling folder was subsequently removed. Do not reuse the old virtual environment.
 - Safety/retry, abrupt-exit cleanup, final review and visual acceptance remain open.
+
+### Process containment slice — Windows validated
+
+- Relocated Windows matrix passed: `reports/20261002T161141.558457Z/report.json`.
+- New `tests/acceptance/process_control.py` gates Windows children until assignment
+  to a non-inheritable kill-on-close Job Object. Shutdown kills descendants even
+  after abrupt child exit and waits for zero active job processes.
+- Runner now requires native Windows timeout/descendant, abrupt-exit,
+  job-handle-close and assignment-refusal probes before the metadata matrix.
+- Rerun the same repo-root Windows command; send the report and cleanup logs on
+  failure. Linux cannot validate native Job Object behavior.
+- Native cleanup and normal matrix passed: `reports/20261002T162912.910988Z`.
+
+### Refusal and partial-failure/retry slice — awaiting Windows run
+
+- Added real changed/missing source/target refusals at preview and confirmation,
+  with unchanged-file positive controls, plus final target-write guard refusals.
+- Native sharing-lock scenario uses production UI/worker events: one selected
+  target succeeds, one fails under a real Windows sharing handle; explicit retry
+  after releasing it must leave successful/unselected files and backups unchanged.
+- Both backup settings are covered. Linux requires 28 case results in ten phases;
+  Windows additionally requires four sharing-lock results and native cleanup probes.
+- Portable slice passed: `reports/20261002T165651.503170Z`.
+- No production code needed changes. Native lock/retry and visual acceptance are
+  not yet passed. The maintainer must rerun the same Windows command.
+- Ruff/format and focused mypy checks pass; full offscreen pytest: 329 passed,
+  four Windows-only skips. Two-axis self-review recorded in REVIEW.md.
+- Ticket is needs-info pending the maintainer's Windows result and visual smoke;
+  no final acceptance or merge into main is implied.

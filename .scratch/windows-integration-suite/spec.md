@@ -1,9 +1,9 @@
 # Windows real-file integration suite
 
-Status: ready-for-agent
+Status: needs-info
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: --
+Blocked by: maintainer Windows safety/retry run and visual acceptance
 
 ## Goal
 
