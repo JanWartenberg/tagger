@@ -5,7 +5,7 @@
 **M9 — Repeatable real-file acceptance** is active following the maintainer's
 acceptance of M8 and request to prioritize automated integration acceptance.
 
-1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — high priority; confirm test seams before implementation.
+1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — high priority, ready for agent; expanded normal-path matrix passed on Linux and Windows; harness now in `tests/acceptance/`. Next: refusal, Windows sharing-lock/retry and process-tree cleanup.
 2. [Make Scan setup collapsible](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02b-collapse-scan-setup.md) — medium-priority UI follow-up.
 
 M8 tag propagation is accepted and its ticket completed by maintainer decision.

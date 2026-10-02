@@ -46,6 +46,21 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 pytest
 ```
 
+## Real-file integration matrix
+
+The explicit [acceptance harness](acceptance/README.md) exercises production
+ExifTool and disposable generated JPEGs separately from pytest. From the repo root:
+
+```sh
+python tests/acceptance/run.py
+```
+
+Windows PowerShell:
+
+```powershell
+.\.venv\Scripts\python tests\acceptance\run.py
+```
+
 ## Acceptance
 
 A successful local Linux offscreen run validates the available core and Qt adapter

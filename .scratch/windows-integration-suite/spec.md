@@ -1,9 +1,9 @@
 # Windows real-file integration suite
 
-Status: needs-info
+Status: ready-for-agent
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer confirmation of test seams
+Blocked by: --
 
 ## Goal
 
@@ -11,7 +11,7 @@ Replace repeated terminal/app acceptance choreography with one reproducible comm
 that exercises TAGGER against disposable JPEGs and real ExifTool. Treat this as a
 bounded subproject, not a new testing framework or an application rewrite.
 
-## Proposed seams (confirm before writing tests)
+## Confirmed seams
 
 1. Public MainWindow entrypoints and actual Qt widget/key events: scan, source and
    target selection, preview, cancel/confirm, backup toggle, outcomes and retry.
@@ -59,9 +59,13 @@ bounded subproject, not a new testing framework or an application rewrite.
 ## Dependencies and decisions
 
 M8 was accepted by maintainer with remaining manual coverage waived. No main-branch
-merge is authorized by that acceptance. Confirm seams before tests are added.
-Determine ExifTool availability and fixture-generation support before selecting
-additional test dependencies. Do not assume a Windows host is available here.
+merge is authorized by that acceptance. The maintainer approved real ExifTool
+and temporary JPEGs after clarification that Qt events remain within the test's
+own offscreen application, with no desktop-wide mouse/keyboard control.
+The refreshed Docker container has ExifTool 12.57 (Debian
+`libimage-exiftool-perl`), verified by the maintainer. Recheck dependencies after
+session reload and determine fixture-generation support before selecting extra
+test dependencies. Do not assume a Windows host is available here.
 
 ## Issues
 
