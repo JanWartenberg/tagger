@@ -3,7 +3,7 @@
 Status: needs-info
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows UI regression and visual acceptance
+Blocked by: issues/01-build-real-file-integration-suite.md (02e–02i accepted; 02j/02k accepted with Windows regression verified; 02l footer regression and remaining visual checks pending)
 
 ## Goal
 

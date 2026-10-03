@@ -1,3 +1,78 @@
+# Collapsed toggle placement — 02h follow-up
+
+Per maintainer request, collapsing now moves the same Scan setup toggle directly
+left of Add folder in the view header, centered at the same button height. The
+entire setup frame is hidden; expanding returns the toggle to its section frame.
+Focus is restored after reparenting. Alt+U remains tooltip-only.
+
+Qt regressions verify ancestry, visibility, header position, equal height,
+shortcut, reclaimed space and focus recovery. Full offscreen suite: **340 passed,
+4 Windows skips, 33 subtests passed**. Ruff and diff checks pass. Native Windows
+visual confirmation remains open; real-file suite was not rerun for this placement-only change.
+
+# Scan setup frame and concise labels — 02h / 02i
+
+Maintainer accepted button color and requested Alt+U only in the tooltip, with
+the toggle integrated into the Scan setup frame. The frame now has a persistent
+header and collapsible body; splitter sizing reclaims body space while preserving
+an accessible expand control. Keyboard expansion, focus recovery and new-scan
+expansion remain covered by public Qt tests.
+
+Text review removed repeated copy guidance and header confirmation prose, moved
+shortcut/detector explanations to tooltips, and shows shared time once per group.
+Per-photo provenance, full paths, read failures, inspection-only restrictions and
+explicit copy confirmation remain. No mutation/filter semantics changed.
+
+Validation: Ruff and diff whitespace checks pass. Full offscreen suite: **340
+passed, 4 Windows skips, 33 subtests passed**. Portable real-file runner passed:
+`reports/20261003T150043.075948Z/report.json`. Windows placement/text-density review
+and final M9 acceptance remain open.
+
+# Scan setup toggle follow-up — 02h
+
+Maintainer confirmed fixes 02e/02f/02g; their tickets are completed. Requested
+subtler Scan setup toggle styling and a shortcut. Alt+U already existed; it now
+appears on the button with explicit text-beside-arrow presentation. Neutral
+palette-based fill replaces native checked-state accent fill; hover/focus remain
+visible. Existing Edit mode remains for navigation/source/target/ignore keys;
+removing it is an open product decision, not required for C.
+
+New public-widget regression failed on the missing visible shortcut before the
+fix and now passes, including rendered neutral fill and Alt+U operation. Full
+offscreen suite: **339 passed, 4 Windows skips, 33 subtests passed**. Ruff passes.
+Windows appearance confirmation of 02h and final M9 acceptance remain open.
+
+# Latest UI blocker fixes — 02e / 02f / 02g
+
+Maintainer supplied Windows evidence for clean 3a0f706: 32 cases passed,
+lock/retry in both backup modes, native process cleanup and workspace removal.
+Scan collapse and candidate filters work. Menu contrast failed; queue scrollbar
+clipping and C requiring Edit mode were additionally reported. Ticket 01 remains
+blocked pending Windows confirmation of these fixes.
+
+Diagnosis/regression command (activated `/tmp/tagger-venv`, Linux):
+
+```sh
+PYTHONPATH=. QT_QPA_PLATFORM=offscreen pytest -q tests/test_main_window_characterization.py -k 'candidate_menu_does or queue_scrollbar or shortcut_works_without'
+```
+
+Before: three failures (wrong popup foreground; card bottom 89 > viewport 54;
+Copy preview timeout). After: three passed. Fixes isolate popup styling from the
+preview placeholder, allocate queue height from content plus scrollbar/frame,
+and move C to Duplicate review scope while retaining typing/modifier guards.
+Reviewed diff: no metadata/write behavior changes; preview still requires explicit
+confirmation. Existing clicked-photo actions and modal navigation tests pass.
+
+Validation: Ruff passes; full offscreen pytest rerun passes **338 tests and 33
+subtests**, four Windows-only skips. A preceding full run segfaulted in a Qt
+error callback during `test_copy_path_copies_every_selected_photo_path_as_plain_text`
+with a metadata worker active. Unchanged rerun passed; cause not diagnosed or
+claimed fixed. Portable real-file suite passed with cleanup:
+`reports/20261003T142411.481142Z/report.json`.
+
+Windows appearance/keyboard behavior and native regression of the fixes are not
+yet confirmed. See VISUAL_SMOKE.md. No final acceptance or merge is implied.
+
 # Slice 1 review and execution record
 
 Reviewed only this subproject's `run.py` and `confirmed_copy.py` against the
@@ -300,3 +375,124 @@ UI changes below; native UI regression and visual acceptance remain pending.
 - Portable real-file regression passed: `reports/20261002T191138.290129Z`.
 - Next: same Windows runner command, then the updated VISUAL_SMOKE.md checklist.
   M9 and merge into main remain separate maintainer acceptance decisions.
+
+# Maintainer visual acceptance — 2026-10-03
+
+- Maintainer accepted collapsed Scan setup placement and Alt+U (02h), and said
+  reduced labels are much better (02i). Both UI tickets are completed.
+- Concise UI text is now the default in AGENTS.md: minimal persistent explanation,
+  optional detail in tooltips/help, essential information visible.
+- No separate expanded-placement visual confirmation, full smoke result or new
+  Windows regression report was supplied. Latest Windows regression and remaining
+  visual/native checks, including context-menu actions, remain open.
+- This records UI acceptance. M9 remains open; changes remain uncommitted.
+
+# Windows regression and further visual acceptance — 2026-10-03
+
+- Verified `reports/20261003T213738.131220Z/report.json`: twelve phases and 32
+  case results passed. Both backup modes, real sharing-lock partial failure/retry,
+  native process cleanup and removal of both temporary workspaces passed.
+- Environment: Windows-11-10.0.26300-SP0, Python 3.14.7, ExifTool 13.59, Qt 6.11.2,
+  PyQt 6.11.0. Report records HEAD 3a0f706 and the uncommitted UI working tree.
+- Maintainer confirmed expanded Scan setup placement, selection preservation and
+  Alt+S/new-scan reopening. Native Open/GIMP/path-copy/reveal actions target the
+  clicked photo; folder exclusion affects the tagging Workspace. 02d completed.
+- Remaining visual checks: navigation/focus/help, source/target distinction, Copy
+  preview/cancel, larger-font/display-scale readability and review/status areas.
+  Automated report correctly leaves visual acceptance as not run; manual results
+  are recorded separately here. M9 remains open; no commit or merge performed.
+
+# Navigation, confirmation and compact results — 2026-10-03
+
+## Maintainer findings and acceptance
+
+Source/Target operation and earlier Copy preview functionality are confirmed.
+Maintainer reported hjkl unavailable after Alt+U until pressing e, requested
+source/target images and bold tags side by side, removal of redundant confirmation
+prose, and a quieter replacement for the cramped Completed/group-id list.
+Tracked in 02j/02k/02l; acceptance of the new presentation remains pending.
+
+## Diagnosis and delivery
+
+- Keyboard regression drives Alt+U, h/l/j/k without Edit mode and normal text-field
+  typing. Initial fixture needed Show all to expose its second, empty-only group;
+  the corrected test passes and an isolated runtime patch restoring the original
+  modal group routes fails at group navigation. No production files were changed
+  for that red verification (`/tmp/tagger-navigation-red.txt`).
+- Cause: hjkl routes were restricted to Edit mode; the relocated toggle also
+  lacked the review event filter. Routes now apply in both modes. Focus recovery
+  captures the original focused control before relocation instead of attempting
+  to focus the toggle before its parent changes. s/t/i retain Edit mode semantics.
+- Dialog uses independently scrollable side-by-side source/target columns, bold
+  plain-text canonical tags and confirmed-empty → copied target tags. Background
+  image workers reuse the existing loader; callbacks guard closed/superseded dialogs.
+  Full paths, backup setting, default Cancel and explicit y/n/Esc remain intact.
+- Latest completed/ignored result has one flat summary; older results move to a
+  menu. Pending/failed/cancelled results remain visible and reopenable. Earlier
+  outcomes and ignored-group recovery remain accessible, with no technical group
+  id in the persistent copy. Counts move to tooltips; lock/retry harness observes
+  the same exact counts there. Result ordering follows review/completion.
+
+## Review and evidence
+
+- Scoped self-review: focus recovery, text input exclusions, help/README, literal
+  labels, selected subsets, large target lists, asynchronous image lifetime,
+  ignored-group restoration, partial failures and failed-only retry checked.
+  No unresolved portable implementation findings. No delegated review used.
+- Dialog/outcome tests failed before the requested presentation changes. Corrected
+  Alt+U regression is red-capable against original modal routes and green now.
+- Focused Qt run: 42 passed, two subtests passed. Full run initially found the old
+  help expectation that hjkl requires Edit mode; updated to the intended behavior.
+- Final Ruff/format and diff checks pass. Full offscreen pytest: 343 passed, four
+  Windows skips, 33 subtests passed.
+- Portable report `reports/20261003T220626.449205Z/report.json`: ten phases,
+  28 cases, backups off/on passed; both workspaces removed. ExifTool 12.57.
+  Native Windows lock/cleanup correctly reports not run.
+- Offscreen dialog rendering inspected; real generated-image loading and source
+  visibility while scrolling targets have a Qt regression. Windows visual
+  confirmation and a new Windows matrix run are still required.
+- Prevention: keyboard tests must cover the non-edit workflow after controls
+  change parents; help must distinguish navigation from edit-only actions.
+  No temporary production instrumentation remains. No commit or merge performed.
+
+# Footer revision and Windows confirmation — 2026-10-03
+
+- Maintainer accepted Alt+U navigation and improved confirmation. 02j/02k and
+  the remaining focus acceptance in 02b are completed. Verified Windows report
+  `reports/20261003T221813.709522Z/report.json`: twelve phases/32 cases, both
+  backup modes, native lock/retry, process cleanup and workspace removal passed.
+- Maintainer rejected the intermediate results widget, including its empty scroll
+  area. Removed the widget, layout and scroll area entirely; no hidden legacy
+  container remains. One auto-raised native footer button now shows a short Saved N
+  status or aggregate pending/failed/cancelled attention.
+- All group results remain in the footer menu with exact per-group counts and
+  source identity; actions reopen outcomes, restore ignored groups and reach
+  explicit failed-only retry. Status observer and Windows lock harness now use
+  public QAction text/tooltip and trigger the result action. Metadata/hash/backup
+  assertions are unchanged. Footer hides in tagging and resets on a new scan.
+- Scoped self-review: removal, view switching, asynchronous outcomes, aggregate
+  failure priority, retry/restoration, footer coexistence, reset and docs checked.
+  No unresolved portable implementation findings. Offscreen footer image inspected.
+- New regression failed before removal at the still-existing scroll-area assertion;
+  it passes with footer-only results. Existing partial-failure/retry test checks
+  visible 1 failed footer attention, then reopens the result through its action.
+- Ruff/format and diff checks pass. Focused Qt run: 44 passed, two subtests.
+  Full offscreen pytest: 344 passed, four Windows skips, 33 subtests passed.
+- Portable `reports/20261003T222741.128862Z/report.json` verified: ten phases/
+  28 cases, both backup modes, all phase cleanup and both workspace removals passed.
+  Windows lock/process probes are correctly not run on Linux.
+- Supplied Windows report predates the footer revision. New Windows regression
+  and footer visual acceptance remain open under 02l. M9 remains open.
+  No commit or merge performed.
+
+# Checkpoint pre-commit review — 2026-10-03
+
+Used the review-changes skill. Staged diff was empty; reviewed unstaged production
+and test changes, plus the new candidate-queue module and tickets. No new
+actionable findings. Latest unchanged implementation has Ruff/format passing and
+full offscreen pytest: 344 passed, four Windows skips, 33 subtests passed; portable
+real-file report `20261003T222741.128862Z` passed. Only documentation/status changed
+for this checkpoint; the suite was not repeated without a new implementation change.
+The requested commit records the current implementation and consistent handoff.
+Windows/footer confirmation and remaining visual checks stay open. M9 remains
+active; no push or merge requested. See BACKLOG.md for follow-session instructions.

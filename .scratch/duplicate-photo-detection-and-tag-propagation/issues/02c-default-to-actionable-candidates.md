@@ -4,7 +4,7 @@ Status: needs-info
 Category: feature
 Priority: medium
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows visual acceptance
+Blocked by: explicit selection-retention confirmation across candidate filters
 
 ## Goal
 
@@ -22,7 +22,7 @@ an empty target. Keep the detector's full findings available for inspection.
   default actionable-only mode, preserving its choice for later reactivation.
 - In all mode, checked non-empty filter excludes only wholly readable empty groups;
   groups with unknown tags remain inspectable.
-- Preserve source/target choices, ignored/submitted state and status rows while
+- Preserve source/target choices, ignored/submitted state and footer results while
   changing filters. Summarize shown/total groups and the effective mode.
 - Explain a filtered empty queue and label non-actionable groups inspection-only.
   No overwriting or merging into tagged targets.
@@ -36,5 +36,18 @@ Fixtures include the reported fully tagged pair, empty-only groups, unknown sour
 or target metadata, and copyable groups. Tests cover filter combinations, retained
 choices, inspection-only copy refusal, view-scoped shortcuts and help.
 
-Next: maintainer checks the queue and filter interactions on Windows. This is a
-follow-up to accepted M8, not a reopening of its propagation policy.
+Maintainer subsequently confirmed that candidate filters work on Windows.
+Queue scrollbar clipping was reported separately and is tracked in 02f; detailed
+selection-retention acceptance was not separately reported. This is a follow-up
+to accepted M8, not a reopening of its propagation policy.
+
+Session handoff: 02f is now accepted. Concise filter/summary wording is tracked in
+02i; filter semantics have not changed. No implementation work remains here;
+confirm detailed selection retention at final visual acceptance.
+
+## Checkpoint handoff — 2026-10-03
+
+Implemented in the checkpoint on `prototype/duplicate-review-ui`; no code work
+remains. General filter behavior is accepted. Only the explicit check that
+source/target choices survive Show all/non-empty filter changes remains open.
+Final results are now in the footer (02l), not in status rows.

@@ -22,13 +22,13 @@ from confirmed_copy import (
 from windows_lock import read_only_sharing_lock
 
 
-def status_row(window, status: str, successful: int, failed: int):
+def status_action(window, status: str, successful: int, failed: int):
     expected = f"{successful} successful / {failed} failed / 0 pending"
     return next(
         (
             button
-            for button in window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)
-            if button.text().startswith(f"{status} ·") and expected in button.text()
+            for button in window.duplicateResultsButton.menu().actions()
+            if button.text().startswith(f"{status} ·") and expected in button.toolTip()
         ),
         None,
     )
@@ -83,7 +83,7 @@ def locked_copy_scenario(app, root: Path, backup: bool) -> None:
             wait(
                 app,
                 "one success and one failure",
-                lambda: status_row(window, "Failed", 1, 1),
+                lambda: status_action(window, "Failed", 1, 1),
             )
             wait(
                 app,
@@ -110,7 +110,9 @@ def locked_copy_scenario(app, root: Path, backup: bool) -> None:
                 locked_target=str(locked),
                 successful_target=str(successful),
             )
-            click(status_row(window, "Failed", 1, 1))
+            action = status_action(window, "Failed", 1, 1)
+            assert action is not None
+            action.trigger()
             retry = retry_control(app, window, successful, locked)
         # Lock has been released. Retry is explicit, never automatic.
         assert photo_hashes(photos) == partial
@@ -123,7 +125,7 @@ def locked_copy_scenario(app, root: Path, backup: bool) -> None:
         wait(
             app,
             "all targets completed after retry",
-            lambda: status_row(window, "Completed", 2, 0),
+            lambda: status_action(window, "Completed", 2, 0),
         )
         wait(
             app,

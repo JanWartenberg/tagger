@@ -111,6 +111,7 @@ from tagger_app.storage import (
 )
 from tagger_app.ui.actions import ActionSpec, KeyRoute, build_action_specs
 from tagger_app.ui.tag_completion import TagCompletion
+from tagger_app.ui.candidate_queue import CandidateQueue
 from tagger_app.ui.photo_context_menu import (
     PhotoContextActions,
     build_photo_context_menu,
@@ -1343,6 +1344,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.indexRepairStatusLabel = QtWidgets.QLabel()
         self.indexRepairStatusLabel.setObjectName("indexRepairStatus")
         self.statusBar().addPermanentWidget(self.indexRepairStatusLabel)
+        self.duplicateResultsButton = QtWidgets.QToolButton()
+        self.duplicateResultsButton.setObjectName("duplicateResultsButton")
+        self.duplicateResultsButton.setAutoRaise(True)
+        self.duplicateResultsButton.setPopupMode(
+            QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup
+        )
+        self.duplicateResultsButton.setAccessibleName("Duplicate copy results")
+        result_menu = QtWidgets.QMenu(self.duplicateResultsButton)
+        result_menu.setToolTipsVisible(True)
+        self.duplicateResultsButton.setMenu(result_menu)
+        self.duplicateResultsButton.installEventFilter(self)
+        self.duplicateResultsButton.hide()
+        self.statusBar().addPermanentWidget(self.duplicateResultsButton)
         self.viewSelector = CompactStatusMenuButton()
         self.viewSelector.setObjectName("viewSelector")
         self.viewSelector.setText("Views")
@@ -1451,7 +1465,19 @@ class MainWindow(QtWidgets.QMainWindow):
         title.setFont(title_font)
         header.addWidget(title)
         self.duplicateScanSetupToggle = QtWidgets.QToolButton()
-        self.duplicateScanSetupToggle.setText("Hide Scan setup")
+        self.duplicateScanSetupToggle.setText("Scan setup")
+        self.duplicateScanSetupToggle.setToolButtonStyle(
+            QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        # Expanded state is conveyed by text/arrow, not the OS accent fill.
+        self.duplicateScanSetupToggle.setStyleSheet(
+            "QToolButton { background: palette(button); color: palette(button-text); "
+            "border: 1px solid palette(mid); border-radius: 3px; padding: 4px 8px; }"
+            "QToolButton:checked { background: palette(button); }"
+            "QToolButton:hover, QToolButton:pressed { background: palette(midlight); }"
+            "QToolButton:focus { border: 1px solid palette(highlight); }"
+        )
+        self.duplicateScanSetupToggle.installEventFilter(self)
         self.duplicateScanSetupToggle.setCheckable(True)
         self.duplicateScanSetupToggle.setChecked(True)
         self.duplicateScanSetupToggle.setArrowType(QtCore.Qt.ArrowType.DownArrow)
@@ -1459,7 +1485,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateScanSetupToggle.toggled.connect(
             self._set_duplicate_scan_setup_visible
         )
-        header.addWidget(self.duplicateScanSetupToggle)
         header.addStretch(1)
         self.duplicateAddFolderButton = QtWidgets.QPushButton("Add folder")
         self.duplicateAddFolderButton.setToolTip(
@@ -1467,14 +1492,22 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.duplicateAddFolderButton.clicked.connect(self.add_folder_dialog)
         header.addWidget(self.duplicateAddFolderButton)
-        confirmation_hint = QtWidgets.QLabel("Copy requires confirmation")
-        header.addWidget(confirmation_hint)
+        self.duplicateReviewHeader = header
         layout.addLayout(header)
 
         content = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
         self.duplicateContentSplitter = content
         self._duplicate_setup_sizes: list[int] | None = None
-        setup = QtWidgets.QGroupBox("Scan setup")
+        self.duplicateScanSetupFrame = QtWidgets.QFrame()
+        self.duplicateScanSetupFrame.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
+        frame_layout = QtWidgets.QVBoxLayout(self.duplicateScanSetupFrame)
+        setup_header = QtWidgets.QHBoxLayout()
+        self.duplicateScanSetupHeader = setup_header
+        setup_header.addWidget(self.duplicateScanSetupToggle)
+        setup_header.addStretch(1)
+        frame_layout.addLayout(setup_header)
+        setup = QtWidgets.QWidget()
+        frame_layout.addWidget(setup)
         self.duplicateScanSetup = setup
         setup_layout = QtWidgets.QFormLayout(setup)
         self.duplicateScopeCombo = QtWidgets.QComboBox()
@@ -1528,9 +1561,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateReviewEmpty = QtWidgets.QWidget()
         empty_layout = QtWidgets.QVBoxLayout(self.duplicateReviewEmpty)
         empty_layout.addStretch(1)
-        self.duplicateReviewEmptyTitle = QtWidgets.QLabel(
-            "No candidate scan has been started"
-        )
+        self.duplicateReviewEmptyTitle = QtWidgets.QLabel("No scan yet")
         self.duplicateReviewEmptyTitle.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         empty_title_font = self.duplicateReviewEmptyTitle.font()
         empty_title_font.setPointSize(empty_title_font.pointSize() + 2)
@@ -1538,8 +1569,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateReviewEmptyTitle.setFont(empty_title_font)
         empty_layout.addWidget(self.duplicateReviewEmptyTitle)
         self.duplicateReviewEmptyDetail = QtWidgets.QLabel(
-            "Add a photo folder or choose a scan scope. TAGGER will collect its "
-            "photo paths before you explicitly start metadata scanning."
+            "Choose a scope, then start scanning."
         )
         self.duplicateReviewEmptyDetail.setWordWrap(True)
         self.duplicateReviewEmptyDetail.setAlignment(
@@ -1557,7 +1587,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsSummary.hide()
         result_summary_layout.addWidget(self.duplicateResultsSummary, 1)
         self.duplicateExcludeEmptyCandidatesCheck = QtWidgets.QCheckBox(
-            "Hide groups where no photo has tags"
+            "Hide untagged groups"
         )
         self.duplicateExcludeEmptyCandidatesCheck.setToolTip(
             "In Show all candidates mode, hide groups only when every member "
@@ -1583,7 +1613,7 @@ class MainWindow(QtWidgets.QMainWindow):
         result_summary_layout.addWidget(self.duplicateShowAllCandidatesCheck)
         results_layout.addWidget(result_summary)
 
-        self.duplicateCandidateQueue = QtWidgets.QScrollArea()
+        self.duplicateCandidateQueue = CandidateQueue()
         self.duplicateCandidateQueue.setWidgetResizable(True)
         self.duplicateCandidateQueue.setHorizontalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded
@@ -1591,7 +1621,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateCandidateQueue.setVerticalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
-        self.duplicateCandidateQueue.setMaximumHeight(104)
         self.duplicateCandidateQueueBody = QtWidgets.QWidget()
         self.duplicateCandidateQueueLayout = QtWidgets.QHBoxLayout(
             self.duplicateCandidateQueueBody
@@ -1608,15 +1637,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateFocusedPhotoLabel.setWordWrap(True)
         self.duplicateFocusedPhotoLabel.hide()
         results_layout.addWidget(self.duplicateFocusedPhotoLabel)
-
-        self.duplicateStatusRows = QtWidgets.QWidget()
-        self.duplicateStatusRowsLayout = QtWidgets.QVBoxLayout(self.duplicateStatusRows)
-        self.duplicateStatusRowsScroll = QtWidgets.QScrollArea()
-        self.duplicateStatusRowsScroll.setWidgetResizable(True)
-        self.duplicateStatusRowsScroll.setMaximumHeight(160)
-        self.duplicateStatusRowsScroll.setWidget(self.duplicateStatusRows)
-        self.duplicateStatusRowsScroll.hide()
-        results_layout.addWidget(self.duplicateStatusRowsScroll)
 
         self.duplicateResultsScroll = QtWidgets.QScrollArea()
         self.duplicateResultsScroll.setWidgetResizable(True)
@@ -1638,6 +1658,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateAssessmentHint.setWordWrap(True)
         assessment_actions_layout.addWidget(self.duplicateAssessmentHint, 1)
         self.duplicateEditModeButton = QtWidgets.QPushButton("Edit mode: off (e)")
+        self.duplicateEditModeButton.setToolTip(
+            "e toggles Edit mode; Esc leaves it.\n"
+            "h/l: groups · j/k: photos (in either mode)\n"
+            "s: source · t: target · i: ignore (in Edit mode)\n"
+            "c previews a copy in either mode; confirmation is required."
+        )
         self.duplicateEditModeButton.clicked.connect(self.toggle_duplicate_edit_mode)
         assessment_actions_layout.addWidget(self.duplicateEditModeButton)
         self.duplicateEditModeButton.installEventFilter(self)
@@ -1650,7 +1676,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateApplyTagsButton = QtWidgets.QPushButton("Copy tags… (c)")
         self.duplicateApplyTagsButton.setEnabled(False)
         self.duplicateApplyTagsButton.setToolTip(
-            "Preview copied tags (c in Edit mode); y confirms, n / Esc cancels"
+            "Preview copied tags (c); y confirms, n / Esc cancels"
         )
         self.duplicateApplyTagsButton.installEventFilter(self)
         self.duplicateIgnoreButton.installEventFilter(self)
@@ -1659,7 +1685,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateAssessmentActions.hide()
         results_layout.addWidget(self.duplicateAssessmentActions)
 
-        content.addWidget(setup)
+        content.addWidget(self.duplicateScanSetupFrame)
         content.addWidget(results)
         content.setStretchFactor(0, 0)
         content.setStretchFactor(1, 1)
@@ -1671,13 +1697,34 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateScanSetupToggle.toggle()
 
     def _set_duplicate_scan_setup_visible(self, expanded: bool) -> None:
+        toggle = self.duplicateScanSetupToggle
+        focus = self.focusWidget()
+        # Moving the toggle between parents can itself move focus to another control.
+        restore_focus = toggle.hasFocus() or (
+            not expanded
+            and focus is not None
+            and self.duplicateScanSetup.isAncestorOf(focus)
+        )
         if not expanded:
             self._duplicate_setup_sizes = self.duplicateContentSplitter.sizes()
-            focus = self.focusWidget()
-            if focus is not None and self.duplicateScanSetup.isAncestorOf(focus):
-                self.duplicateScanSetupToggle.setFocus()
+        if expanded:
+            self.duplicateScanSetupHeader.insertWidget(0, toggle)
+            toggle.setMinimumHeight(0)
+            toggle.setMaximumHeight(16777215)
+        else:
+            self.duplicateReviewHeader.insertWidget(
+                self.duplicateReviewHeader.indexOf(self.duplicateAddFolderButton),
+                toggle,
+                0,
+                QtCore.Qt.AlignmentFlag.AlignVCenter,
+            )
+            toggle.setFixedHeight(self.duplicateAddFolderButton.sizeHint().height())
         self.duplicateScanSetup.setVisible(expanded)
-        self.duplicateScanSetupToggle.setText(
+        self.duplicateScanSetupFrame.setVisible(expanded)
+        toggle.show()
+        if restore_focus:
+            toggle.setFocus()
+        self.duplicateScanSetupToggle.setAccessibleName(
             "Hide Scan setup" if expanded else "Show Scan setup"
         )
         self.duplicateScanSetupToggle.setArrowType(
@@ -1985,8 +2032,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._invalidate_duplicate_copy()
         self._duplicate_preview_generation += 1
         self._duplicate_assessments.clear()
-        self._clear_layout(self.duplicateStatusRowsLayout)
-        self.duplicateStatusRowsScroll.hide()
+        self.duplicateResultsButton.menu().clear()
+        self.duplicateResultsButton.hide()
         self._duplicate_member_controls.clear()
         self._duplicate_member_cards.clear()
         self.duplicateFocusedPhotoLabel.hide()
@@ -2038,7 +2085,7 @@ class MainWindow(QtWidgets.QMainWindow):
         result = self._duplicate_scan_result
         if result is None:
             return
-        mode = "Actionable only: tagged source + empty target"
+        mode = "Actionable only"
         if self.duplicateShowAllCandidatesCheck.isChecked():
             mode = "All candidates"
             if self.duplicateExcludeEmptyCandidatesCheck.isChecked():
@@ -2046,8 +2093,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsSummary.setText(
             f"{len(self._visible_duplicate_group_ids):,} shown of "
             f"{len(result.groups):,} candidate groups from {result.total:,} photos · "
-            f"{mode} · Method: {self._duplicate_detector.display_name} "
-            f"({result.detector_id}). These are findings to assess, not confirmed duplicates."
+            f"{mode}"
+        )
+
+        self.duplicateResultsSummary.setToolTip(
+            f"Method: {self._duplicate_detector.display_name} ({result.detector_id}).\n"
+            "Candidates are not confirmed duplicates. Actionable groups have a "
+            "readable tagged source and an empty target."
         )
 
     def _filter_duplicate_candidates(self) -> None:
@@ -2069,7 +2121,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ]
         self._refresh_duplicate_filter_summary()
         self._render_duplicate_candidate_queue()
-        self._render_duplicate_status_rows()
+        self._refresh_duplicate_results_footer()
         if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
             self._show_duplicate_candidate_group(self._active_duplicate_group_id)
         elif self._visible_duplicate_group_ids:
@@ -2080,7 +2132,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 and not self._duplicate_assessments[group.group_id]["submitted"]
                 for group in result.groups
             )
-            message = "Review complete. Reopen a status row to inspect outcomes or restore an ignored candidate."
+            message = "Review complete. Results and ignored candidates are available in the footer."
             if unreviewed:
                 message = (
                     "No actionable candidate groups: copying needs a readable tagged "
@@ -2156,9 +2208,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._clear_layout(self.duplicateResultsLayout)
         self._duplicate_member_controls.clear()
         self._duplicate_member_cards.clear()
-        self.duplicateFocusedPhotoLabel.setText(
-            "No focused photo — e enters Edit mode; j/k focuses photos."
-        )
+        self.duplicateFocusedPhotoLabel.clear()
         self.duplicateFocusedPhotoLabel.show()
 
         position = self._visible_duplicate_group_ids.index(group_id) + 1
@@ -2172,9 +2222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsLayout.addWidget(heading)
 
         explanation = QtWidgets.QLabel(
-            "These photos share capture-time evidence. Compare their previews and "
-            "confirmed IPTC tags, then choose a tagged source and empty targets. "
-            "Preview and confirm the tag copy—or ignore this candidate for this scan."
+            "Choose a tagged source and empty targets."
             if self._duplicate_group_has_copy_pair(group)
             else "Inspection only: this candidate has no readable tagged-source/empty-target "
             "pair. Existing tags are never overwritten by copying."
@@ -2184,17 +2232,18 @@ class MainWindow(QtWidgets.QMainWindow):
             "padding: 8px; border-left: 3px solid palette(highlight);"
         )
         self.duplicateResultsLayout.addWidget(explanation)
+        # The action bar already guides actionable groups; retain only restrictions here.
+        explanation.setVisible(not self._duplicate_group_has_copy_pair(group))
 
         timestamp = group.members[0].timestamp if group.members else "Unknown"
         fields = ", ".join(
             dict.fromkeys(member.source_field for member in group.members)
         )
-        evidence = QtWidgets.QLabel(
-            f"Evidence: exact effective capture timestamp {timestamp} · "
-            f"field provenance: {fields} · method: "
-            f"{self._duplicate_detector.display_name}"
-        )
+        evidence = QtWidgets.QLabel(f"Shared capture time: {timestamp}")
         evidence.setWordWrap(True)
+        evidence.setToolTip(
+            f"Fields: {fields}\nMethod: {self._duplicate_detector.display_name}"
+        )
         self.duplicateResultsLayout.addWidget(evidence)
 
         cards = QtWidgets.QWidget()
@@ -2255,18 +2304,16 @@ class MainWindow(QtWidgets.QMainWindow):
             path_label = QtWidgets.QLabel(member.path)
             path_label.setWordWrap(True)
             card_layout.addWidget(path_label)
-            provenance = QtWidgets.QLabel(
-                f"{member.timestamp} via {member.source_field}"
-            )
+            provenance = QtWidgets.QLabel(member.source_field)
             provenance.setWordWrap(True)
             card_layout.addWidget(provenance)
 
             if not member.iptc_readable:
                 tag_text = "Tags unknown — IPTC:Keywords could not be read"
             elif member.iptc_tags:
-                tag_text = "Available tags: " + ", ".join(member.iptc_tags)
+                tag_text = "Tags: " + ", ".join(member.iptc_tags)
             else:
-                tag_text = "Available tags: none (confirmed empty)"
+                tag_text = "No tags (confirmed)"
             if member.path == suggested_path:
                 tag_text += " · suggested source"
             tags = QtWidgets.QLabel(tag_text)
@@ -2321,7 +2368,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._refresh_duplicate_assessment_hint()
 
     def _load_duplicate_candidate_preview(
-        self, path: str, label: QtWidgets.QLabel, generation: int
+        self,
+        path: str,
+        label: QtWidgets.QLabel,
+        generation: int,
+        is_current: Callable[[], bool] | None = None,
     ) -> None:
         def load_image(photo_path: str) -> QtGui.QImage:
             reader = QtGui.QImageReader(photo_path)
@@ -2344,7 +2395,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def loaded(image: QtGui.QImage) -> None:
             forget_worker()
-            if generation != self._duplicate_preview_generation:
+            if generation != self._duplicate_preview_generation or (
+                is_current is not None and not is_current()
+            ):
                 return
             pixmap = QtGui.QPixmap.fromImage(image)
             label.setPixmap(
@@ -2358,7 +2411,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         def failed(_message: str) -> None:
             forget_worker()
-            if generation == self._duplicate_preview_generation:
+            if generation == self._duplicate_preview_generation and (
+                is_current is None or is_current()
+            ):
                 label.setText("Preview unavailable")
 
         worker.signals.finished.connect(loaded)
@@ -2503,6 +2558,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     f"Photo {paths.index(path) + 1} of {len(paths)} — {Path(path).name}"
                 )
                 self.duplicateFocusedPhotoLabel.setToolTip(path)
+                self.duplicateFocusedPhotoLabel.show()
                 for member_path, card in self._duplicate_member_cards.items():
                     card.setProperty("duplicateFocused", member_path == path)
                     style = card.style()
@@ -2670,6 +2726,13 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             dialog.finished.connect(dialog.deleteLater)
             dialog.open()
+            for path, label in dialog.images.items():
+                self._load_duplicate_candidate_preview(
+                    path,
+                    label,
+                    self._duplicate_preview_generation,
+                    is_current=lambda: self._duplicate_copy_preview is dialog,
+                )
 
         def failed(message: str) -> None:
             self._duplicate_copy_workers.discard(worker)
@@ -2760,6 +2823,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pool.start(worker)
 
     def _advance_duplicate_review(self, group_id: str) -> None:
+        # Result history follows review order, independent of detector group order.
+        assessment = self._duplicate_assessments.pop(group_id)
+        self._duplicate_assessments[group_id] = assessment
         index = (
             self._visible_duplicate_group_ids.index(group_id)
             if group_id in self._visible_duplicate_group_ids
@@ -2772,7 +2838,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ]
         self._refresh_duplicate_filter_summary()
         self._render_duplicate_candidate_queue()
-        self._render_duplicate_status_rows()
+        self._refresh_duplicate_results_footer()
         if self._visible_duplicate_group_ids:
             self._show_duplicate_candidate_group(
                 self._visible_duplicate_group_ids[
@@ -2781,12 +2847,16 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         else:
             self._show_no_active_duplicate_group(
-                "Review complete. Reopen a status row to inspect outcomes or restore an ignored candidate."
+                "Review complete. Results and ignored candidates are available in the footer."
             )
 
-    def _render_duplicate_status_rows(self) -> None:
-        self._clear_layout(self.duplicateStatusRowsLayout)
-        for group_id, assessment in self._duplicate_assessments.items():
+    def _refresh_duplicate_results_footer(self) -> None:
+        menu = self.duplicateResultsButton.menu()
+        menu.clear()
+        pending_total = failed_total = cancelled_total = 0
+        latest_text = "Results"
+        records = 0
+        for group_id, assessment in reversed(self._duplicate_assessments.items()):
             if not assessment["ignored"] and not assessment["submitted"]:
                 continue
             outcomes = assessment["outcomes"]
@@ -2794,6 +2864,9 @@ class MainWindow(QtWidgets.QMainWindow):
             failed = sum(value == "failed" for value in outcomes.values())
             successful = sum(value == "successful" for value in outcomes.values())
             cancelled = sum(value == "cancelled" for value in outcomes.values())
+            pending_total += pending
+            failed_total += failed
+            cancelled_total += cancelled
             status = (
                 "Ignored"
                 if assessment["ignored"]
@@ -2805,28 +2878,53 @@ class MainWindow(QtWidgets.QMainWindow):
                 if cancelled
                 else "Completed"
             )
-            row = QtWidgets.QWidget()
-            layout = QtWidgets.QHBoxLayout(row)
-            layout.setContentsMargins(0, 0, 0, 0)
-            button = QtWidgets.QPushButton(
-                f"{status} · {group_id[:8]} · {successful} successful / {failed} failed / {pending} pending — reopen"
+            text = (
+                f"Completed · {successful} saved"
+                if status == "Completed"
+                else "Ignored candidate"
+                if status == "Ignored"
+                else f"Pending · {pending} photos"
+                if status == "Pending"
+                else f"Failed · {failed} photos · {successful} saved"
+                if status == "Failed"
+                else f"Cancelled · {cancelled} photos"
             )
-            if failed:
-                button.setStyleSheet("font-weight: bold; border: 2px solid #dc2626;")
-            button.clicked.connect(
+            group = self._duplicate_group(group_id)
+            identity = assessment["source"] or (
+                group.members[0].path if group else group_id
+            )
+            if records == 0:
+                latest_text = (
+                    f"Saved {successful}" if status == "Completed" else "Results"
+                )
+            records += 1
+            action = menu.addAction(
+                f"{text} · {Path(identity).name}".replace("&", "&&")
+            )
+            action.setToolTip(
+                f"{identity}\n{successful} successful / {failed} failed / {pending} pending"
+            )
+            action.triggered.connect(
                 lambda _checked=False, selected=group_id: self._reopen_duplicate_status(
                     selected
                 )
             )
-            layout.addWidget(button, 1)
-            if pending:
-                spinner = QtWidgets.QProgressBar()
-                spinner.setRange(0, 0)
-                spinner.setMaximumWidth(100)
-                layout.addWidget(spinner)
-            self.duplicateStatusRowsLayout.addWidget(row)
-        self.duplicateStatusRowsScroll.setVisible(
-            self.duplicateStatusRowsLayout.count() > 0
+        attention = []
+        if failed_total:
+            attention.append(f"{failed_total} failed")
+        if pending_total:
+            attention.append(f"{pending_total} pending")
+        if cancelled_total:
+            attention.append(f"{cancelled_total} cancelled")
+        self.duplicateResultsButton.setText(" · ".join(attention) or latest_text)
+        self.duplicateResultsButton.setStyleSheet(
+            "font-weight: bold;" if attention else ""
+        )
+        self.duplicateResultsButton.setToolTip(
+            "Copy results and ignored candidates; open to inspect, restore or retry"
+        )
+        self.duplicateResultsButton.setVisible(
+            bool(records) and self.mainViews.currentWidget() is self.duplicateReviewView
         )
 
     def _reopen_duplicate_status(self, group_id: str) -> None:
@@ -2879,7 +2977,7 @@ class MainWindow(QtWidgets.QMainWindow):
         paths = list(retry.intents_by_path)
         assessment["outcomes"].update({path: "pending" for path in paths})
         keep_backup = assessment["keep_backup"]
-        self._render_duplicate_status_rows()
+        self._refresh_duplicate_results_footer()
         self._show_duplicate_outcomes(group_id)
 
         def retry_empty_target(path: str, state: KeywordState) -> KeywordState:
@@ -2927,7 +3025,9 @@ class MainWindow(QtWidgets.QMainWindow):
             )
         if not any(value == "pending" for value in assessment["outcomes"].values()):
             self._duplicate_mutations.pop(event.mutation.sequence, None)
-        self._render_duplicate_status_rows()
+            self._duplicate_assessments.pop(group_id)
+            self._duplicate_assessments[group_id] = assessment
+        self._refresh_duplicate_results_footer()
         if self._active_duplicate_group_id == group_id:
             self._show_duplicate_outcomes(group_id)
 
@@ -2946,16 +3046,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateApplyTagsButton.setEnabled(ready)
         self.duplicateAssessmentHint.setText(
             (
-                "Inspection only: no readable tagged-source/empty-target pair. "
+                "Inspection only"
                 if inspection_only
-                else f"Ready: 1 source, {target_count} target(s). "
+                else f"1 source · {target_count} target(s)"
                 if ready
-                else "Choose a tagged source and empty targets. "
-            )
-            + (
-                "Edit: h/l groups · j/k photos · s source · t target · c preview · i ignore · Esc leave Edit"
-                if self._duplicate_edit_mode
-                else "e enters Edit mode; mouse controls remain available."
+                else "Choose a tagged source and empty targets."
             )
         )
 
@@ -3050,6 +3145,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self._refresh_duplicate_scope_controls()
         self._ensure_duplicate_scope_prepared()
+        self._refresh_duplicate_results_footer()
         self.duplicateReviewBackButton.setFocus()
 
     def show_tagging_workspace(self) -> None:
@@ -3057,6 +3153,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if self._duplicate_edit_mode:
             self.toggle_duplicate_edit_mode()
         self.mainViews.setCurrentWidget(self.taggingWorkspaceView)
+        self.duplicateResultsButton.hide()
         self.taggingViewAction.setChecked(True)
         self.viewSelector.setAccessibleName("Current application view: Tagging")
         focus = self._tagging_focus_widget
@@ -4225,8 +4322,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self, path: str, widget: QtWidgets.QWidget, pos: QtCore.QPoint
     ) -> None:
         paths = (path,)
+        # Own the popup at the window, not the styled card/placeholder label.
         menu = build_photo_context_menu(
-            widget,
+            self,
             path,
             PhotoContextActions(
                 lambda: self._open_photo_paths(paths),

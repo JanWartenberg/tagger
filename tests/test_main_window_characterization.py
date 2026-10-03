@@ -268,6 +268,48 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self.window.duplicateStartScanButton.isEnabled())
         self.assertIsNone(self.window._duplicate_scan_result)
 
+    def test_scan_setup_toggle_is_neutral_and_advertises_keyboard_shortcut(self):
+        self.window.show_duplicate_review()
+        button = self.window.duplicateScanSetupToggle
+        stylesheet = button.styleSheet()
+        button.setStyleSheet("")
+        palette = QtGui.QPalette(button.palette())
+        palette.setColor(QtGui.QPalette.ColorRole.Button, QtGui.QColor("#404040"))
+        palette.setColor(QtGui.QPalette.ColorRole.ButtonText, QtGui.QColor("#eeeeee"))
+        palette.setColor(QtGui.QPalette.ColorRole.Highlight, QtGui.QColor("#00ff00"))
+        button.setPalette(palette)
+        button.setStyleSheet(stylesheet)
+        for expanded in (True, False):
+            button.setChecked(expanded)
+            self.app.processEvents()
+            self.assertEqual(button.text(), "Scan setup")
+            self.assertIn("Alt+U", button.toolTip())
+            self.assertEqual(
+                self.window.duplicateScanSetupFrame.isAncestorOf(button), expanded
+            )
+            self.assertEqual(self.window.duplicateScanSetupFrame.isVisible(), expanded)
+            if not expanded:
+                add_folder = self.window.duplicateAddFolderButton
+                self.assertEqual(button.height(), add_folder.height())
+                self.assertEqual(
+                    button.mapTo(self.window, button.rect().center()).y(),
+                    add_folder.mapTo(self.window, add_folder.rect().center()).y(),
+                )
+                self.assertLess(button.geometry().right(), add_folder.geometry().left())
+            self.assertTrue(button.isVisible())
+            self.assertEqual(self.window.duplicateScanSetup.isVisible(), expanded)
+            self.assertEqual(
+                button.toolButtonStyle(),
+                QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon,
+            )
+            pixel = button.grab().toImage().pixelColor(button.width() - 8, 8)
+            self.assertEqual(pixel.red(), pixel.green())
+            self.assertEqual(pixel.green(), pixel.blue())
+        QtTest.QTest.keyClick(
+            button, QtCore.Qt.Key.Key_U, QtCore.Qt.KeyboardModifier.AltModifier
+        )
+        self.assertTrue(self.window.duplicateScanSetup.isVisible())
+
     def test_scan_setup_collapse_reclaims_space_and_preserves_review_choices(self):
         source, first, second, _tagged, _unknown = self._scan_copy_candidates()
         self.window.resize(1100, 800)
@@ -318,6 +360,36 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertTrue(self._copy_control(source, "source").isChecked())
         self.assertFalse(self._copy_control(second, "target").isChecked())
+
+    def test_alt_u_keeps_hjkl_navigation_available_without_edit_mode(self):
+        self._scan_copy_candidates(two_groups=True)
+        self.window.duplicateShowAllCandidatesCheck.setChecked(True)
+        self.window.duplicateScopeCombo.setFocus()
+        QtTest.QTest.keyClick(
+            self.window.focusWidget(),
+            QtCore.Qt.Key.Key_U,
+            QtCore.Qt.KeyboardModifier.AltModifier,
+        )
+        self.app.processEvents()
+        self.assertFalse(self.window.duplicateScanSetup.isVisible())
+        self.assertFalse(self.window._duplicate_edit_mode)
+        self.assertIs(self.window.focusWidget(), self.window.duplicateScanSetupToggle)
+        first_group = self.window._active_duplicate_group_id
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
+        self.assertNotEqual(self.window._active_duplicate_group_id, first_group)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_H)
+        self.assertEqual(self.window._active_duplicate_group_id, first_group)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_J)
+        first_photo = self.window.focusWidget()
+        QtTest.QTest.keyClick(first_photo, QtCore.Qt.Key.Key_J)
+        self.assertIsNot(self.window.focusWidget(), first_photo)
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_K)
+        self.assertIs(self.window.focusWidget(), first_photo)
+        self.window.cmdLine.show()
+        self.window.cmdLine.setFocus()
+        QtTest.QTest.keyClicks(self.window.cmdLine, "hjkl")
+        self.assertEqual(self.window.cmdLine.text(), "hjkl")
+        self.assertEqual(self.window._active_duplicate_group_id, first_group)
 
     def test_collapsed_scan_setup_reopens_for_scope_focus_and_new_scan(self):
         self._scan_copy_candidates()
@@ -449,6 +521,35 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertTrue(self.window.duplicateReviewView.isVisible())
 
+    def test_duplicate_review_guidance_is_concise_and_details_are_discoverable(self):
+        source, *_ = self._scan_copy_candidates()
+        labels = [
+            label
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+            if label.isVisible()
+        ]
+        self.assertFalse(
+            any("Choose a tagged source" in label.text() for label in labels)
+        )
+        self.assertEqual(
+            self.window.duplicateAssessmentHint.text(),
+            "Choose a tagged source and empty targets.",
+        )
+        evidence = next(
+            label for label in labels if label.text().startswith("Shared capture time:")
+        )
+        self.assertIn("Method:", evidence.toolTip())
+        self.assertIn("Fields:", evidence.toolTip())
+        self.assertNotIn("Method:", self.window.duplicateResultsSummary.text())
+        self.assertIn(
+            "not confirmed duplicates", self.window.duplicateResultsSummary.toolTip()
+        )
+        self._copy_control(source, "source").click()
+        self.assertTrue(
+            self.window.duplicateAssessmentHint.text().startswith("1 source ·")
+        )
+        self.assertNotIn("Edit", self.window.duplicateAssessmentHint.text())
+
     def test_duplicate_review_header_does_not_claim_confirmed_copy_is_readonly(self):
         self.window.show_duplicate_review()
         text = " ".join(
@@ -456,7 +557,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             for label in self.window.duplicateReviewView.findChildren(QtWidgets.QLabel)
         )
         self.assertNotIn("Read-only assessment view", text)
-        self.assertIn("Copy requires confirmation", text)
+        self.assertNotIn("Copy requires confirmation", text)
+        self.assertIn("confirms", self.window.duplicateApplyTagsButton.toolTip())
 
     def test_duplicate_review_controls_describe_shortcuts(self) -> None:
         self.assertIn("Ctrl+O", self.window.duplicateAddFolderButton.toolTip())
@@ -468,7 +570,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Alt+E", self.window.duplicateExcludeEmptyCandidatesCheck.toolTip()
         )
         self.assertIn("i in Edit mode", self.window.duplicateIgnoreButton.toolTip())
-        self.assertIn("c in Edit mode", self.window.duplicateApplyTagsButton.toolTip())
+        self.assertIn("(c)", self.window.duplicateApplyTagsButton.toolTip())
+        self.assertNotIn("Edit mode", self.window.duplicateApplyTagsButton.toolTip())
 
     def test_ctrl_o_opens_add_folder_from_duplicate_review(self) -> None:
         self.window.show_duplicate_review()
@@ -743,11 +846,72 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertNotIn(second, text)
         self.assertIn("Holiday", text)
         self.assertIn("Backup: on", text)
+        source_tags = dialog.findChild(QtWidgets.QLabel, "copySourceTags")
+        target_tags = dialog.findChild(QtWidgets.QLabel, "copyTargetTags")
+        self.assertIsNotNone(source_tags)
+        self.assertTrue(source_tags.font().bold())
+        self.assertEqual(source_tags.text(), "Holiday")
+        self.assertEqual(target_tags.text(), "No tags → Holiday")
+        self.assertTrue(target_tags.font().bold())
+        source_image = dialog.findChild(QtWidgets.QLabel, "copySourceImage")
+        target_image = dialog.findChild(QtWidgets.QLabel, "copyTargetImage")
+        self.assertLess(
+            source_image.mapTo(dialog, QtCore.QPoint()).x(),
+            target_image.mapTo(dialog, QtCore.QPoint()).x(),
+        )
+        self.assertEqual(
+            source_image.mapTo(dialog, QtCore.QPoint()).y(),
+            target_image.mapTo(dialog, QtCore.QPoint()).y(),
+        )
+        self.assertNotIn("Copy (y) confirms", text)
         self.assertEqual(FakeExifTool.write_calls, [])
         QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_N)
         self.app.processEvents()
         self.assertFalse(dialog.isVisible())
         self.assertEqual(FakeExifTool.write_calls, [])
+
+    def test_copy_confirmation_loads_photo_previews_and_keeps_source_visible(self):
+        with tempfile.TemporaryDirectory() as folder:
+            paths = [
+                normalize_path(str(Path(folder) / f"photo-{i}.jpg")) for i in range(3)
+            ]
+            image = QtGui.QImage(240, 160, QtGui.QImage.Format.Format_RGB32)
+            image.fill(QtGui.QColor("#4080a0"))
+            for path in paths:
+                self.assertTrue(image.save(path))
+            FakePhotoIndex.snapshot_paths = paths
+            FakeExifTool.states_by_path = {
+                path: KeywordState(["Visible tags"] if i == 0 else [], [], "same-time")
+                for i, path in enumerate(paths)
+            }
+            self.window._index_root = normalize_path(folder)
+            self.window.show_duplicate_review()
+            self.discovery_runner.run()
+            self.window.duplicateStartScanButton.click()
+            self.discovery_runner.run()
+            self.app.processEvents()
+            self._copy_control(paths[0], "source").click()
+            self.window.duplicateApplyTagsButton.click()
+            self._wait_for_ui(lambda: self.window._duplicate_copy_preview is not None)
+            dialog = self.window._duplicate_copy_preview
+            self._wait_for_ui(
+                lambda: all(
+                    label.pixmap() is not None and not label.pixmap().isNull()
+                    for label in dialog.images.values()
+                )
+            )
+            source_image = dialog.findChild(QtWidgets.QLabel, "copySourceImage")
+            target_scroll = dialog.findChildren(QtWidgets.QScrollArea)[1]
+            target_scroll.verticalScrollBar().setValue(
+                target_scroll.verticalScrollBar().maximum()
+            )
+            self.app.processEvents()
+            self.assertTrue(source_image.isVisible())
+            self.assertEqual(FakeExifTool.write_calls, [])
+            QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_Escape)
+            self.app.processEvents()
+            self.assertIsNone(self.window._duplicate_copy_preview)
+            self.assertEqual(FakeExifTool.write_calls, [])
 
     def test_confirmed_duplicate_copy_advances_and_retries_only_failed_targets(self):
         source, first, second, _tagged, _unknown = self._scan_copy_candidates(
@@ -768,9 +932,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Pending",
             " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             ),
         )
         self.assertTrue(
@@ -787,20 +949,18 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             and "Failed"
             in " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             )
         )
         self.assertEqual(FakeExifTool.states_by_path[first].iptc, ["Holiday"])
         failed_row = next(
             button
-            for button in self.window.duplicateStatusRows.findChildren(
-                QtWidgets.QPushButton
-            )
+            for button in self.window.duplicateResultsButton.menu().actions()
             if "Failed" in button.text()
         )
-        failed_row.click()
+        self.assertEqual(self.window.duplicateResultsButton.text(), "1 failed")
+        self.assertTrue(self.window.duplicateResultsButton.isVisible())
+        failed_row.trigger()
         text = " ".join(
             label.text()
             for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
@@ -820,9 +980,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             and "Completed"
             in " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             )
         )
         self.assertEqual(
@@ -830,6 +988,78 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.assertEqual(FakeExifTool.states_by_path[second].iptc, ["Holiday"])
         self.assertEqual(FakeExifTool.states_by_path[second].xmp, ["Holiday"])
+
+    def test_candidate_menu_does_not_inherit_preview_placeholder_color(self):
+        palette = QtGui.QPalette(self.window.palette())
+        palette.setColor(QtGui.QPalette.ColorRole.Window, QtGui.QColor("#303030"))
+        palette.setColor(QtGui.QPalette.ColorRole.WindowText, QtGui.QColor("#f4f4f4"))
+        palette.setColor(QtGui.QPalette.ColorRole.Text, QtGui.QColor("#f4f4f4"))
+        palette.setColor(QtGui.QPalette.ColorRole.Mid, QtGui.QColor("#3b3b3b"))
+        self.window.setPalette(palette)
+        source, *_ = self._scan_copy_candidates()
+        preview = self.window.duplicateResultsBody.findChild(
+            QtWidgets.QLabel, "duplicateCandidatePreview"
+        )
+        for widget in (preview, preview.parentWidget()):
+            self.window._show_duplicate_photo_context_menu(
+                source, widget, QtCore.QPoint(1, 1)
+            )
+            self.app.processEvents()
+            menu = next(
+                m for m in self.window.findChildren(QtWidgets.QMenu) if m.isVisible()
+            )
+            self.assertEqual(
+                menu.palette().color(QtGui.QPalette.ColorRole.WindowText),
+                self.window.palette().color(QtGui.QPalette.ColorRole.WindowText),
+            )
+            menu.close()
+
+    def test_candidate_queue_scrollbar_leaves_cards_fully_visible(self):
+        paths = [normalize_path(f"C:/photos/photo-{n}.jpg") for n in range(16)]
+        FakePhotoIndex.snapshot_paths = paths
+        FakeExifTool.states_by_path = {
+            path: KeywordState(
+                ["Source"] if n % 2 == 0 else [], [], f"2024:01:02 12:00:{n // 2:02}"
+            )
+            for n, path in enumerate(paths)
+        }
+        self.window._index_root = normalize_path("C:/photos")
+        self.window.show_duplicate_review()
+        self.discovery_runner.run()
+        self.window.duplicateStartScanButton.click()
+        self.discovery_runner.run()
+        self.window.resize(900, 700)
+        queue = self.window.duplicateCandidateQueue
+        font = queue.font()
+        font.setPointSize(16)
+        queue.setFont(font)
+        QtTest.QTest.qWait(20)
+        self.assertTrue(queue.horizontalScrollBar().isVisible())
+        for button in queue.findChildren(QtWidgets.QPushButton):
+            top = button.mapTo(queue.viewport(), QtCore.QPoint()).y()
+            self.assertGreaterEqual(button.height(), button.sizeHint().height())
+            self.assertGreaterEqual(top, 0)
+            self.assertLessEqual(top + button.height(), queue.viewport().height())
+
+    def test_duplicate_copy_shortcut_works_without_edit_mode(self):
+        source, *_ = self._scan_copy_candidates()
+        control = self._copy_control(source, "source")
+        control.click()
+        control.setFocus()
+        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_C)
+        self._wait_for_ui(
+            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+            is not None
+        )
+        dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+        self.assertTrue(dialog.isVisible())
+        self.assertEqual(FakeExifTool.write_calls, [])
+        dialog.reject()
+        self.window.cmdLine.show()
+        self.window.cmdLine.setFocus()
+        QtTest.QTest.keyClicks(self.window.cmdLine, "c")
+        self.assertEqual(self.window.cmdLine.text(), "c")
+        self.assertEqual(FakeExifTool.write_calls, [])
 
     def test_duplicate_card_paths_have_readable_contrast_in_a_dark_palette(self):
         palette = QtGui.QPalette(self.window.palette())
@@ -938,12 +1168,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
         ignored = next(
             button
-            for button in self.window.duplicateStatusRows.findChildren(
-                QtWidgets.QPushButton
-            )
+            for button in self.window.duplicateResultsButton.menu().actions()
             if "Ignored" in button.text()
         )
-        ignored.click()
+        ignored.trigger()
         self.assertTrue(self._copy_control(source, "source").isChecked())
         self.assertFalse(self._copy_control(first, "target").isChecked())
 
@@ -1013,13 +1241,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             lambda: "Failed"
             in " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             )
         )
         FakeExifTool.states_by_path[first] = KeywordState(["External"], [])
-        self.window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)[0].click()
+        self.window.duplicateResultsButton.menu().actions()[0].trigger()
         retry = next(
             button
             for button in self.window.duplicateResultsBody.findChildren(
@@ -1119,9 +1345,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             lambda: "Pending"
             in " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             )
         )
         self.window.replace_photo_workspace([])
@@ -1129,9 +1353,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Cancelled",
             " ".join(
                 button.text()
-                for button in self.window.duplicateStatusRows.findChildren(
-                    QtWidgets.QPushButton
-                )
+                for button in self.window.duplicateResultsButton.menu().actions()
             ),
         )
         FakeExifTool.release_writes()
@@ -1139,7 +1361,26 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.app.processEvents()
         self.assertNotIn(first, [path for path, _tags in FakeExifTool.write_calls])
 
-    def test_many_duplicate_status_rows_do_not_expand_the_review_window(self):
+    def test_duplicate_results_live_only_in_footer_and_follow_active_view(self):
+        self._scan_copy_candidates()
+        self.assertFalse(hasattr(self.window, "duplicateStatusRowsScroll"))
+        self.assertFalse(self.window.duplicateResultsButton.isVisible())
+        self.window.ignore_active_duplicate_group()
+        self.app.processEvents()
+        button = self.window.duplicateResultsButton
+        self.assertTrue(button.isVisible())
+        self.assertTrue(self.window.statusBar().isAncestorOf(button))
+        self.assertFalse(self.window.duplicateReviewView.isAncestorOf(button))
+        self.assertEqual(len(button.menu().actions()), 1)
+        self.window.show_tagging_workspace()
+        self.assertFalse(button.isVisible())
+        self.window.show_duplicate_review()
+        self.assertTrue(button.isVisible())
+        self.window._clear_duplicate_results()
+        self.assertFalse(button.isVisible())
+        self.assertEqual(button.menu().actions(), [])
+
+    def test_many_duplicate_results_stay_in_footer_without_expanding_review(self):
         paths = [
             normalize_path(f"C:/photos/group-{group}-{member}.jpg")
             for group in range(20)
@@ -1165,9 +1406,34 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertLessEqual(
             self.window.minimumSizeHint().height(), original_height + 40
         )
-        self.assertEqual(
-            len(self.window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)), 20
+        self.assertEqual(len(self.window.duplicateResultsButton.menu().actions()), 20)
+        self.assertTrue(
+            self.window.statusBar().isAncestorOf(self.window.duplicateResultsButton)
         )
+        self.window.duplicateResultsButton.menu().actions()[-1].trigger()
+        self.assertIsNotNone(self.window._active_duplicate_group_id)
+        self.assertEqual(len(self.window._visible_duplicate_group_ids), 1)
+
+    def test_completed_duplicate_copies_use_one_summary_and_reopenable_history(self):
+        self._scan_copy_candidates(two_groups=True)
+        groups = self.window._duplicate_scan_result.groups
+        for group in groups:
+            assessment = self.window._duplicate_assessments[group.group_id]
+            assessment["submitted"] = True
+            assessment["outcomes"] = {group.members[1].path: "successful"}
+        self.window._refresh_duplicate_results_footer()
+        self.app.processEvents()
+        actions = self.window.duplicateResultsButton.menu().actions()
+        self.assertEqual(len(actions), 2)
+        self.assertEqual(self.window.duplicateResultsButton.text(), "Saved 1")
+        self.assertNotIn("same-cap", self.window.duplicateResultsButton.text())
+        actions[-1].trigger()
+        self.assertEqual(self.window._active_duplicate_group_id, groups[0].group_id)
+        text = " ".join(
+            label.text()
+            for label in self.window.duplicateResultsBody.findChildren(QtWidgets.QLabel)
+        )
+        self.assertIn("successful", text)
 
     def test_duplicate_copy_preview_remains_usable_with_many_targets(self):
         paths = [
@@ -1236,7 +1502,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         result = self.window._duplicate_scan_result
         self.assertEqual(len(result.groups), 1)
         self.assertIn(
-            "Same capture timestamp", self.window.duplicateResultsSummary.text()
+            "Same capture timestamp", self.window.duplicateResultsSummary.toolTip()
         )
         rendered_text = " ".join(
             label.text()
@@ -1245,7 +1511,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("EXIF:DateTimeOriginal", rendered_text)
         self.assertIn("EXIF:CreateDate", rendered_text)
         self.assertIn("suggested source", rendered_text)
-        self.assertIn("confirmed empty", rendered_text)
+        self.assertIn("No tags (confirmed)", rendered_text)
         self.assertIn("could not be read", rendered_text)
 
         group_id = result.groups[0].group_id
@@ -1302,9 +1568,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             2,
         )
         self.assertFalse(self.window.duplicateApplyTagsButton.isEnabled())
-        self.assertIn(
-            "e enters Edit mode",
+        self.assertEqual(
+            "Choose a tagged source and empty targets.",
             self.window.duplicateAssessmentHint.text(),
+        )
+        self.assertIn(
+            "e toggles Edit mode", self.window.duplicateEditModeButton.toolTip()
         )
 
         first_group_id = result.groups[0].group_id
@@ -1545,6 +1814,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
 
     def test_view_selector_coexists_with_active_status_bar_widgets(self) -> None:
+        self._scan_copy_candidates()
+        self.window.ignore_active_duplicate_group()
         self.window.iptcEmptyRefreshOffer.show()
         self.window.indexRepairStatusLabel.setText("Index refresh: 12,345 / 98,765")
         self.window.statusBar().showMessage("Scanning the active photo workspace")
@@ -1557,6 +1828,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         widgets = (
             self.window.iptcEmptyRefreshOffer,
             self.window.indexRepairStatusLabel,
+            self.window.duplicateResultsButton,
             self.window.viewSelector,
         )
         self.assertTrue(all(widget.isVisible() for widget in widgets))
@@ -1597,7 +1869,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("scanduplicates", text)
         self.assertIn("Space s", text)
         self.assertIn("[e]", text)
-        for key in ("h", "j", "k", "l", "s", "t", "c", "i"):
+        self.assertIn("[c]", text)
+        self.assertNotIn("c (Edit mode)", text)
+        for key in ("h", "j", "k", "l"):
+            self.assertIn(f"[{key}]", text)
+            self.assertNotIn(f"{key} (Edit mode)", text)
+        for key in ("s", "t", "i"):
             self.assertIn(f"{key} (Edit mode)", text)
         for irrelevant in ("addtag", "retryall", "filterfiles", "reindex"):
             self.assertNotIn(irrelevant, text)

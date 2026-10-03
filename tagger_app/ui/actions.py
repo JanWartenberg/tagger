@@ -147,7 +147,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="previousduplicategroup",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("h",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("h",), scope="duplicate_review"),
             ),
             description="Open previous duplicate candidate group",
             handler_name="show_previous_duplicate_group",
@@ -157,7 +157,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="nextduplicategroup",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("l",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("l",), scope="duplicate_review"),
             ),
             description="Open next duplicate candidate group",
             handler_name="show_next_duplicate_group",
@@ -183,7 +183,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="previousduplicatemember",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("k",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("k",), scope="duplicate_review"),
             ),
             description="Focus previous photo in duplicate candidate group",
             handler_name="focus_previous_duplicate_member",
@@ -192,7 +192,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="nextduplicatemember",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("j",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("j",), scope="duplicate_review"),
             ),
             description="Focus next photo in duplicate candidate group",
             handler_name="focus_next_duplicate_member",
@@ -244,7 +244,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             handler_name="preview_duplicate_copy",
             command=CommandBinding("copyduplicatetags"),
             key_routes=(
-                KeyRoute(kind="single", sequence=("c",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("c",), scope="duplicate_review"),
             ),
         ),
         ActionSpec(

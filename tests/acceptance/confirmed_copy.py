@@ -230,7 +230,7 @@ def copy_scenario(app, root, keep_backup):
             "completed copy outcome",
             lambda: any(
                 "Completed" in b.text()
-                for b in window.duplicateStatusRows.findChildren(QtWidgets.QPushButton)
+                for b in window.duplicateResultsButton.menu().actions()
             ),
         )
         records = assert_written(photos)

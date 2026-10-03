@@ -20,6 +20,8 @@ def build_photo_context_menu(
     parent: QtWidgets.QWidget, path: str, actions: PhotoContextActions
 ) -> QtWidgets.QMenu:
     menu = QtWidgets.QMenu(parent)
+    # Popups do not normally inherit the window's explicit palette.
+    menu.setPalette(parent.window().palette())
     menu.setToolTipsVisible(True)
     menu.addAction("Open", actions.open_photo)
     menu.addAction("Open in GIMP", actions.open_gimp)

@@ -4,7 +4,7 @@ Status: needs-info
 Category: testing
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows UI regression and visual acceptance
+Blocked by: 02l footer Windows regression and remaining visual smoke acceptance
 
 ## Goal
 
@@ -13,11 +13,14 @@ can repeat metadata acceptance without manual fixture setup, copy/paste or clean
 
 ## Next action
 
-The full 32-case matrix passed twice on Windows. Duplicate review UI follow-ups
-(02b/02c/02d) are now implemented; rerun the same command as a Windows regression:
-`.\.venv\Scripts\python tests\acceptance\run.py` from the repo root.
-Then check `tests/acceptance/VISUAL_SMOKE.md` for collapse, candidate filters and
-right-click menus. Retain explicit findings and do not accept unrun checks.
+Windows report `20261003T221813.709522Z` verified: twelve phases/32 cases, native
+process cleanup, sharing-lock retry with both backup modes and workspace removal
+passed. Maintainer accepted Alt+U navigation (02j) and improved confirmation (02k).
+The in-page result strip was rejected; it is now removed and replaced by one footer
+status/menu (02l). That revision postdates the report and awaits a new Windows
+regression and visual confirmation. Remaining general visual checks include
+navigation/help and larger-font/display-scale readability. M9 remains open;
+the current footer revision is included in the requested checkpoint commit.
 
 ## Acceptance
 
@@ -141,3 +144,13 @@ repetitive manual tests. See the latest delivery updates below.
   Latest portable regression: `reports/20261002T191138.290129Z`; full offscreen
   pytest: 335 passed, four Windows-only skips. M9 remains unaccepted pending visual
   checks and Windows regression of the changed Qt UI.
+
+### Checkpoint handoff — 2026-10-03
+
+See `BACKLOG.md` for the current checkpoint and next steps. 02b/02d/02e–02k are
+completed and accepted. 02l requires Windows regression and footer confirmation;
+02c retains only the explicit filter selection-retention check. Remaining general
+visual checks are navigation/help and larger-font/display-scale readability.
+Latest local checks: 344 passed, four Windows skips, 33 subtests; Ruff/format and
+diff checks pass. Portable report `20261003T222741.128862Z` passed. Reports are
+ignored local evidence. M9 remains open; no merge into main has been requested.

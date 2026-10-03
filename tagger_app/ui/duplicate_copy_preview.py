@@ -12,24 +12,39 @@ class DuplicateCopyPreview(QtWidgets.QDialog):
         self.setWindowTitle("Confirm tag copy")
         self.setModal(True)
         layout = QtWidgets.QVBoxLayout(self)
-        scroll = QtWidgets.QScrollArea()
-        scroll.setWidgetResizable(True)
-        details = QtWidgets.QWidget()
-        details_layout = QtWidgets.QVBoxLayout(details)
-        for text in (
-            f"Source: {plan.source}",
-            "Canonical tags: " + ", ".join(plan.tags),
-            "Targets:\n" + "\n".join(plan.targets),
-            "Backup: " + ("on" if plan.keep_backup else "off"),
-            "Copy (y) confirms; Cancel (n / Esc) makes no changes.",
-        ):
-            label = QtWidgets.QLabel(text)
-            label.setWordWrap(True)
-            label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            details_layout.addWidget(label)
-        scroll.setWidget(details)
-        layout.addWidget(scroll, 1)
-        self.resize(640, 420)
+        comparison = QtWidgets.QHBoxLayout()
+        self.images: dict[str, QtWidgets.QLabel] = {}
+        source = self._photo_column(
+            "Source", plan.source, ", ".join(plan.tags), "Source"
+        )
+        source_scroll = QtWidgets.QScrollArea()
+        source_scroll.setWidgetResizable(True)
+        source_scroll.setWidget(source)
+        comparison.addWidget(source_scroll, 1)
+        targets = QtWidgets.QWidget()
+        targets_layout = QtWidgets.QVBoxLayout(targets)
+        targets_layout.setContentsMargins(0, 0, 0, 0)
+        for position, path in enumerate(plan.targets, start=1):
+            title = (
+                "Target"
+                if len(plan.targets) == 1
+                else f"Target {position} of {len(plan.targets)}"
+            )
+            targets_layout.addWidget(
+                self._photo_column(
+                    title, path, "No tags → " + ", ".join(plan.tags), "Target"
+                )
+            )
+        targets_layout.addStretch(1)
+        target_scroll = QtWidgets.QScrollArea()
+        target_scroll.setWidgetResizable(True)
+        target_scroll.setWidget(targets)
+        comparison.addWidget(target_scroll, 1)
+        layout.addLayout(comparison, 1)
+        backup = QtWidgets.QLabel("Backup: " + ("on" if plan.keep_backup else "off"))
+        backup.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        layout.addWidget(backup)
+        self.resize(800, 520)
         buttons = QtWidgets.QDialogButtonBox()
         confirm = buttons.addButton(
             "Copy (y)", QtWidgets.QDialogButtonBox.ButtonRole.AcceptRole
@@ -44,6 +59,44 @@ class DuplicateCopyPreview(QtWidgets.QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
+
+    def _photo_column(
+        self, title: str, path: str, tags: str, role: str
+    ) -> QtWidgets.QWidget:
+        column = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(column)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop)
+        heading = QtWidgets.QLabel(title)
+        heading.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        layout.addWidget(heading)
+        image = QtWidgets.QLabel("Loading preview…")
+        image.setObjectName(f"copy{role}Image")
+        image.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        image.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        image.setFixedHeight(180)
+        image.setMinimumWidth(0)
+        image.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Fixed
+        )
+        self.images[path] = image
+        layout.addWidget(image)
+        tag_label = QtWidgets.QLabel(tags)
+        tag_label.setObjectName(f"copy{role}Tags")
+        tag_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        tag_label.setWordWrap(True)
+        font = tag_label.font()
+        font.setBold(True)
+        tag_label.setFont(font)
+        layout.addWidget(tag_label)
+        path_label = QtWidgets.QLabel(path)
+        path_label.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        path_label.setWordWrap(True)
+        path_label.setTextInteractionFlags(
+            QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        layout.addWidget(path_label)
+        return column
 
     def keyPressEvent(self, a0: QtGui.QKeyEvent | None) -> None:
         event = a0

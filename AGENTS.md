@@ -3,6 +3,7 @@
 ## Engineering expectations
 
 - Write repository artifacts, documentation, comments, and user-facing text in English.
+- Default to concise UI labels and minimal persistent explanatory text. Put optional detail in tooltips or help; keep essential state, errors and confirmation information visible.
 - TAGGER is a local personal tool. No additional compliance, tenancy, or remote-data security requirements apply.
 - TAGGER is a Python and PyQt desktop tool developed primarily for Windows; keep it compatible with Linux where practical.
 - Keep the UI responsive by human standards. Potentially long-running work must run in the background rather than block the UI thread.
