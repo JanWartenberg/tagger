@@ -19,20 +19,19 @@ on 2026-10-04. No next active milestone has been selected.
 
 ## Session handoff — 2026-10-04
 
-- Branch `prototype/duplicate-review-ui`; implementation checkpoint `84a36f7`.
-  This documentation commit records acceptance and agent verification guidance.
-  The maintainer authorized local integration into `main` after merge-risk checks.
-  Push has not been requested.
+- Branch `main`; fast-forward integration of `prototype/duplicate-review-ui`
+  through `3e6b356` completed after maintainer authorization and merge-risk checks.
+  Acceptance and agent verification guidance are committed. No push performed.
 - All M9 tickets are completed; preserve previous acceptances. The rejected
   in-page result widget stays deleted; outcomes/retry/restoration use the footer.
-- Next decision: integrate the accepted branch into `main` or choose future work.
+- Next decision: choose future work; no active milestone remains.
   Removing the remaining Edit mode remains undecided, with no implementation ticket.
 - Linux dev environment: `/tmp/tagger-venv` (activate, use `PYTHONPATH=.` and
   `QT_QPA_PLATFORM=offscreen`). Recreate if absent; repository `.venv` is Windows-only.
 - Last local implementation validation: Ruff/format and diff checks passed;
-  full offscreen pytest: 344 passed, four Windows skips, 33 subtests passed.
-  Portable report `20261003T222741.128862Z` passed. Tests are not repeated for
-  acceptance documentation changes.
+  pre-merge full offscreen pytest: 344 passed, four Windows skips. Portable
+  report `20261004T122111.114146Z` passed (ten phases). Standards/spec review
+  found no merge blockers. See `tests/acceptance/REVIEW.md` for follow-up concerns.
 - Earlier full run segfaulted in a Qt callback; unchanged rerun passed. Cause
   remains undiagnosed; history is in `tests/acceptance/REVIEW.md`.
 

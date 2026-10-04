@@ -510,3 +510,36 @@ was explicitly waived and accepted, not recorded as passed.
 
 All remaining M9 acceptance criteria are satisfied. No implementation or visual
 acceptance remains; merge into main and push are separate decisions.
+
+# Main integration — 2026-10-04
+
+Maintainer authorized local integration if merge-risk checks found no blocker.
+Documentation/acceptance commit `3e6b356` was reviewed; a stale remaining-work
+section in the acceptance README was corrected before commit. Diff checks passed.
+
+## Standards
+
+Parallel code-review standards axis found no blocking documented violation.
+Two non-blocking concerns remain: synchronous candidate-queue rendering performs
+repeated linear group lookups and may scale poorly for large queues; mutable
+assessment dictionaries and lifecycle logic are concentrated in MainWindow.
+Neither is a demonstrated regression or a reason for speculative refactoring.
+Performance work remains subject to the existing deferred ticket.
+
+## Spec
+
+Parallel code-review specification axis found no material missing or incorrectly
+implemented requirement. Background scan/revalidation, final write guards,
+failed-only retry, footer refinements and package entrypoints were checked.
+Standards: zero blocking findings, two follow-up concerns. Spec: zero findings.
+
+## Validation and integration
+
+- Ruff passed; full offscreen pytest: 344 passed, four Windows-only skips.
+- Inspected portable report `reports/20261004T122111.114146Z/report.json`:
+  status passed, all ten phases passed. Native Windows checks are not run on Linux.
+- The Windows result and visual acceptance recorded above remain valid; no
+  production code changed after those confirmations.
+- `main` was an ancestor of the accepted branch. Local fast-forward merge through
+  `3e6b356` completed without conflicts; no push or branch deletion performed.
+- This follow-up documentation commit records the final branch and review evidence.
