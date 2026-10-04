@@ -24,12 +24,15 @@ file hashes. No private widget state or database assertions.
   (`reports/20261002T162912.910988Z`).
 - Slice 3: real changed/missing source/target refusals at preview/confirmation,
   final target-write guard, and native sharing-lock partial failure/failed-only
-  UI retry implemented. Portable cases pass on Linux; native lock execution pending.
+  UI retry implemented. Portable cases pass on Linux; native Windows lock/retry
+  passed in the previously verified expanded Windows reports.
 - Full expanded Windows matrix passed twice on fa2be3f (32 results each).
 - Scan setup collapse, actionable-only default/all-candidates toggle, and shared
   candidate photo menu are now implemented (follow-ups 02b/02c/02d).
-- Remaining: Windows regression of the changed UI, updated visual smoke execution,
-  explicit maintainer acceptance.
+- Complete: maintainer reported Windows runner PASSED for the footer revision
+  (`reports/20261004T112405.399638Z/report.json`) and accepted remaining
+  visual checks on 2026-10-04. Larger-font testing was explicitly waived; window
+  scaling passed. M9 is closed. See `REVIEW.md` for evidence and acceptance limits.
 
 Slice 2 uses four generated photos per backup setting: a tagged source with a
 conflicting XMP mirror, two selected empty-IPTC targets (one existing XMP mirror,

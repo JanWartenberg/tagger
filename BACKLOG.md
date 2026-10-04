@@ -2,63 +2,39 @@
 
 ## Current milestone
 
-**M9 — Repeatable real-file acceptance** is active following the maintainer's
-acceptance of M8 and request to prioritize automated integration acceptance.
+**M9 — Repeatable real-file acceptance** is completed by maintainer acceptance
+on 2026-10-04. No next active milestone has been selected.
 
-1. [Build and review the real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md) — Windows regression verified in report 20261003T221813.709522Z; footer revision 02l and remaining visual checks pending.
-2. [Subtle Scan setup toggle](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02h-subtle-scan-setup-toggle.md) — completed; collapsed/expanded placement, Alt+U, selection preservation and reopening accepted on 2026-10-03; color previously accepted.
-3. [Concise Duplicate review labels](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02i-concise-duplicate-review-labels.md) — completed; reduced text density accepted on 2026-10-03. Concise UI text is now an AGENTS.md default.
+- [Real-file integration suite](.scratch/windows-integration-suite/issues/01-build-real-file-integration-suite.md),
+  [footer results (02l)](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02l-compact-copy-result-history.md)
+  and [filter selection retention (02c)](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02c-default-to-actionable-candidates.md)
+  are completed.
+- Maintainer reported Windows runner PASSED:
+  `tests/acceptance/reports/20261004T112405.399638Z/report.json`. Report
+  contents were not independently inspected in this session.
+- Remaining visual checks are accepted: navigation/focus/help, footer actions,
+  filter selection retention, multi-target preview scrolling and cancel return.
+  Window scaling passed; larger-font testing was explicitly waived and accepted
+  because the font is unchanged.
 
-Latest follow-ups:
+## Session handoff — 2026-10-04
 
-- [02j — Navigation after Alt+U](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02j-navigation-after-scan-setup-collapse.md) — completed; maintainer accepted.
-- [02k — Side-by-side copy confirmation](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02k-side-by-side-copy-confirmation.md) — completed; maintainer accepted.
-- [02l — Compact result history](.scratch/duplicate-photo-detection-and-tag-propagation/issues/02l-compact-copy-result-history.md) — moved entirely into footer after the in-page design was rejected; Windows confirmation pending.
-
-Maintainer accepted fixes 02e/02f/02g (menu contrast, scrollbar clearance, Copy
-without Edit mode). Whether to remove the remaining Edit mode is undecided.
-
-Maintainer confirmed Scan setup collapse and candidate filters work. Shared context
-menu ticket 02d is completed: native actions and folder exclusion accepted on
-2026-10-03; 02e records the accepted contrast fix.
-
-M8 tag propagation is accepted and its ticket completed by maintainer decision.
-Unrun manual checks were waived, not marked passed. Work remains on
-`prototype/duplicate-review-ui`; integration into `main` needs a separate decision.
-
-## Session handoff — checkpoint 2026-10-03
-
-- Branch `prototype/duplicate-review-ui`. This handoff is included in the requested
-  checkpoint commit; use `git log -1` for its hash. Base before the checkpoint:
-  `3a0f706`. It includes UI code, tests, concise-text guidance and tickets 02e–02l.
-- Accepted/completed: 02b, 02d and 02e–02k. Scan setup placement/reopening, Alt+U
-  navigation without Edit mode, context-menu actions, scrollbar clearance, Copy
-  without Edit mode, concise labels and side-by-side confirmation are accepted.
-- Open: 02l (`needs-info`) awaits Windows regression and footer visual confirmation.
-  The rejected in-page result widget is deleted entirely. One footer status/menu
-  now holds save feedback, pending/failed/cancelled attention, outcomes, explicit
-  failed-only retry and ignored-candidate restoration. Do not restore the strip.
-- 02c remains `needs-info` only for explicit selection retention across candidate
-  filter changes. Filter behavior was accepted; no implementation is pending.
-- Integration-suite ticket/spec remain `needs-info`; M9 remains active. Remaining
-  visual checks: footer, navigation/help, filter selection retention and larger
-  font/display scale. Existing confirmations must not be requested again.
-- Next: maintainer runs `python tests\acceptance\run.py` on Windows from repository
-  root and checks the footer using `tests/acceptance/VISUAL_SMOKE.md`. Record the
-  result in `tests/acceptance/REVIEW.md`, 02l and the integration-suite ticket.
-- Latest Windows report `20261003T221813.709522Z`: twelve phases/32 cases, both
-  backup modes, native lock/retry, process cleanup and workspace removal passed.
-  It predates the footer revision. Reports are ignored local evidence, not committed.
-- Footer revision validated locally: Ruff/format and diff checks pass; full
-  offscreen pytest: 344 passed, four Windows skips, 33 subtests passed. Portable
-  real-file report `tests/acceptance/reports/20261003T222741.128862Z/report.json`:
-  ten phases/28 cases passed, both workspaces removed. Footer rendering inspected.
+- Branch `prototype/duplicate-review-ui`; implementation checkpoint `84a36f7`.
+  This documentation commit records acceptance and agent verification guidance.
+  The maintainer authorized local integration into `main` after merge-risk checks.
+  Push has not been requested.
+- All M9 tickets are completed; preserve previous acceptances. The rejected
+  in-page result widget stays deleted; outcomes/retry/restoration use the footer.
+- Next decision: integrate the accepted branch into `main` or choose future work.
+  Removing the remaining Edit mode remains undecided, with no implementation ticket.
 - Linux dev environment: `/tmp/tagger-venv` (activate, use `PYTHONPATH=.` and
   `QT_QPA_PLATFORM=offscreen`). Recreate if absent; repository `.venv` is Windows-only.
-- Earlier full run segfaulted in a Qt callback; unchanged rerun passed. Cause remains
-  undiagnosed; execution history is in `tests/acceptance/REVIEW.md`. Latest run passed.
-- Edit mode removal remains undecided. Checkpoint commit is authorized; M9 closure,
-  merge into `main` and push have not been requested.
+- Last local implementation validation: Ruff/format and diff checks passed;
+  full offscreen pytest: 344 passed, four Windows skips, 33 subtests passed.
+  Portable report `20261003T222741.128862Z` passed. Tests are not repeated for
+  acceptance documentation changes.
+- Earlier full run segfaulted in a Qt callback; unchanged rerun passed. Cause
+  remains undiagnosed; history is in `tests/acceptance/REVIEW.md`.
 
 ## Future milestone
 

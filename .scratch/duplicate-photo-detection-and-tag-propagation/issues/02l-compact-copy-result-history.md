@@ -1,10 +1,10 @@
 # 02l — Show copy results in the footer
 
-Status: needs-info
+Status: completed
 Category: feature
 Priority: medium
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: maintainer Windows regression and footer visual confirmation
+Blocked by: None
 
 ## Goal
 
@@ -31,11 +31,10 @@ scroll area and cramped Completed line added no value. Requested complete remova
 and footer use. Windows report `20261003T221813.709522Z` passed before this revision;
 it validates 02j/02k but does not validate the footer change.
 
-## Next
+## Current state
 
-Maintainer verifies that the strip above the candidate cards is gone, save/failure
-feedback lives in the footer, and the menu opens outcomes/retry/restoration.
-Rerun the Windows real-file regression against this revision.
+Completed: Windows runner reported PASSED and maintainer accepted the footer.
+See the acceptance record below.
 
 ## Validation — footer revision
 
@@ -52,3 +51,17 @@ Footer revision is included in the requested checkpoint on
 `prototype/duplicate-review-ui`. Next: Windows matrix and footer visual check.
 Preserve result actions for outcomes, failed-only retry and ignored restoration;
 the rejected in-page widget must stay deleted. Do not reopen accepted 02j/02k.
+
+## Maintainer acceptance — 2026-10-04
+
+Maintainer reported Windows acceptance runner **PASSED** with
+`tests/acceptance/reports/20261004T112405.399638Z/report.json`. The report
+contents were not independently inspected in this session. Maintainer confirmed
+navigation/focus/help, footer feedback and outcomes/retry/ignored restoration,
+source/target retention across candidate filters, multi-target preview scrolling
+and cancel return. Window scaling has no negative effects and is accepted.
+Larger-font testing was not performed because the font is unchanged; this check
+was explicitly waived and accepted, not recorded as passed.
+
+All remaining M9 acceptance criteria are satisfied. No implementation or visual
+acceptance remains; merge into main and push are separate decisions.

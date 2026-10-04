@@ -1,10 +1,10 @@
 # 02c — Default Duplicate review to actionable candidates
 
-Status: needs-info
+Status: completed
 Category: feature
 Priority: medium
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: explicit selection-retention confirmation across candidate filters
+Blocked by: None
 
 ## Goal
 
@@ -51,3 +51,17 @@ Implemented in the checkpoint on `prototype/duplicate-review-ui`; no code work
 remains. General filter behavior is accepted. Only the explicit check that
 source/target choices survive Show all/non-empty filter changes remains open.
 Final results are now in the footer (02l), not in status rows.
+
+## Maintainer acceptance — 2026-10-04
+
+Maintainer reported Windows acceptance runner **PASSED** with
+`tests/acceptance/reports/20261004T112405.399638Z/report.json`. The report
+contents were not independently inspected in this session. Maintainer confirmed
+navigation/focus/help, footer feedback and outcomes/retry/ignored restoration,
+source/target retention across candidate filters, multi-target preview scrolling
+and cancel return. Window scaling has no negative effects and is accepted.
+Larger-font testing was not performed because the font is unchanged; this check
+was explicitly waived and accepted, not recorded as passed.
+
+All remaining M9 acceptance criteria are satisfied. No implementation or visual
+acceptance remains; merge into main and push are separate decisions.

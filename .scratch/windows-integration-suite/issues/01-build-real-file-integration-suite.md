@@ -1,26 +1,21 @@
 # 01 — Build and review the real-file integration suite
 
-Status: needs-info
+Status: completed
 Category: testing
 Priority: high
 Milestone: M9 — Repeatable real-file acceptance
-Blocked by: 02l footer Windows regression and remaining visual smoke acceptance
+Blocked by: None
 
 ## Goal
 
 Deliver the bounded subproject in [the specification](../spec.md) so the maintainer
 can repeat metadata acceptance without manual fixture setup, copy/paste or cleanup.
 
-## Next action
+## Current state
 
-Windows report `20261003T221813.709522Z` verified: twelve phases/32 cases, native
-process cleanup, sharing-lock retry with both backup modes and workspace removal
-passed. Maintainer accepted Alt+U navigation (02j) and improved confirmation (02k).
-The in-page result strip was rejected; it is now removed and replaced by one footer
-status/menu (02l). That revision postdates the report and awaits a new Windows
-regression and visual confirmation. Remaining general visual checks include
-navigation/help and larger-font/display-scale readability. M9 remains open;
-the current footer revision is included in the requested checkpoint commit.
+Completed by maintainer acceptance on 2026-10-04. Windows runner reported
+PASSED for the footer revision; remaining visual checks are accepted, with
+larger-font testing explicitly waived. See the acceptance record below.
 
 ## Acceptance
 
@@ -32,7 +27,7 @@ the current footer revision is included in the requested checkpoint commit.
 - [x] Guaranteed cleanup, bounded waits and no original-photo access.
 - [x] Documented one-command Windows run and minimal visual smoke checklist.
 - [x] Review recorded, findings addressed and existing suite/lint still passing.
-- [ ] Changed Qt UI passes Windows regression and maintainer visual smoke acceptance.
+- [x] Changed Qt UI passes Windows regression and maintainer visual smoke acceptance (larger-font check waived).
 
 ## Comments
 
@@ -154,3 +149,17 @@ visual checks are navigation/help and larger-font/display-scale readability.
 Latest local checks: 344 passed, four Windows skips, 33 subtests; Ruff/format and
 diff checks pass. Portable report `20261003T222741.128862Z` passed. Reports are
 ignored local evidence. M9 remains open; no merge into main has been requested.
+
+## Maintainer acceptance — 2026-10-04
+
+Maintainer reported Windows acceptance runner **PASSED** with
+`tests/acceptance/reports/20261004T112405.399638Z/report.json`. The report
+contents were not independently inspected in this session. Maintainer confirmed
+navigation/focus/help, footer feedback and outcomes/retry/ignored restoration,
+source/target retention across candidate filters, multi-target preview scrolling
+and cancel return. Window scaling has no negative effects and is accepted.
+Larger-font testing was not performed because the font is unchanged; this check
+was explicitly waived and accepted, not recorded as passed.
+
+All remaining M9 acceptance criteria are satisfied. No implementation or visual
+acceptance remains; merge into main and push are separate decisions.
