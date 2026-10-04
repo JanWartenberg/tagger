@@ -19,6 +19,11 @@ on 2026-10-04. No next active milestone has been selected.
 
 ## Session handoff — 2026-10-04
 
+- Configurable default index root implemented as `:indexroot`; its ticket is
+  completed and committed on main with maintainer authorization. Ruff, 355
+  offscreen tests and ten portable real-file phases passed. Maintainer confirmed
+  dialog opening and folder selection; native Windows automation and broader
+  scaling checks remain unrun. No next active milestone was selected.
 - Branch `main`; fast-forward integration of `prototype/duplicate-review-ui`
   through `3e6b356` completed after maintainer authorization and merge-risk checks.
   Acceptance and agent verification guidance are committed. No push performed.
@@ -40,7 +45,6 @@ on 2026-10-04. No next active milestone has been selected.
 **M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
 - [Performance follow-up](.scratch/performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md) remains deferred until one to three other topics have been completed.
-- [Configurable default index root](.scratch/configurable-default-index-root/issues/01-add-configurable-default-index-root.md) is medium priority and remains unscheduled.
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
 - [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is a low-priority follow-up to M8.
 

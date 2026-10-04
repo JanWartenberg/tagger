@@ -3195,7 +3195,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # root for the next query.
         if not paths:
             return self._index_root
-        root = resolve_index_root(paths, preferred_root=DEFAULT_INDEX_ROOT)
+        root = resolve_index_root(paths, preferred_root=self._preferred_index_root())
         return str(root) if root is not None else self._index_root
 
     def _schedule_index_sync(
@@ -5189,6 +5189,96 @@ class MainWindow(QtWidgets.QMainWindow):
             (viewport.width() - self.filesPaneLoadingIcon.width()) // 2,
             (viewport.height() - self.filesPaneLoadingIcon.height()) // 2,
         )
+
+    def _preferred_index_root(self) -> Path:
+        configured = self._config.get("default_index_root")
+        if isinstance(configured, str) and configured.strip():
+            try:
+                root = Path(configured).expanduser()
+                if root.is_absolute() and root.is_dir():
+                    return root.resolve()
+            except (OSError, RuntimeError, ValueError):
+                pass
+        return DEFAULT_INDEX_ROOT
+
+    def configure_default_index_root(self) -> None:
+        dialog = QtWidgets.QDialog(self)
+        dialog.setWindowTitle("Default index root")
+        layout = QtWidgets.QVBoxLayout(dialog)
+        row = QtWidgets.QHBoxLayout()
+        root_edit = QtWidgets.QLineEdit(str(self._preferred_index_root()))
+        root_edit.setAccessibleName("Default index root")
+        root_edit.setMinimumWidth(400)
+        browse = QtWidgets.QPushButton("Browse…")
+        row.addWidget(root_edit)
+        row.addWidget(browse)
+        layout.addLayout(row)
+        root_edit.setToolTip(
+            "Existing .tagger markers take precedence. Applies to future workspaces."
+        )
+        error = QtWidgets.QLabel()
+        error.setWordWrap(True)
+        layout.addWidget(error)
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.StandardButton.Save
+            | QtWidgets.QDialogButtonBox.StandardButton.Cancel
+            | QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults
+        )
+        layout.addWidget(buttons)
+        reset = False
+
+        def browse_folder() -> None:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                dialog, "Default index root", root_edit.text()
+            )
+            if folder:
+                root_edit.setText(folder)
+
+        def restore_default() -> None:
+            nonlocal reset
+            root_edit.setText(str(DEFAULT_INDEX_ROOT))
+            reset = True
+
+        def edited() -> None:
+            nonlocal reset
+            reset = False
+
+        def save() -> None:
+            config = dict(self._config)
+            try:
+                if reset:
+                    config.pop("default_index_root", None)
+                else:
+                    root = Path(root_edit.text().strip()).expanduser()
+                    if (
+                        not root_edit.text().strip()
+                        or not root.is_absolute()
+                        or not root.is_dir()
+                    ):
+                        error.setText(
+                            "Choose an existing folder with an absolute path."
+                        )
+                        return
+                    config["default_index_root"] = str(root.resolve())
+                save_config(config)
+            except (OSError, RuntimeError, ValueError) as exc:
+                error.setText(f"Could not save default index root: {exc}")
+                return
+            self._config = config
+            self.statusBar().showMessage(
+                f"Default index root: {self._preferred_index_root()}"
+            )
+            dialog.accept()
+
+        root_edit.textChanged.connect(edited)
+        browse.clicked.connect(browse_folder)
+        buttons.button(
+            QtWidgets.QDialogButtonBox.StandardButton.RestoreDefaults
+        ).clicked.connect(restore_default)
+        buttons.accepted.connect(save)
+        buttons.rejected.connect(dialog.reject)
+        dialog.exec()
+        dialog.deleteLater()
 
     def _set_last_folder(self, folder: str) -> None:
         try:

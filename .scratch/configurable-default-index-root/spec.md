@@ -1,6 +1,6 @@
 # Configurable Default Index Root
 
-Status: ready-for-agent
+Status: completed
 Priority: medium
 
 ## Goal
@@ -31,8 +31,15 @@ identifies an index root.
 
 ## Acceptance Criteria
 
-- [ ] A user can inspect and change the preferred default index root.
-- [ ] The setting survives restart.
-- [ ] Existing index-root discovery takes precedence when a marker is present.
-- [ ] Missing or invalid settings fall back safely.
-- [ ] Tests cover persistence, precedence, restart behavior, and invalid paths.
+- [x] A user can inspect and change the preferred default index root.
+- [x] The setting survives restart.
+- [x] Existing index-root discovery takes precedence when a marker is present.
+- [x] Missing or invalid settings fall back safely.
+- [x] Tests cover persistence, precedence, restart behavior, and invalid paths.
+
+## Completion — 2026-10-04
+
+Implemented through `:indexroot` in both application views, with Browse, Save,
+Cancel and Restore Defaults. The preference applies only when resolving future
+workspace paths contained by that root; existing markers remain authoritative.
+See the implementation ticket for automated evidence and platform limits.

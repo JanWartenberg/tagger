@@ -248,6 +248,13 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             ),
         ),
         ActionSpec(
+            id="indexroot",
+            views=("tagging", "duplicate_review"),
+            description="Inspect or change the default index root",
+            handler_name="configure_default_index_root",
+            command=CommandBinding("indexroot"),
+        ),
+        ActionSpec(
             id="reindex",
             description="Fully refresh the active photo index",
             handler_name="reindex_active_root",

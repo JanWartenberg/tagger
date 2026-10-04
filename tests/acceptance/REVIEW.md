@@ -543,3 +543,30 @@ Standards: zero blocking findings, two follow-up concerns. Spec: zero findings.
 - `main` was an ancestor of the accepted branch. Local fast-forward merge through
   `3e6b356` completed without conflicts; no push or branch deletion performed.
 - This follow-up documentation commit records the final branch and review evidence.
+# Configurable default index root — 2026-10-04
+
+Implemented `:indexroot` with inspect/edit/browse, persisted preference, reset,
+cancellation and visible validation/save errors. Existing marker discovery,
+containment and empty-search root retention are preserved; saving leaves the
+active workspace and last-folder preference intact.
+
+- Passed: 11 focused pytest cases exercising Qt command/dialog controls, real
+  isolated config persistence, new-window loading, invalid/removed roots and
+  production path resolution. The focused suite was rerun after adding a guard
+  against unexpectedly open test dialogs.
+- Passed: `ruff check .`, changed-file Ruff format checks, and full offscreen
+  pytest: 355 passed, four Windows skips, 33 subtests.
+- Passed and independently inspected: portable real-file report
+  `reports/20261004T174041.175361Z/report.json`, ten phases and 28 cases, both backup
+  settings, with verified process cleanup. This is regression coverage;
+  preference-specific acceptance comes from the focused tests.
+- Initial runner attempts were blocked by restored workspace ownership and Git
+  safe-directory checks before any photo phases. Corrected local permissions
+  and supplied a process-local safe-directory setting; the complete run passed.
+- Maintainer reported `:indexroot` opens the dialog and allows choosing a folder,
+  accepted the change and authorized committing it. No independent desktop
+  visual inspection was performed by the agent.
+- Unrun: broader dialog scaling checks and native Windows automated execution.
+  Windows sharing locks/native cleanup were unchanged and are not validated by
+  this Linux run. Previous M9 acceptances remain valid; no new waiver.
+  Implementation and updated acceptance notes are committed together.

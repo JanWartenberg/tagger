@@ -1,5 +1,13 @@
 # Minimal Windows visual smoke
 
+New dialog follow-up (2026-10-04; prior accepted checks below remain valid):
+
+- [x] Maintainer confirmed `:indexroot` opens the dialog and allows choosing a
+  folder, and accepted the change for commit. This is maintainer-reported evidence.
+- [ ] Broader appearance check from both views: the path, Browse,
+  Save, Cancel, Restore Defaults and validation errors fit at the usual scaling.
+  Functional behavior is automated in `tests/test_default_index_root.py`.
+
 Accepted by the maintainer on 2026-10-04. Larger-font testing was explicitly
 waived because the font is unchanged; window scaling passed. Checked items
 record accepted coverage, including that waiver. Metadata correctness, refusal,
