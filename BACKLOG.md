@@ -17,6 +17,27 @@ on 2026-10-04. No next active milestone has been selected.
   Window scaling passed; larger-font testing was explicitly waived and accepted
   because the font is unchanged.
 
+## Session handoff — 2026-10-06
+
+- Final focused Windows paired report supplied and independently inspected:
+  median pair gains 10.7% read and 11.2% initial index, meeting the original
+  thresholds. The 1,000-path adapter block is retained; refresh remains 200.
+  No further Windows benchmark required; performance ticket completed.
+- Timing claims apply to generated JPEGs with warm caches; Windows controls
+  still fluctuate. Earlier rollback and measurement details are in the ticket.
+- Portable real-file regression report `20261006T164501.259170Z` passed all
+  ten phases/28 cases. Existing M9/UI acceptance remains valid; UI, writes and
+  process lifecycle did not change.
+- Pre-commit review fixed benchmark assertion disabling under Python `-O`,
+  opaque index-reset failures and incomplete post-write metadata verification.
+  Maintainer authorized review, fixes and commit; no push authorized.
+- Previous preview-test instability remains undiagnosed; the final implementation
+  run passed 374 tests/four Windows skips. Review validation is recorded in
+  `tests/acceptance/REVIEW.md`.
+- Review complete: all actionable findings fixed; Ruff/format, 380 offscreen
+  tests/four Windows skips and diff checks passed. Performance work committed
+  on main with maintainer authorization; no push. No active milestone selected.
+
 ## Session handoff — 2026-10-04
 
 - Configurable default index root implemented as `:indexroot`; its ticket is
@@ -44,7 +65,6 @@ on 2026-10-04. No next active milestone has been selected.
 
 **M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
-- [Performance follow-up](.scratch/performance-follow-up-real-workload/issues/01-measure-and-optimize-next-real-workload-bottleneck.md) remains deferred until one to three other topics have been completed.
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
 - [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is a low-priority follow-up to M8.
 

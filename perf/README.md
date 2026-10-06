@@ -1,5 +1,71 @@
 # TAGGER core profiling harness
 
+## Real ExifTool workload
+
+`profile_real.py` complements the synthetic harness below. It generates a
+1024×768 JPEG seed and 1,000 disposable copies in Unicode directories, with
+Unicode IPTC/XMP keywords and an EXIF capture date. It uses production discovery,
+ExifTool argument-file transport, indexing, resumable refresh, PhotoWorkspace,
+and tag-mutation service. It accepts no personal-photo input path. Requires
+the development environment and ExifTool on PATH.
+
+```sh
+python perf/profile_real.py --photos 1000 --repeats 3 --json-out perf/results/real.json
+```
+
+Windows uses the same command from an activated development environment.
+For a same-revision comparison, run once with `--read-batch-size 200` and once
+with `--read-batch-size 1000`, writing separate JSON files. This changes only the
+benchmark process's read block; production files and refresh subgroups are not
+modified.
+The production read default is 1,000, accepted after paired Linux and Windows
+measurements; refresh still uses 200-photo subgroups. `--read-batch-size 200`
+reproduces the previous adapter block. If unchanged scenarios
+drift between runs, compare again in reverse order with more repetitions rather
+than attributing the difference to block size. A slow first read may occur even
+after fixture generation; OS-cache warmth alone does not remove other startup
+or filesystem effects.
+
+For noisy results, use the focused paired comparison instead of separate broad
+runs. It creates one fixture, records a full untimed metadata warmup, then
+alternates 200/1,000 and 1,000/200 order. Each variant receives a fresh SQLite
+index; only bulk read, initial sync and unchanged-sync controls are timed. No
+tag mutations occur in this mode. An even repetition count balances order.
+
+```sh
+python perf/profile_real.py --photos 1000 --repeats 6 --compare-batches --json-out perf/results/real-windows-paired.json
+```
+
+JSON includes every variant's block size/order, per-pair percentage differences
+and their medians, alongside absolute timing medians and subprocess counts.
+Compare neighboring pairs and unchanged-sync controls; an overall median alone
+does not remove system drift. This mode cannot combine with `--read-batch-size`
+or profiling.
+Results include revision/worktree, platform, Python/ExifTool versions, seed hash
+and size, repeat count, median and individual end-to-end timings, subprocess
+time/calls/output bytes and SQLite statement counts. On POSIX, CPU and filesystem
+block I/O are reported separately for Python and child processes; these counters
+are unavailable on Windows. Every repeat rebuilds a fresh SQLite index; OS caches
+are warm after generating files. This is **not** a cold-cache measurement or a
+camera-original dataset. UI event-to-render latency is not measured here.
+
+Metadata writes use only temporary copies; writes are reread and reset outside
+timings. Verification checks all selected files, both keyword fields and the
+capture date. Run without Python optimization (`-O`/`PYTHONOPTIMIZE`); the
+harness rejects disabled assertions. Index-reset failures stop the run instead
+of allowing a cached index to masquerade as fresh. Each ExifTool invocation is
+bounded to 30 seconds. Whole-workload
+diagnostics with Python allocation peaks and cProfile are a separate run:
+
+```sh
+python perf/profile_real.py --photos 1000 --repeats 1 --profile-out perf/results/real.prof --json-out perf/results/real-profile.json
+```
+
+Do not compare profiled timings to timing-only results. Compare identical
+fixture parameters and environment before/after; Linux results do not establish
+Windows performance. Keep useful measurement summaries in the ticket since raw
+`perf/results/` artifacts are ignored.
+
 This harness lives outside the application runtime and uses only disposable
 temporary data. It imports TAGGER's core modules to exercise real discovery,
 index, and workspace logic, but uses a deterministic `SyntheticExifTool`; no

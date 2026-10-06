@@ -543,6 +543,128 @@ Standards: zero blocking findings, two follow-up concerns. Spec: zero findings.
 - `main` was an ancestor of the accepted branch. Local fast-forward merge through
   `3e6b356` completed without conflicts; no push or branch deletion performed.
 - This follow-up documentation commit records the final branch and review evidence.
+
+# Real-workload performance follow-up — 2026-10-06
+
+Added `perf/profile_real.py` using generated disposable Unicode-path JPEG copies
+and production ExifTool, discovery, indexing, refresh, workspace and mutation
+services. Reduced large-read subprocess starts with 1,000-photo adapter blocks;
+refresh subgroups remain 200 and all writes remain unchanged.
+
+- Passed: nine new subprocess-boundary tests, including error propagation and
+  Unicode field/date identity. Four process-count cases failed before the change
+  and passed afterward. Real 1,001-photo read/sync/refresh acceptance also passed.
+- Passed: two independent three-repeat before/after comparisons. Final paired
+  Linux/WSL medians: read 1.653→1.428 s (13.6% faster), initial index
+  1.692→1.494 s (11.7% faster). Read/sync processes fell from five to one.
+  Refresh remained five processes; no refresh improvement is claimed.
+- Separate profiled runs: Python read peak rose by about 0.51 MiB; Python
+  initial-index peak by about 0.38 MiB. Child memory not measured.
+- Passed: Ruff check/changed-file format and full offscreen pytest: 364 passed,
+  four Windows skips, 33 subtests.
+- Passed and independently inspected: real-file regression report
+  `reports/20261006T160518.906332Z/report.json`, ten phases, 28 cases, both backup
+  settings, verified process cleanup. The unchanged matrix provides regression
+  coverage; the new tests/harness validate the large-read change.
+- At the portable checkpoint, unrun: native Windows timings (requested), cold-cache/camera-original timings,
+  UI render latency, native Windows lock/cleanup rerun. No checks waived. Prior
+  M9 native lock/cleanup and visual acceptance remain valid; process lifecycle,
+  writes and UI were not changed. Linux measurements establish no Windows claim.
+- Work remains uncommitted; subsequent Windows evidence and rollback follow.
+
+## Inspected Windows performance evidence and rollback — 2026-10-06
+
+Maintainer supplied both reports; the agent inspected JSON contents independently:
+`perf/results/real-windows-200.json`, `perf/results/real-windows-1000.json`.
+Windows 11 build 26300, Python 3.14.7 AMD64, ExifTool 13.59, same revision,
+fixture hash/size and three repetitions. Both completed all assertion checks.
+
+Bulk-read median improved 3.548→3.031 s (14.6%); initial-index median worsened
+3.253→4.368 s (34.3%). Initial-index ExifTool median time improved
+2.939→2.180 s, while other time increased. The unchanged sync (no ExifTool),
+discovery, workspace and refresh controls also slowed substantially. First
+bulk-read timings were outliers (14.384/21.942 s). These observations establish
+timing drift, not its cause or a causal regression from read-block size.
+
+The predeclared end-to-end criterion is unmet on Windows. Restored production
+read blocks to 200; 1,000 remains only a benchmark override. The boundary tests
+now cover both variants. No speedup is retained pending a reverse-order,
+five-repeat Windows comparison. Native Windows execution was maintainer-run;
+the reports were agent-inspected. Ticket remains needs-info, no commit.
+Rollback verification passed: Ruff check/format and full offscreen pytest,
+373 passed, four Windows skips, 33 subtests. Existing small-request real-file
+regression coverage is unchanged by restoring the block size.
+
+## Reverse-order Windows evidence and focused comparison
+
+Independently inspected `perf/results/real-windows-repeat-1000.json` and
+`real-windows-repeat-200.json`: five repetitions, reversed order, same
+versions/revision/fixture hash. Read medians favor 1,000 by 18.3% and initial-index
+medians by 30.3%, but unchanged-sync controls remain mismatched (0.089 versus
+0.773 s) with large within-run swings. First bulk reads remain outliers.
+The previous unfavorable initial-index result is therefore not resolved by
+the new aggregate medians. Production default stays at 200, no commit.
+
+Added focused `--compare-batches` mode: one fixture, full untimed metadata
+warmup recorded separately, alternating order, fresh DB for each variant,
+read/sync/unchanged-sync only, and raw/per-pair differences in the JSON.
+Generated 201-photo/two-pair smoke passed both orderings and block boundaries.
+The corresponding real-ExifTool pytest checks freshness, zero warm-sync reads,
+both pair orders and complete indexing. Windows paired evidence remains unrun.
+
+Local four-pair 1,000-photo report: `perf/results/real-linux-paired.json`.
+Read medians 1.641→1.458 s; initial sync 1.728→1.493 s, with stable warm-sync
+controls near 0.025 s. This is local evidence only, not Windows acceptance.
+Median within-pair gains were 12.7% read and 13.4% initial sync.
+
+Ruff/format and the new real-ExifTool harness integration test passed. The first
+full run had 373 passes and one failure in the unchanged latest-selection preview
+test (0.425 s versus its 0.4 s limit); a targeted rerun failed on an extra initial
+preview start. The cause is undiagnosed; no preview code/test was altered here.
+The unchanged full rerun passed: 374 tests, four Windows skips, 33 subtests in
+116.33 s. Earlier failures are not presented as fixed or waived; no further
+test repetitions were run after this full pass.
+
+## Final Windows paired read-block acceptance — 2026-10-06
+
+Maintainer ran and supplied `perf/results/real-windows-paired.json`; the agent
+independently inspected all 36 samples, versions, fixture identity, balanced
+order, warmup and subprocess counts. Windows 11/Python 3.14.7/ExifTool 13.59.
+Median within-pair gains meet the predeclared 10% thresholds: 10.7% bulk read,
+11.2% initial index. Five of six pairs improve each total; ExifTool time improves
+in every pair (median 20.3%/21.2%). Control matching in the last two pairs
+supports both orderings. All unfavorable samples remain in the report.
+
+Retain 1,000-path adapter blocks. No further Windows performance run required.
+Control timings still span about 0.09–1.05 s: these are noisy generated-fixture
+results, not universal/camera-original/cold-cache improvement claims. Refresh
+subgroups, writes, process lifecycle and UI remain unchanged. Native lock/cleanup
+reruns and UI rendering timings remain unrun, not waived; prior acceptance is
+preserved. Final local regression verification passed: Ruff/format, 374 pytest
+cases, four Windows skips, 33 subtests. Independently inspected real-file report
+`reports/20261006T164501.259170Z/report.json`: ten phases, 28 cases across both
+backup settings and verified process cleanup. Ticket completed, no commit.
+Earlier preview-test instability remains undiagnosed; this final run passed
+without altering that test or preview code. No further repetitions requested.
+
+## Pre-commit review — real-workload performance
+
+Maintainer authorized review, fixes and commit. No blocker in production read
+batching. Fixed benchmark-only findings: reject Python optimization before
+fixtures/results, fail clearly on index-reset errors, and verify complete
+post-write records, both exact keyword fields, readability and capture date.
+Six additional focused regressions cover these cases. Focused tests (25) and
+the broad three-photo read/index/refresh/write smoke passed. Ruff/format passed.
+Current backlog handoff now states the final accepted behavior without obsolete
+rollback/waiting-state bullets. No new Windows timing is needed: application
+behavior is unchanged by these review fixes. Previous real-file report
+`reports/20261006T164501.259170Z/report.json` remains the inspected regression
+evidence for the application change. Full pre-commit pytest passed: 380 tests,
+four Windows skips, 33 subtests in 41.62 s. Ruff/format and diff checks passed.
+All actionable review findings are fixed; no unresolved commit blocker or
+product question. The implementation, tests and acceptance notes are committed
+together with maintainer authorization; no push.
+
 # Configurable default index root — 2026-10-04
 
 Implemented `:indexroot` with inspect/edit/browse, persisted preference, reset,

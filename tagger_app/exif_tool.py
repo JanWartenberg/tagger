@@ -10,6 +10,8 @@ from tagger_app.services.keyword_limits import (
 )
 from tagger_app.utils import dedupe_casefold, normalize_path
 
+_KEYWORD_READ_BATCH_SIZE = 1000
+
 
 @dataclass
 class KeywordState:
@@ -188,8 +190,9 @@ class ExifTool:
         norm_input = [normalize_path(p) for p in file_paths]
         out: dict[str, KeywordState] = {}
 
-        # Avoid Windows command-line length limits by chunking.
-        chunk_size = 200
+        # UTF-8 argument-file transport avoids command-line length limits. Bound
+        # JSON memory while amortizing process startup over larger read batches.
+        chunk_size = _KEYWORD_READ_BATCH_SIZE
         for i in range(0, len(norm_input), chunk_size):
             chunk = norm_input[i : i + chunk_size]
             stdout = self._run(
