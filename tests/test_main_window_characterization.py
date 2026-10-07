@@ -19,6 +19,7 @@ from typing import ClassVar
 from unittest.mock import patch
 
 from tagger_app.utils import normalize_path
+from tagger_app.services.ignored_candidates import IgnoredCandidateStore
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -58,6 +59,16 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
 
     def setUp(self) -> None:
+        self.ignore_storage = tempfile.TemporaryDirectory()
+        self.addCleanup(self.ignore_storage.cleanup)
+        self.ignore_storage_patch = patch(
+            "tagger_app.ui.main_window.IgnoredCandidateStore",
+            side_effect=lambda root: IgnoredCandidateStore(
+                Path(self.ignore_storage.name) / str(abs(hash(root)))
+            ),
+        )
+        self.ignore_storage_patch.start()
+        self.addCleanup(self.ignore_storage_patch.stop)
         self.exif_patch = patch("tagger_app.ui.main_window.ExifTool", FakeExifTool)
         self.index_patch = patch("tagger_app.ui.main_window.PhotoIndex", FakePhotoIndex)
         self.storage_patches = [
@@ -1166,12 +1177,14 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("Edit mode: off", self.window.duplicateEditModeButton.text())
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
+        self._wait_until(lambda: self.window.duplicateResultsButton.isVisible())
         ignored = next(
             button
             for button in self.window.duplicateResultsButton.menu().actions()
             if "Ignored" in button.text()
         )
         ignored.trigger()
+        self._restore_ignored_candidate()
         self.assertTrue(self._copy_control(source, "source").isChecked())
         self.assertFalse(self._copy_control(first, "target").isChecked())
 
@@ -1366,7 +1379,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertFalse(hasattr(self.window, "duplicateStatusRowsScroll"))
         self.assertFalse(self.window.duplicateResultsButton.isVisible())
         self.window.ignore_active_duplicate_group()
-        self.app.processEvents()
+        self._wait_until(lambda: self.window.duplicateResultsButton.isVisible())
         button = self.window.duplicateResultsButton
         self.assertTrue(button.isVisible())
         self.assertTrue(self.window.statusBar().isAncestorOf(button))
@@ -1402,6 +1415,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         original_height = self.window.minimumSizeHint().height()
         for _ in range(20):
             self.window.ignore_active_duplicate_group()
+            self._wait_until(lambda: not self.window._duplicate_ignore_busy)
         QtTest.QTest.qWait(1)
         self.assertLessEqual(
             self.window.minimumSizeHint().height(), original_height + 40
@@ -1411,6 +1425,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.statusBar().isAncestorOf(self.window.duplicateResultsButton)
         )
         self.window.duplicateResultsButton.menu().actions()[-1].trigger()
+        self._restore_ignored_candidate()
         self.assertIsNotNone(self.window._active_duplicate_group_id)
         self.assertEqual(len(self.window._visible_duplicate_group_ids), 1)
 
@@ -1618,12 +1633,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._copy_control(member_paths[0], "source").setFocus()
 
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
+        self._wait_until(lambda: not self.window._duplicate_ignore_busy)
         self.assertNotIn(second_group_id, self.window._visible_duplicate_group_ids)
         self.assertEqual(len(self.window._duplicate_group_buttons), 1)
         self.assertEqual(
             self.window._active_duplicate_group_id, result.groups[0].group_id
         )
-        self.assertIn("not saved", self.window.statusBar().currentMessage())
+        self.assertIn("remembered", self.window.statusBar().currentMessage())
 
     def test_duplicate_candidate_filters_hide_dead_ends_and_combine_sensibly(self):
         examples = (
@@ -1816,6 +1832,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
     def test_view_selector_coexists_with_active_status_bar_widgets(self) -> None:
         self._scan_copy_candidates()
         self.window.ignore_active_duplicate_group()
+        self._wait_until(lambda: self.window.duplicateResultsButton.isVisible())
         self.window.iptcEmptyRefreshOffer.show()
         self.window.indexRepairStatusLabel.setText("Index refresh: 12,345 / 98,765")
         self.window.statusBar().showMessage("Scanning the active photo workspace")
@@ -1843,6 +1860,20 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.window.statusBar().currentMessage(),
             "Scanning the active photo workspace",
         )
+
+    def _restore_ignored_candidate(self):
+        dialog = self.app.activeModalWidget()
+        self._wait_until(lambda: dialog.findChild(QtWidgets.QListWidget).count() > 0)
+        before = dialog.findChild(QtWidgets.QListWidget).count()
+        next(
+            button
+            for button in dialog.findChildren(QtWidgets.QPushButton)
+            if button.text() == "Restore"
+        ).click()
+        self._wait_until(
+            lambda: dialog.findChild(QtWidgets.QListWidget).count() == before - 1
+        )
+        dialog.reject()
 
     def _open_help_text(self):
         captured = []

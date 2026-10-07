@@ -124,7 +124,13 @@ After confirmation, review advances immediately while the submitted group
 collapses to a compact pending row with a spinner and then a completed state. A
 partial failure remains as a prominent reopenable row with per-target outcomes
 and retry only for failed targets. Ignore similarly collapses a group to a
-recoverable `Ignored` row and advances; it lasts only for the current scan.
+recoverable `Ignored` row and advances after persistence succeeds. Decisions
+are stored per index across scans and restarts. Identity includes the detector,
+normalized member paths and per-member capture timestamp/field evidence, excluding
+tags and scan-local IDs. Changed identity becomes eligible for review. The
+Ignored candidates list permits read-only inspection of saved evidence and photo
+previews; Restore and confirmed Clear all ignores explicitly remove decisions.
+Saved tags are labelled as historical, and missing photos show Preview unavailable.
 
 Returning to normal tagging preserves its selection, filters, and search state.
 Review source/target choices remain local to duplicate review.

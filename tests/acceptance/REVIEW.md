@@ -692,3 +692,48 @@ active workspace and last-folder preference intact.
   Windows sharing locks/native cleanup were unchanged and are not validated by
   this Linux run. Previous M9 acceptances remain valid; no new waiver.
   Implementation and updated acceptance notes are committed together.
+
+# Persistent duplicate candidate ignores — 2026-10-07
+
+Ticket 04 implements the agreed per-index persistence and evidence identity.
+Decisions live in a separate `.tagger/ignored_candidates.sqlite`, preserving
+ignores when the photo cache is rebuilt. Ignore advances only after successful
+background persistence; errors leave the candidate visible and enter Session
+errors. Tags and scan IDs do not affect identity. Changed members, timestamps
+or provenance return candidates; historical records remain available for
+inspection until explicitly restored or cleared.
+
+Ignored candidates / `:ignoredcandidates` and ignored footer entries open a
+read-only list with asynchronous photo previews, saved evidence and historical
+tag labels. Restore and confirmed Clear all ignores are explicit, index-scoped
+actions. Closing during loading discards stale widget updates. Footer copy
+outcomes/retry behavior and prior unrelated M9 acceptance remain unchanged.
+
+- Passed: Ruff check, changed-file format checks and diff whitespace checks.
+- Passed: 11 focused persistence/Qt tests; final full offscreen pytest:
+  **391 passed, four Windows-only skips**.
+- Passed and independently inspected: final portable report
+  `reports/20261007T175150.109036Z/report.json`, **fourteen phases/38 cases**,
+  both backup settings, process cleanup and temporary-workspace removal.
+  Ten added cases cover Ignore without photo writes, fresh-process persistence
+  and read-only previews, explicit restore, confirmed clear-all, and changed
+  capture provenance returning candidates. JPEG hashes and file sets remain
+  unchanged by each application action.
+- Preserved failed attempt: `reports/20261007T174722.360718Z` reached Ignore but
+  asserted source visibility before Qt layout finished. Added bounded waits for
+  visible source/Ignore controls. `reports/20261007T174904.450110Z` then passed
+  all fourteen phases/38 cases, as did the final post-review run.
+- Two independent read-only reviews in each of two rounds. Round 1 found
+  filesystem path resolution during GUI-side identity hashing. The helper now
+  performs lexical normalization on canonical scan paths, without filesystem
+  access; its focused regression failed before and passed after the fix.
+  Round 2 returned no findings; both reviewers independently ran 11 focused tests.
+- Maintainer-reported: quick feature acceptance passed, followed by explicit
+  commit authorization. Platform, detailed scaling observations and an automated
+  report were not supplied. The accepted quick check should not be repeated.
+- Unconfirmed, not waived: full Windows execution of this revision and detailed
+  scaling coverage of the added dialog/header control. Inspect the supplied
+  Windows report before closing ticket 04. Linux does not validate native
+  sharing locks or Job Object cleanup. Existing unrelated acceptance stays valid.
+- Implementation and acceptance notes are committed together with maintainer
+  authorization. No merge or push requested.

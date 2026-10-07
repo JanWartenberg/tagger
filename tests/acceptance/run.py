@@ -18,6 +18,13 @@ from process_control import start_child, stop_child
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 REQUIRED_CASES = {
+    "ignore": {"ignore_remembered_without_photo_writes"},
+    "ignored-reopen": {
+        "fresh_process_ignore_and_read_only_inspection",
+        "explicit_restore_persists_without_photo_writes",
+        "clear_all_ignores_without_photo_writes",
+        "changed_capture_evidence_returns_without_photo_writes",
+    },
     "copy": {"cancel_copy", "confirmed_subset", "backup_policy"},
     "reopen": {"fresh_application_persistence"},
     **{
@@ -83,6 +90,8 @@ def run_phase(root, env, phase, backup, report_dir, report):
             / (
                 "confirmed_copy.py"
                 if phase in ("copy", "reopen")
+                else "ignored_candidates.py"
+                if phase in ("ignore", "ignored-reopen")
                 else "locked_copy.py"
                 if phase == "windows-lock"
                 else "safety_cases.py"
@@ -172,6 +181,7 @@ def main():
             for name in (
                 "run.py",
                 "confirmed_copy.py",
+                "ignored_candidates.py",
                 "process_control.py",
                 "safety_cases.py",
                 "locked_copy.py",
@@ -209,6 +219,8 @@ def main():
                         "safety-preview",
                         "safety-confirm",
                         "write-guard",
+                        "ignore",
+                        "ignored-reopen",
                     ]
                     if os.name == "nt":
                         phases.append("windows-lock")

@@ -52,10 +52,11 @@ Each run checks both backup settings in separate disposable workspaces:
 | Persistence | Writer exits; a separate process displays saved tags and rereads metadata; JPEGs/backups unchanged |
 | Preview/confirmation refusal | Changed or missing source/target rejected after a positive unchanged-file control; all remaining file bytes and file sets unchanged |
 | Final target write guard | Changed/missing target is reported failed without metadata or backup writes |
+| Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; all application actions leave JPEG hashes/file sets unchanged |
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
 
-Both backup settings are required. Linux requires 28 case results across ten
-process phases. Windows requires 32 results across twelve phases plus the native
+Both backup settings are required. Linux requires 38 case results across fourteen
+process phases. Windows requires 42 results across sixteen phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;

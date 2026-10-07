@@ -17,6 +17,21 @@ on 2026-10-04. No next active milestone has been selected.
   Window scaling passed; larger-font testing was explicitly waived and accepted
   because the font is unchanged.
 
+## Current follow-up — 2026-10-07
+
+- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) selected for implementation after product rules were agreed.
+- Persistence per index, evidence-based identity, read-only inspection, explicit
+  restore and confirmed clear-all are implemented and verified locally.
+- No new numbered milestone selected; ticket remains assigned to M-Future.
+  Maintainer authorized commit after a successful quick acceptance check.
+  Implementation and acceptance notes are committed together. Final verification:
+  391 pytest passes/four Windows skips, Ruff/format and 14 real-file phases/38
+  cases passed; two independent
+  review rounds have no remaining findings. Report: `20261007T175150.109036Z`.
+  Quick acceptance is maintainer-reported; full Windows automated results and
+  detailed scaling checks remain unconfirmed. Inspect supplied Windows evidence
+  before closing ticket 04; preserve the accepted quick check. No push requested.
+
 ## Session handoff — 2026-10-06
 
 - Final focused Windows paired report supplied and independently inspected:
@@ -66,7 +81,7 @@ on 2026-10-04. No next active milestone has been selected.
 **M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
-- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is a low-priority follow-up to M8.
+- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is the selected follow-up to M8 (implemented; Windows acceptance pending).
 
 ## Historical milestones
 

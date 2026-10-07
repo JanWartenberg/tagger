@@ -1,5 +1,17 @@
 # Minimal Windows visual smoke
 
+Persistent ignores follow-up (2026-10-07; previous unrelated checks remain valid):
+
+- [x] Maintainer reported a successful quick feature acceptance check and
+  authorized commit. No platform, detailed scaling observations or automated
+  report were supplied; do not repeat the accepted quick check.
+- [ ] Detailed scaling coverage (not reported by the quick check): Ignored
+  candidates button and dialog fit at the usual Windows scaling.
+  List, photo previews, long paths, capture evidence, historical tag labels and
+  Restore / Clear all ignores / Close remain readable; keyboard focus is usable.
+  Opening an ignored footer entry now inspects without restoring. Functional
+  persistence/recovery is automated; this check concerns appearance only.
+
 New dialog follow-up (2026-10-04; prior accepted checks below remain valid):
 
 - [x] Maintainer confirmed `:indexroot` opens the dialog and allows choosing a
@@ -53,7 +65,8 @@ candidate group with a tagged source and an empty target; do not confirm a write
   without a write.
 - [x] No results strip/scroll area between navigation and candidate cards. The
   footer shows a subtle Saved N or pending/failed/cancelled attention. Its menu
-  reopens outcomes, restores ignored candidates and reaches failed-only retry (02l).
+  reopens outcomes and reaches failed-only retry (02l). Its previously accepted
+  immediate ignore restoration is superseded by explicit recovery in ticket 04.
 
 Maintainer previously accepted Scan setup, candidate filtering, context menus,
 scrollbar fixes, Copy shortcut, Alt+U navigation and the preview layout. On

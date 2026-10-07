@@ -223,9 +223,16 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             key_routes=(
                 KeyRoute(kind="single", sequence=("i",), scope="duplicate_edit"),
             ),
-            description="Ignore active candidate group for this scan",
+            description="Remember active candidate group as ignored across scans and restarts",
             handler_name="ignore_active_duplicate_group",
             command=CommandBinding("ignorecandidate"),
+        ),
+        ActionSpec(
+            id="ignoredduplicates",
+            views=("duplicate_review",),
+            description="Inspect ignored candidates; explicitly restore one or clear all ignores",
+            handler_name="show_ignored_duplicate_candidates",
+            command=CommandBinding("ignoredcandidates"),
         ),
         ActionSpec(
             id="editduplicates",

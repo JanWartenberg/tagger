@@ -142,6 +142,7 @@ class DuplicateScanProgress:
 class DuplicateScanCompleted:
     request: ScanRequest
     result: ScanResult
+    ignored_identities: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,8 @@ class DuplicateScanCoordinator:
         self,
         snapshot: DuplicateScopeSnapshot,
         detector: DuplicateCandidateDetector,
+        *,
+        load_ignored: Callable[[], frozenset[str]] | None = None,
     ) -> ScanRequest:
         with self._lock:
             if self._cancel_event is not None:
@@ -211,6 +214,11 @@ class DuplicateScanCoordinator:
                     ),
                     is_cancelled=cancel_event.is_set,
                 )
+                ignored = (
+                    load_ignored()
+                    if load_ignored and not cancel_event.is_set()
+                    else frozenset()
+                )
             except Exception as error:  # noqa: BLE001 - worker reports failures
                 publish(
                     DuplicateScanFailed(
@@ -221,7 +229,7 @@ class DuplicateScanCoordinator:
                 )
                 return
             if result.complete and not cancel_event.is_set():
-                publish(DuplicateScanCompleted(request, result))
+                publish(DuplicateScanCompleted(request, result, ignored))
 
         self._runner.submit(work)
         return request

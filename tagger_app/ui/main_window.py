@@ -72,6 +72,10 @@ from tagger_app.services.duplicate_detection import (
     ScopePreparationFailed,
 )
 from tagger_app.services.error_history import SessionErrorHistory
+from tagger_app.services.ignored_candidates import (
+    IgnoredCandidateStore,
+    candidate_identity,
+)
 from tagger_app.services.keyword_limits import (
     iptc_keyword_list_violation,
     keyword_length_violation,
@@ -103,6 +107,7 @@ from tagger_app.services.tag_propagation import (
     validate_propagation,
 )
 from tagger_app.ui.duplicate_copy_preview import DuplicateCopyPreview
+from tagger_app.ui.ignored_candidates import IgnoredCandidatesDialog
 from tagger_app.storage import (
     add_recent_tag,
     load_config,
@@ -818,6 +823,7 @@ class MainWindow(QtWidgets.QMainWindow):
     backgroundDiscoveryEvent = QtCore.pyqtSignal(object)
     duplicateScopeEvent = QtCore.pyqtSignal(object)
     duplicateScanEvent = QtCore.pyqtSignal(object)
+    duplicateIgnoreEvent = QtCore.pyqtSignal(object)
 
     def __init__(
         self,
@@ -905,6 +911,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._config = load_config()
         discovery_adapter = discovery or FileSystemPhotoDiscovery()
         background_runner_adapter = background_runner or QtBackgroundRunner(self.pool)
+        self._duplicate_ignore_runner = background_runner_adapter
+        self._duplicate_ignore_busy = False
+        self._duplicate_ignore_root: str | None = None
+        self.duplicateIgnoreEvent.connect(self._handle_duplicate_ignore_event)
         self._background_coordinator = BackgroundCoordinator(
             discovery=discovery_adapter,
             index=index_adapter or PhotoIndexAdapter(self.exif),
@@ -1486,6 +1496,16 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_duplicate_scan_setup_visible
         )
         header.addStretch(1)
+        self.duplicateIgnoredCandidatesButton = QtWidgets.QPushButton(
+            "Ignored candidates"
+        )
+        self.duplicateIgnoredCandidatesButton.setToolTip(
+            "Inspect remembered candidates; restore or clear ignores explicitly"
+        )
+        self.duplicateIgnoredCandidatesButton.clicked.connect(
+            self.show_ignored_duplicate_candidates
+        )
+        header.addWidget(self.duplicateIgnoredCandidatesButton)
         self.duplicateAddFolderButton = QtWidgets.QPushButton("Add folder")
         self.duplicateAddFolderButton.setToolTip(
             "Add all JPG/JPEG files from a folder (Ctrl+O)"
@@ -1669,7 +1689,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateEditModeButton.installEventFilter(self)
         self.duplicateIgnoreButton = QtWidgets.QPushButton("Ignore candidate (i)")
         self.duplicateIgnoreButton.setToolTip(
-            "Ignore this group for this scan (i in Edit mode); reopen its Ignored row to restore"
+            "Remember this group as ignored (i in Edit mode); inspect or restore it in Ignored candidates"
         )
         self.duplicateIgnoreButton.clicked.connect(self.ignore_active_duplicate_group)
         assessment_actions_layout.addWidget(self.duplicateIgnoreButton)
@@ -1757,6 +1777,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self._ensure_duplicate_scope_prepared()
 
     def _refresh_duplicate_scope_controls(self) -> None:
+        self.duplicateIgnoredCandidatesButton.setEnabled(
+            not self._duplicate_ignore_busy
+            and self._active_duplicate_scan_id is None
+            and bool(
+                self._duplicate_ignore_root
+                or self._index_root
+                or self._prepared_duplicate_scope
+            )
+        )
         kind = self.duplicateScopeCombo.currentData()
         prepared = self._prepared_duplicate_scope
         if prepared is not None and prepared.kind is kind:
@@ -1768,7 +1797,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "may take some time. Progress and cancellation remain available."
             )
             self.duplicateStartScanButton.setEnabled(
-                self._active_duplicate_scan_id is None and bool(prepared.paths)
+                self._active_duplicate_scan_id is None
+                and bool(prepared.paths)
+                and not self._duplicate_ignore_busy
             )
             return
         self.duplicateStartScanButton.setEnabled(False)
@@ -1936,11 +1967,12 @@ class MainWindow(QtWidgets.QMainWindow):
             "their metadata to find candidate groups; no files will be changed."
         )
         self.duplicateStartScanButton.setEnabled(count > 0)
+        self._refresh_duplicate_scope_controls()
         self.statusBar().showMessage(f"Duplicate scan ready: {count:,} photos")
 
     def start_duplicate_scan(self) -> None:
         snapshot = self._prepared_duplicate_scope
-        if snapshot is None or not snapshot.paths:
+        if snapshot is None or not snapshot.paths or self._duplicate_ignore_busy:
             return
         self.duplicateScanSetupToggle.setChecked(True)
         self._duplicate_scan_result = None
@@ -1960,10 +1992,15 @@ class MainWindow(QtWidgets.QMainWindow):
             "some time; you can cancel without publishing partial results."
         )
         self.duplicateScanProgress.show()
+        self._duplicate_ignore_root = self._index_root or snapshot.root
+        store = IgnoredCandidateStore(self._duplicate_ignore_root)
         request = self._duplicate_scan_coordinator.start(
-            snapshot, self._duplicate_detector
+            snapshot,
+            self._duplicate_detector,
+            load_ignored=lambda: frozenset(record.identity for record in store.list()),
         )
         self._active_duplicate_scan_id = request.scan_id
+        self.duplicateIgnoredCandidatesButton.setEnabled(False)
 
     def cancel_duplicate_scan(self) -> None:
         if self._active_duplicate_scan_id is None:
@@ -2011,7 +2048,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"Duplicate scan failed: {event.error}")
             return
         self._duplicate_scan_result = event.result
-        self._render_duplicate_scan_result(event.result)
+        self._render_duplicate_scan_result(event.result, event.ignored_identities)
         self.statusBar().showMessage(
             f"Duplicate scan complete: {len(event.result.groups):,} candidate groups"
         )
@@ -2029,6 +2066,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 MainWindow._clear_layout(child_layout)
 
     def _clear_duplicate_results(self) -> None:
+        self._duplicate_ignore_root = None
         self._invalidate_duplicate_copy()
         self._duplicate_preview_generation += 1
         self._duplicate_assessments.clear()
@@ -2051,8 +2089,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.duplicateResultsScroll.hide()
         self.duplicateAssessmentActions.hide()
 
-    def _render_duplicate_scan_result(self, result: ScanResult) -> None:
+    def _render_duplicate_scan_result(
+        self, result: ScanResult, ignored_identities: frozenset[str] = frozenset()
+    ) -> None:
+        root = self._duplicate_ignore_root
         self._clear_duplicate_results()
+        self._duplicate_ignore_root = root
         self.duplicateReviewEmpty.hide()
         self.duplicateResultsSummary.show()
         self.duplicateShowAllCandidatesCheck.setEnabled(True)
@@ -2061,7 +2103,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._duplicate_assessments[group.group_id] = {
                 "source": None,
                 "targets": set(),
-                "ignored": False,
+                "ignored": candidate_identity(result.detector_id, group)
+                in ignored_identities,
                 "submitted": False,
                 "outcomes": {},
                 "keep_backup": False,
@@ -2597,14 +2640,102 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def ignore_active_duplicate_group(self) -> None:
         group_id = self._active_duplicate_group_id
-        if group_id is None or group_id not in self._visible_duplicate_group_ids:
+        result = self._duplicate_scan_result
+        root = self._duplicate_ignore_root
+        if (
+            group_id is None
+            or group_id not in self._visible_duplicate_group_ids
+            or result is None
+            or root is None
+            or self._duplicate_ignore_busy
+        ):
             return
         self._invalidate_duplicate_copy()
-        self._duplicate_assessments[group_id]["ignored"] = True
-        self._advance_duplicate_review(group_id)
-        self.statusBar().showMessage(
-            "Candidate ignored for this scan; the decision was not saved"
+        group = self._duplicate_group(group_id)
+        if group is None:
+            return
+
+        def ready(_value):
+            if result is self._duplicate_scan_result:
+                self._duplicate_assessments[group_id]["ignored"] = True
+                self._advance_duplicate_review(group_id)
+                self.statusBar().showMessage("Candidate ignored and remembered")
+
+        self.statusBar().showMessage("Saving ignore…")
+        self._run_duplicate_ignore_io(
+            lambda: IgnoredCandidateStore(root).remember(result.detector_id, group),
+            ready,
         )
+
+    def _run_duplicate_ignore_io(self, work, ready, failed=None) -> None:
+        if self._duplicate_ignore_busy:
+            return
+        self._duplicate_ignore_busy = True
+        self.duplicateIgnoreButton.setEnabled(False)
+        self._refresh_duplicate_scope_controls()
+
+        def ignore_work():
+            try:
+                value = work()
+            except Exception as error:  # noqa: BLE001 - worker boundary
+                self.duplicateIgnoreEvent.emit((ready, failed, None, str(error)))
+            else:
+                self.duplicateIgnoreEvent.emit((ready, failed, value, None))
+
+        self._duplicate_ignore_runner.submit(ignore_work)
+
+    def _handle_duplicate_ignore_event(self, event) -> None:
+        ready, failed, value, error = event
+        self._duplicate_ignore_busy = False
+        self.duplicateIgnoreButton.setEnabled(True)
+        self._refresh_duplicate_scope_controls()
+        if error is None:
+            ready(value)
+        else:
+            self._record_session_error("Ignored candidates", error)
+            self.statusBar().showMessage(
+                f"Could not update ignored candidates: {error}"
+            )
+            if failed is not None:
+                failed(error)
+
+    def show_ignored_duplicate_candidates(
+        self, _checked=False, *, selected=None
+    ) -> None:
+        root = self._duplicate_ignore_root or self._index_root
+        if root is None and self._prepared_duplicate_scope is not None:
+            root = self._prepared_duplicate_scope.root
+        if (
+            root is None
+            or self._duplicate_ignore_busy
+            or self._active_duplicate_scan_id is not None
+        ):
+            return
+        result = self._duplicate_scan_result
+
+        def restored(identities):
+            if result is not None and result is self._duplicate_scan_result:
+                for group in result.groups:
+                    if (
+                        candidate_identity(result.detector_id, group) in identities
+                        and self._duplicate_assessments[group.group_id]["ignored"]
+                    ):
+                        self._duplicate_assessments[group.group_id]["ignored"] = False
+                        self._active_duplicate_group_id = group.group_id
+                self._filter_duplicate_candidates()
+            self.statusBar().showMessage(
+                "Ignore removed; candidates are eligible for review"
+            )
+
+        dialog = IgnoredCandidatesDialog(
+            self,
+            IgnoredCandidateStore(root),
+            self._run_duplicate_ignore_io,
+            self._duplicate_ignore_runner,
+            restored,
+            selected,
+        )
+        dialog.open()
 
     def toggle_duplicate_edit_mode(self) -> None:
         self._duplicate_edit_mode = not self._duplicate_edit_mode
@@ -2671,6 +2802,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._duplicate_copy_preview = None
 
     def preview_duplicate_copy(self) -> None:
+        if self._duplicate_ignore_busy:
+            return
         result = self._duplicate_scan_result
         group_id = self._active_duplicate_group_id
         if result is None or group_id is None:
@@ -2930,9 +3063,12 @@ class MainWindow(QtWidgets.QMainWindow):
     def _reopen_duplicate_status(self, group_id: str) -> None:
         assessment = self._duplicate_assessments[group_id]
         if assessment["ignored"]:
-            assessment["ignored"] = False
-            self._active_duplicate_group_id = group_id
-            self._filter_duplicate_candidates()
+            group = self._duplicate_group(group_id)
+            result = self._duplicate_scan_result
+            if group is not None and result is not None:
+                self.show_ignored_duplicate_candidates(
+                    selected=candidate_identity(result.detector_id, group)
+                )
         else:
             self._show_duplicate_outcomes(group_id)
 

@@ -94,3 +94,13 @@ sophisticated matching methods.
   replaces repeated manual acceptance. The collapsible Scan setup request is
   tracked separately as ticket 02b. Integration of `prototype/duplicate-review-ui`
   into `main` still requires a separate explicit decision.
+
+## Persistent ignore follow-up — ticket 04
+
+The original M8 delivery is complete. The separately scoped M-Future follow-up
+remembers Ignore decisions per index across restarts, using detector identity,
+normalized member paths and capture timestamp/field evidence. Tag changes alone
+do not invalidate a decision; changed capture evidence or membership does.
+Ignored candidates supports read-only photo/evidence inspection and explicit
+Restore or confirmed Clear all ignores. The independent SQLite store survives
+photo-index rebuilds. See ticket 04 for current verification and acceptance.
