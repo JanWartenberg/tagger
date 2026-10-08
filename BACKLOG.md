@@ -21,8 +21,9 @@ on 2026-10-04. No next active milestone has been selected.
 
 - [Remove Duplicate review Edit mode](.scratch/duplicate-photo-detection-and-tag-propagation/issues/05-remove-duplicate-review-edit-mode.md) completed after local verification and Windows acceptance on 2026-10-08.
 - Single keys act directly, typing and copy confirmation remain protected; no
-  new numbered milestone selected. Maintainer authorized commit on 2026-10-08;
-  implementation and acceptance records are included together. No push requested.
+  new numbered milestone selected. Implementation and acceptance records were
+  committed together as `60b747b` with maintainer authorization on 2026-10-08.
+  No push requested.
 - 396 pytest passes/four Windows skips; Ruff/format and fourteen real-file phases/
   40 cases passed, including direct review/list keyboard events and Ctrl+I.
   Latest portable report: `20261008T161805.450253Z`.
@@ -39,15 +40,15 @@ on 2026-10-04. No next active milestone has been selected.
   test races; 20 repeated cases and full Linux suite (396/four skips) passed.
   Ruff 0.12/0.16 and format passed; maintainer confirmed Windows Ruff passes.
   Maintainer supplied the final Windows run: 400 tests passed in 44.03s; both
-  Ruff commands passed. No remaining verification or review findings; ready
-  for the authorized commit. Prior feature acceptance stays accepted.
+  Ruff commands passed. No remaining verification or review findings; included
+  in commit `60b747b`. Prior feature acceptance stays accepted.
 
 ## Session handoff — 2026-10-07
 
 - [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) completed after maintainer quick acceptance and independently inspected Windows verification.
 - Implementation and original acceptance notes committed as `1d6d909` with
-  maintainer authorization. No push requested. Windows acceptance updates are
-  documentation-only and remain uncommitted.
+  maintainer authorization. No push requested. Subsequent Windows acceptance
+  documentation was included in commit `60b747b`.
 - Linux: 391 pytest passes/four Windows skips, Ruff/format and fourteen real-file
   phases/38 cases passed; two independent review rounds have no remaining findings.
 - Windows report `20261007T200507.473386Z`: sixteen phases/42 cases passed on clean
