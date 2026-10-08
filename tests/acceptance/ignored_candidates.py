@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sys
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtTest, QtWidgets
 
 from confirmed_copy import (
     application_window,
@@ -31,7 +31,13 @@ def scan(app, window):
 
 def ignore(app, window):
     wait(app, "ignore control visible", window.duplicateIgnoreButton.isVisible)
-    click(window.duplicateIgnoreButton)
+    group = next(
+        button
+        for button in window.duplicateCandidateQueue.findChildren(QtWidgets.QPushButton)
+        if button.isChecked()
+    )
+    group.setFocus()
+    QtTest.QTest.keyClick(group, QtCore.Qt.Key.Key_I)
     wait(
         app,
         "ignore saved",
@@ -40,13 +46,22 @@ def ignore(app, window):
     assert not window.duplicateCandidateQueue.isVisible()
 
 
-def inspect(app, window):
-    click(window.duplicateIgnoredCandidatesButton)
+def inspect(app, window, expected=1):
+    assert window.duplicateIgnoredCandidatesButton.isEnabled()
+    # Offscreen Qt has no window manager to reactivate the parent after a dialog closes.
+    window.activateWindow()
+    wait(app, "Duplicate review window active", lambda: app.activeWindow() is window)
+    window.duplicateIgnoredCandidatesButton.setFocus()
+    QtTest.QTest.keyClick(
+        window.duplicateIgnoredCandidatesButton,
+        QtCore.Qt.Key.Key_I,
+        QtCore.Qt.KeyboardModifier.ControlModifier,
+    )
     wait(app, "ignored list", lambda: app.activeModalWidget() is not None)
     dialog = app.activeModalWidget()
     assert dialog.windowTitle() == "Ignored candidates"
     candidates = dialog.findChild(QtWidgets.QListWidget)
-    wait(app, "one remembered candidate", lambda: candidates.count() == 1)
+    wait(app, "remembered candidates", lambda: candidates.count() == expected)
     wait(
         app,
         "photo previews",
@@ -59,14 +74,6 @@ def inspect(app, window):
     text = " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
     assert "Holiday" in text and "Tags when ignored:" in text
     return dialog
-
-
-def button(dialog, text):
-    return next(
-        button
-        for button in dialog.findChildren(QtWidgets.QPushButton)
-        if button.text() == text
-    )
 
 
 def main():
@@ -99,13 +106,15 @@ def main():
         else:
             assert not window.duplicateCandidateQueue.isVisible()
             dialog = inspect(app, window)
-            dialog.reject()
+            QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_C)
             scan(app, window)
             assert not window.duplicateCandidateQueue.isVisible()
             assert photo_hashes(photos) == before
             emit("fresh_process_ignore_and_read_only_inspection", hashes=before)
             dialog = inspect(app, window)
-            click(button(dialog, "Restore"))
+            QtTest.QTest.keyClick(
+                dialog.findChild(QtWidgets.QListWidget), QtCore.Qt.Key.Key_R
+            )
             wait(
                 app,
                 "restored list",
@@ -131,7 +140,9 @@ def main():
                     app.activeModalWidget().reject()
 
             QtCore.QTimer.singleShot(0, confirm_clear)
-            click(button(dialog, "Clear all ignores…"))
+            QtTest.QTest.keyClick(
+                dialog.findChild(QtWidgets.QListWidget), QtCore.Qt.Key.Key_A
+            )
             if failures:
                 raise failures[0]
             wait(
@@ -158,6 +169,24 @@ def main():
             assert window.duplicateCandidateQueue.isVisible()
             assert photo_hashes(photos) == changed
             emit("changed_capture_evidence_returns_without_photo_writes")
+            ignore(app, window)
+            dialog = inspect(app, window, expected=2)
+            candidates = dialog.findChild(QtWidgets.QListWidget)
+            assert candidates.currentRow() == 0
+            QtTest.QTest.keyClick(candidates, QtCore.Qt.Key.Key_J)
+            assert candidates.currentRow() == 1
+            assert "EXIF:DateTimeOriginal" in " ".join(
+                label.text() for label in dialog.findChildren(QtWidgets.QLabel)
+            )
+            QtTest.QTest.keyClick(candidates, QtCore.Qt.Key.Key_K)
+            assert candidates.currentRow() == 0
+            assert "EXIF:CreateDate" in " ".join(
+                label.text() for label in dialog.findChildren(QtWidgets.QLabel)
+            )
+            QtTest.QTest.keyClick(candidates, QtCore.Qt.Key.Key_C)
+            wait(app, "ignored list closed", lambda: app.activeModalWidget() is None)
+            assert photo_hashes(photos) == changed
+            emit("ignored_list_keyboard_navigation_and_close")
     return 0
 
 

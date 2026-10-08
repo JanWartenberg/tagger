@@ -17,20 +17,45 @@ on 2026-10-04. No next active milestone has been selected.
   Window scaling passed; larger-font testing was explicitly waived and accepted
   because the font is unchanged.
 
-## Current follow-up — 2026-10-07
+## Current follow-up — direct Duplicate review shortcuts
 
-- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) selected for implementation after product rules were agreed.
-- Persistence per index, evidence-based identity, read-only inspection, explicit
-  restore and confirmed clear-all are implemented and verified locally.
-- No new numbered milestone selected; ticket remains assigned to M-Future.
-  Maintainer authorized commit after a successful quick acceptance check.
-  Implementation and acceptance notes are committed together. Final verification:
-  391 pytest passes/four Windows skips, Ruff/format and 14 real-file phases/38
-  cases passed; two independent
-  review rounds have no remaining findings. Report: `20261007T175150.109036Z`.
-  Quick acceptance is maintainer-reported; full Windows automated results and
-  detailed scaling checks remain unconfirmed. Inspect supplied Windows evidence
-  before closing ticket 04; preserve the accepted quick check. No push requested.
+- [Remove Duplicate review Edit mode](.scratch/duplicate-photo-detection-and-tag-propagation/issues/05-remove-duplicate-review-edit-mode.md) completed after local verification and Windows acceptance on 2026-10-08.
+- Single keys act directly, typing and copy confirmation remain protected; no
+  new numbered milestone selected. Maintainer authorized commit on 2026-10-08;
+  implementation and acceptance records are included together. No push requested.
+- 396 pytest passes/four Windows skips; Ruff/format and fourteen real-file phases/
+  40 cases passed, including direct review/list keyboard events and Ctrl+I.
+  Latest portable report: `20261008T161805.450253Z`.
+  Windows report `20261008T161432.936635Z` independently inspected: sixteen
+  phases/44 cases and native cleanup passed. After the underline fix, maintainer
+  confirmed AT-04 passed. Final checklist: six PASS / zero FAIL / zero
+  NOT ASSESSED; ACCEPT. Ticket 05 completed; no remaining acceptance.
+- Header follow-up: collapsed Scan setup is immediately left of Ignored
+  candidates; `Ctrl+I` opens that list, with tooltip/help coverage.
+  Ignored-list `j/k/r/a/c` shortcuts,
+  Escape close and button mnemonics/tooltips are also implemented.
+- Maintainer confirmed ignoring/resetting work; preserve that acceptance.
+- Second review completed on 2026-10-08: fixed modal-focus and initial-preview
+  test races; 20 repeated cases and full Linux suite (396/four skips) passed.
+  Ruff 0.12/0.16 and format passed; maintainer confirmed Windows Ruff passes.
+  Maintainer supplied the final Windows run: 400 tests passed in 44.03s; both
+  Ruff commands passed. No remaining verification or review findings; ready
+  for the authorized commit. Prior feature acceptance stays accepted.
+
+## Session handoff — 2026-10-07
+
+- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) completed after maintainer quick acceptance and independently inspected Windows verification.
+- Implementation and original acceptance notes committed as `1d6d909` with
+  maintainer authorization. No push requested. Windows acceptance updates are
+  documentation-only and remain uncommitted.
+- Linux: 391 pytest passes/four Windows skips, Ruff/format and fourteen real-file
+  phases/38 cases passed; two independent review rounds have no remaining findings.
+- Windows report `20261007T200507.473386Z`: sixteen phases/42 cases passed on clean
+  commit `1d6d909`, both backup settings, sharing-lock retry, native cleanup and
+  workspace removal verified; all harness hashes match tracked scripts.
+- Prior quick acceptance is maintainer-reported. Detailed scaling observations
+  remain unreported, not claimed passed or waived; do not repeat the accepted check.
+- No next active milestone selected. AI suggestion boundary remains needs-triage.
 
 ## Session handoff — 2026-10-06
 
@@ -66,7 +91,8 @@ on 2026-10-04. No next active milestone has been selected.
 - All M9 tickets are completed; preserve previous acceptances. The rejected
   in-page result widget stays deleted; outcomes/retry/restoration use the footer.
 - Next decision: choose future work; no active milestone remains.
-  Removing the remaining Edit mode remains undecided, with no implementation ticket.
+  Edit mode removal was undecided at that checkpoint; subsequently approved
+  and implemented under ticket 05 on 2026-10-07.
 - Linux dev environment: `/tmp/tagger-venv` (activate, use `PYTHONPATH=.` and
   `QT_QPA_PLATFORM=offscreen`). Recreate if absent; repository `.venv` is Windows-only.
 - Last local implementation validation: Ruff/format and diff checks passed;
@@ -81,7 +107,6 @@ on 2026-10-04. No next active milestone has been selected.
 **M-Future — Unscheduled opportunities** means sometime after M8, without a target date.
 
 - [AI tag-suggestion boundary](.scratch/ai-assisted-tag-suggestions/issues/01-define-ai-tag-suggestion-boundary.md) remains needs-triage and is outside M8.
-- [Remember ignored duplicate candidates](.scratch/duplicate-photo-detection-and-tag-propagation/issues/04-remember-ignored-candidate-groups.md) is the selected follow-up to M8 (implemented; Windows acceptance pending).
 
 ## Historical milestones
 

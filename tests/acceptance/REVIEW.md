@@ -737,3 +737,221 @@ outcomes/retry behavior and prior unrelated M9 acceptance remain unchanged.
   sharing locks or Job Object cleanup. Existing unrelated acceptance stays valid.
 - Implementation and acceptance notes are committed together with maintainer
   authorization. No merge or push requested.
+
+## Windows persistent-ignore verification — 2026-10-07
+
+Independently inspected maintainer-supplied, synced report
+`reports/20261007T200507.473386Z/report.json`: Windows 11/Python 3.14.7/ExifTool
+13.59, clean commit `1d6d909`. Every harness SHA-256 matched that committed revision.
+
+- Passed: **sixteen phases/42 cases**, exact complete matrix for both backup
+  settings. New ignore/reopen cases passed, including photo previews, read-only
+  inspection, explicit restore, confirmed clear-all and changed capture evidence.
+- Passed: native sharing-lock partial failure and failed-only retry in both modes;
+  five native process-cleanup probes, independently inspected cleanup log.
+- Verified: every phase exited zero and cleaned its process tree; both temporary
+  workspaces were removed.
+- Maintainer's prior quick acceptance remains accepted. The report explicitly
+  records visual acceptance as not run; detailed scaling observations remain
+  unreported, not claimed passed or waived. No repeat quick check requested.
+
+Ticket 04 completed. Implementation remains committed as `1d6d909`; these
+acceptance/status updates are uncommitted, with no new commit or push requested.
+
+# Direct Duplicate review shortcuts — 2026-10-07
+
+Ticket 05 removes Edit mode completely: no toggle button/state, `e` action,
+`:duplicateedit` command or mode-specific help remains. Source `s`, target `t`,
+Ignore `i` and Copy `c` work directly outside text inputs. Navigation and modifier
+shortcuts are retained. Escape cancels an active scan, closes the command line/
+dialogs or returns to Tagging. Copy still requires explicit preview confirmation.
+
+- Passed: focused Duplicate review/help coverage, 41 tests and two subtests.
+  The direct source regression failed before the change and passed afterward.
+  Tests cover direct source/target/ignore, literal `scti` input with unchanged
+  choices, recovery, removed mode UI/help and immediate Escape view return.
+- Passed: full offscreen pytest, **392 tests/four Windows skips**, Ruff check,
+  changed-file format checks and diff whitespace checks.
+- Passed and independently inspected: portable real-file report
+  `reports/20261007T210319.231900Z/report.json`, **fourteen phases/38 cases**,
+  both backup settings, matching harness hashes, process cleanup and temporary
+  workspace removal. Existing copy scenarios now choose source with `s`, exclude
+  a target with `t` and open preview with `c`; Ignore scenarios press `i` on the
+  selected candidate queue button. Hash/metadata/backup/refusal assertions remain.
+- Maintainer confirmed ignoring and resetting work; preserve that acceptance.
+  Previously inspected Windows report `20261007T200507.473386Z` validates the
+  prior persistence revision, not the new keyboard harness. No repeat manual
+  ignore/reset check or unrelated visual acceptance requested.
+- Unrun: Windows execution of this shortcut revision. Request the existing
+  automated runner and inspect its report; ticket 05 remains open for that step.
+  Native lock/cleanup semantics are unchanged, with prior acceptance preserved.
+- Code and documentation changes remain uncommitted; no commit requested.
+
+
+# Ignored candidates shortcuts and header placement — 2026-10-07
+
+The collapsed Scan setup toggle now sits immediately left of Ignored candidates.
+View-scoped `Ctrl+I` opens the list, with tooltip/help coverage. Within the dialog,
+`j/k` select, `r` restores the selected candidate, `a` opens confirmed clear-all,
+and `c` closes; Escape remains available. Button labels have mnemonic underlines
+and tooltips describe their shortcuts. Disabled/empty controls remain guarded.
+
+- Passed: focused Qt coverage of placement, shortcut view scope, selection bounds,
+  restore-one, declined/confirmed clear-all, empty list, labels/tooltips and close.
+- Passed: full offscreen pytest, **395 tests/four Windows skips**, Ruff check and
+  changed-file format checks.
+- Failed initial harness attempt: `20261007T211948.031356Z` could not reopen with
+  Ctrl+I after a modal close because offscreen Qt did not reactivate its parent.
+  The harness now activates its own window and waits before sending the shortcut.
+- Passed and independently inspected: `reports/20261007T212327.674774Z/report.json`,
+  **fourteen phases/40 cases** with both backup settings. All phases exited zero,
+  process cleanup was verified, both workspaces were removed and harness hashes
+  match. Real-file cases use Ctrl+I, r/a/c and multi-record j/k navigation; photo
+  hash/metadata safeguards remain covered.
+- Unrun: updated Windows keyboard harness and native appearance of new controls.
+  Prior Windows persistence/lock/cleanup and maintainer ignore/reset acceptance
+  remain accepted. Ticket 05 awaits the updated Windows report.
+- Changes remain uncommitted; no commit requested.
+
+
+# Acceptance handoff — 2026-10-07
+
+Maintainer plans the updated Windows acceptance run for **2026-10-08**. Ticket 05
+is needs-info while awaiting that report; implementation and Linux verification
+are complete. Windows checks remain unrun, not waived or passed. Inspect the
+updated report against sixteen phases/44 cases and native cleanup coverage before
+closing 05. Ticket 04 and prior ignore/reset acceptance remain completed/accepted.
+No repeat manual check or commit requested; current changes remain uncommitted.
+
+
+# Windows acceptance and visible-underlines fix — 2026-10-08
+
+Maintainer supplied the checklist: **five PASS / one FAIL**, NOT READY. Placement,
+Ctrl+I (opening a folder first is accepted), c/Esc close and tooltips passed.
+AT-04 failed: Windows hides mnemonic underlines until Alt, then retains them.
+
+Independently inspected `reports/20261008T161432.936635Z/report.json`: Windows 11,
+Python 3.14.7, uncommitted implementation based on 1d6d909. All sixteen phases /
+44 cases passed across both backup settings; all phase exits were zero, process
+cleanup verified, temporary workspaces removed. Sharing-lock recovery and native
+cleanup passed; harness hashes match current scripts. The report's visual status
+is not run; visual results above are maintainer-reported checklist observations.
+
+The fix applies a dialog-owned QProxyStyle to only Restore, Clear all ignores and
+Close, requesting SH_UnderlineShortcut regardless of the platform's Alt state.
+Focused regression simulates hidden platform mnemonics and failed before / passed
+after the fix; all nine dialog tests pass. Full offscreen suite: **396 passed /
+four Windows skips**; Ruff/format passed. Portable report
+`20261008T161805.450253Z` independently inspected: fourteen phases/40 cases,
+verified cleanup/workspace removal and matching harness hashes.
+
+Only AT-04 requires a Windows visual recheck on a newly opened dialog before Alt.
+Preserve AT-01/02/03/05/06 and prior ignore/reset acceptance. No full Windows runner
+repeat requested for this appearance fix. Ticket 05 remains open; no commit requested.
+
+
+# Ticket 05 acceptance completed — 2026-10-08
+
+Maintainer confirmed “fixed” after the request to recheck AT-04 before pressing
+Alt. Record immediate underline visibility as maintainer-reported PASS. Retain
+AT-01/02/03/05/06: final checklist **six PASS / zero FAIL / zero NOT ASSESSED**,
+**ACCEPT**. Ticket 05 completed; no remaining acceptance for this ticket.
+Windows functional report and final Linux verification are recorded above.
+Prior ignore/reset acceptance remains valid. Changes remain uncommitted; no
+commit or push authorized.
+
+
+# Windows full-suite output and command documentation — 2026-10-08
+
+Maintainer supplied the full PowerShell transcript: setting QT_QPA_PLATFORM to
+`offscreen` and running the project interpreter with `-m pytest` passed **all
+400 tests in 56.34 seconds**, including Windows native probes. The supplied output
+was inspected; this is a maintainer-run result, not agent execution on Windows.
+Earlier Linux review runs failed the previously recorded preview-selection test
+(also reproduced on committed HEAD); one run additionally segfaulted. Those Linux
+failures remain unresolved and are not described as fixed by the Windows pass.
+
+The supplied `python -m ruff check` output reports 34 findings under a rule set
+broader than this repository's configuration. Its configuration source is not
+known. README and tests/README now document PowerShell environment assignment,
+`python -m pytest`, and explicit Ruff `--config pyproject.toml .` to make the
+project check reproducible. The explicit-config Ruff check passed locally; the
+corresponding Windows command remains unrun. No lint rules or Python implementation
+were changed. Ticket 05 acceptance remains completed; changes are uncommitted.
+
+
+# Ruff default-rule mismatch resolved — 2026-10-08
+
+Windows settings confirmed the correct pyproject.toml was loaded but newer rules
+were active. Ruff 0.16 expanded its defaults and removed E402; local Ruff 0.12
+still used the earlier defaults. Installing Ruff 0.16 in an isolated temporary
+location reproduced the exact 34 supplied findings with the unchanged config.
+Source: https://astral.sh/blog/ruff-v0.16.0
+
+Declared the project's existing rule set explicitly in `[tool.ruff.lint]`:
+`select = ["E4", "E7", "E9", "F"]`. This preserves the established checks across
+versions; no Python source changes or lint-rule expansion are included. Both
+Ruff 0.12 and 0.16 passed `check --config pyproject.toml .` after the config change;
+diff whitespace check passed. Windows rerun remains maintainer-run/unreported.
+Earlier claims that explicit config selection alone resolved the mismatch were
+incomplete: the implicit default rule set differed even with the same config.
+
+
+# Second pending-change review and test-race fixes — 2026-10-08
+
+Reviewed all pending source, harness, configuration, test and documentation changes,
+including untracked ticket 05. There are no staged changes. No remaining actionable
+findings after these fixes:
+
+- Open-choice test: a fixed 10 ms timer could send A before the modal window owned
+  focus, yielding Cancel. Triggering the callback immediately reproduced the exact
+  failure. Making only the rejection timer immediate still passed; window-active
+  waiting alone was insufficient. Activating/focusing the dialog and waiting for
+  both QApplication.activeWindow and focusWindow corrected the early-key repro.
+  The test now triggers immediately, waits for readiness, asserts the actual
+  clicked button for A/O/C, and reports callback failures after dialog cleanup.
+- Preview-selection test: the fixture's initial debounced photo-0 preview was
+  still pending when the recording reader was installed. This reproduced the
+  previously recorded extra-initial-load assertion failure. Finish that setup
+  load before measuring rapid navigation. The last-photo-only and 0.4-second
+  responsiveness assertions are retained.
+- Documentation: removed the inaccurate claim that unittest discovery runs the
+  complete pytest suite, clarified pytest/unittest coverage, and made historical
+  report hash claims refer to the validated committed revision.
+
+Passed: both corrected tests, then ten repetitions each (20 cases, zero failures
+or errors); full offscreen pytest **396 passed/four Windows skips in 56.97s**.
+Ruff 0.12 and 0.16 passed, changed Python format checks and diff whitespace passed.
+The original Linux crash did not recur in this full run; its cause is not claimed
+independently established. Production behavior was unchanged by these test fixes.
+
+Maintainer confirmed the explicit-rule Ruff configuration passes on Windows.
+Their earlier Windows suite passed 400 tests, followed by a run with 399 passes
+and the open-choice timing failure. Windows verification of the two corrected
+tests remains unrun locally; only that focused rerun is needed. Preserve ticket
+05's accepted native appearance and independently inspected real-file matrix.
+No repeat feature acceptance or real-file runner requested. Changes remain
+uncommitted; no commit authorized.
+
+
+# Final Windows regression confirmation — 2026-10-08
+
+Maintainer supplied the final Windows 11/Python 3.14.7 console transcript:
+`python -m pytest` passed **400 tests in 44.03 seconds**, including both corrected
+tests and native process-cleanup coverage. Both `python -m ruff check --config
+pyproject.toml .` and `python -m ruff check` passed. The supplied transcript was
+inspected; these are maintainer-run Windows results, not agent execution.
+
+This closes the pending Windows verification for the test-race fixes. Previous
+feature acceptance and independently inspected Windows real-file evidence remain
+valid. Review has no remaining actionable findings. Maintainer has no objections;
+changes are ready to commit, but no explicit commit instruction has been given.
+Changes remain uncommitted; no push authorized.
+
+
+# Commit authorization — 2026-10-08
+
+Maintainer explicitly requested commit after final Windows verification and the
+second review. Implementation and final acceptance/status records are included
+together. Ticket 05 is completed; no unresolved review or acceptance findings.
+Earlier failure/reproduction notes remain historical evidence. No push requested.

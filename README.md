@@ -22,9 +22,9 @@ Commands & shortcuts
 - `Esc` closes command line / exits text fields
 - Focus: `Ctrl+W W` cycles the Files and current-tags panes; `Ctrl+W H/L` move focus between them
 - Global focus (non-inputs): `i` add keyword, `f` files
-- Help: `:help` or `F1` shows only commands and shortcuts for the current view, with Edit-mode keys marked explicitly.
-- Views: `gt`, `:duplicates`, or `Ctrl+Alt+D` opens duplicate review; `gT`, `:tagging`, `Ctrl+Alt+T`, or `Esc` outside Edit mode returns to tagging when no duplicate scan is active
-- Duplicate review: `Ctrl+O` loads a folder, `Alt+S` focuses Scope, and `Space s` or `:scanduplicates` starts the explicit scan. `Esc` or `:cancelduplicates` cancels an active scan. `Alt+U` / `:togglescansetup` collapses or expands Scan setup without losing review choices; focusing Scope or starting a new scan expands it. The queue defaults to readable tagged-source/empty-target groups. `Alt+A` / `:toggleallduplicates` enables Show all candidates for inspection; only in that mode, `Alt+E` hides wholly confirmed-empty groups. Filter choices and review selections are retained. `h/l` moves between groups and `j/k` through photos in either mode, with a card outline, photo counter, and automatic scrolling. `e` enters Edit mode and `Esc` leaves it: `s` chooses a tagged source, `t` toggles an eligible empty target, and `i` remembers the group as ignored across scans and restarts, per index. `c` previews the exact copy in either mode (outside text inputs). Choosing a source preselects all readable, settled, empty targets; adjust the subset before copying. Preview shows source and targets side by side with bold tags, background-loaded images and the captured backup setting; `y` confirms and `n` or `Esc` cancels. Tags are refreshed before preview and confirmation. Review advances immediately. The footer shows a short save status or pending/failed/cancelled attention. Its menu retains copy outcomes and ignored candidates; reopen a failed result to retry only failed targets, or an ignored result to inspect it without restoring. **Ignored candidates** / `:ignoredcandidates` lists remembered groups with photo previews, capture evidence and tags recorded when ignored. Restore a group explicitly, or confirm Clear all ignores. Changes to member paths, capture timestamps or source fields bring a candidate back; tag changes alone do not. Decisions live in `.tagger/ignored_candidates.sqlite` beside the rebuildable index. Right-click a candidate image/card for the same Open, GIMP, Copy file path, Reveal and folder-exclusion menu as the file pane; file actions target the clicked candidate, not the Workspace selection.
+- Help: `:help` or `F1` shows only commands and shortcuts for the current view.
+- Views: `gt`, `:duplicates`, or `Ctrl+Alt+D` opens duplicate review; `gT`, `:tagging`, `Ctrl+Alt+T`, or `Esc` returns to tagging when no duplicate scan is active
+- Duplicate review: `Ctrl+O` loads a folder, `Alt+S` focuses Scope, and `Space s` or `:scanduplicates` starts the explicit scan. `Esc` or `:cancelduplicates` cancels an active scan. `Alt+U` / `:togglescansetup` collapses or expands Scan setup without losing review choices; the collapsed toggle sits immediately left of Ignored candidates; focusing Scope or starting a new scan expands it. The queue defaults to readable tagged-source/empty-target groups. `Alt+A` / `:toggleallduplicates` enables Show all candidates for inspection; only in that mode, `Alt+E` hides wholly confirmed-empty groups. Filter choices and review selections are retained. `h/l` moves between groups and `j/k` through photos, with a card outline, photo counter, and automatic scrolling. `s` directly chooses a tagged source, `t` toggles an eligible empty target, and `i` remembers the group as ignored across scans and restarts, per index. `c` directly previews the exact copy. These single-key shortcuts do not act while typing in text inputs; there is no Edit mode. Choosing a source preselects all readable, settled, empty targets; adjust the subset before copying. Preview shows source and targets side by side with bold tags, background-loaded images and the captured backup setting; `y` confirms and `n` or `Esc` cancels. Tags are refreshed before preview and confirmation. Review advances immediately. The footer shows a short save status or pending/failed/cancelled attention. Its menu retains copy outcomes and ignored candidates; reopen a failed result to retry only failed targets, or an ignored result to inspect it without restoring. **Ignored candidates** / `Ctrl+I` / `:ignoredcandidates` lists remembered groups with photo previews, capture evidence and tags recorded when ignored. In the list, `j/k` selects candidates, `r` restores the selected group, `a` opens confirmed Clear all ignores, and `c` or `Esc` closes. Restore, Clear all ignores and Close underline their shortcut letters and explain them in tooltips. Changes to member paths, capture timestamps or source fields bring a candidate back; tag changes alone do not. Decisions live in `.tagger/ignored_candidates.sqlite` beside the rebuildable index. Right-click a candidate image/card for the same Open, GIMP, Copy file path, Reveal and folder-exclusion menu as the file pane; file actions target the clicked candidate, not the Workspace selection.
 - Tag input: `Tab` completes from the cached autocomplete vocabulary
 - Files-pane filters: `Ctrl+T`, `Ctrl+D`, and `Ctrl+F` focus Tags, Date, and Filename; within the filter box, `Alt+T`, `Alt+D`, `Alt+F`, and `Alt+X` focus those controls and Exclude folder. `Alt+A` toggles filename case matching, `Alt+S` applies indexed search, and `Alt+C` clears every filter. `Ctrl+E` toggles Only without IPTC tags.
 - Indexed search: pressing Enter in Tags or Date focuses the files pane on the first photo of an accepted non-empty result. `:search <query>` accepts bare tags, `tag:`, date queries (`date:YYYY`, `date:YYYY-MM`, `date:YYYY-MM-DD`, inclusive `date:YYYY-MM-DD..YYYY-MM-DD`, or `date:unknown`), and `tag:<tag> date:<date>` intersections. `:focusdatefilter`, `:focusfilenamefilter`, and `:focusexcludedir` focus their respective controls; `:filterfiles [--case] <query>` and `:clearfilenamefilter` control the workspace-local filename condition. `:excludedir <name>` adds an exact ancestor-folder exclusion and `:clearexcludedir <name>` removes one. `:clearfilters` clears every condition; `Ctrl+Shift+X`, `:clearsearch`/`:clear`, `:back`, or `Esc` in the file pane clear only indexed Tags/Date search and restore the preceding workspace view.
@@ -59,19 +59,17 @@ python tagger.py
 
 Development checks
 ------------------
-Run these commands from an activated virtual environment. The Qt tests use an
-offscreen platform and do not access a real photo library:
+Run these commands in PowerShell from the repository root with the development
+virtual environment activated. The Qt tests use an offscreen platform and do not
+access a real photo library. The lint rule set is declared in pyproject.toml to
+keep checks consistent across Ruff versions. Select that configuration explicitly:
 
-```bat
-set QT_QPA_PLATFORM=offscreen
-ruff check .
-pytest
+```powershell
+python -m ruff check --config pyproject.toml .
 ```
 
-The complete test suite can also be run directly with the standard library:
-
-```bat
-python -m unittest discover -s tests -v
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"; python -m pytest
 ```
 
 Relocating the photo folder

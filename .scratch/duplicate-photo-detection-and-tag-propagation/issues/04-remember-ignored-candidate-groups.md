@@ -1,6 +1,6 @@
 # 04 — Remember Ignored Duplicate Candidates
 
-Status: ready-for-agent
+Status: completed
 Category: feature
 Priority: low
 Milestone: M-Future — Unscheduled opportunities
@@ -53,9 +53,10 @@ candidate again in a later scan.
 
 Implemented and verified on Linux; two review rounds completed with no remaining
 findings. Maintainer reported a successful quick acceptance check and authorized
-commit. Status stays ready-for-agent pending inspection of the Windows automated
-report; that run and detailed scaling checks remain unconfirmed, not waived.
-Previous unrelated M9 acceptance remains valid.
+commit. The supplied Windows report was independently inspected: all sixteen
+phases/42 cases and native cleanup passed on committed revision `1d6d909`.
+Ticket completed with maintainer quick acceptance; detailed scaling checks remain
+unreported, not claimed passed or waived. Previous unrelated M9 acceptance remains valid.
 
 ## Verification — 2026-10-07
 
@@ -79,8 +80,32 @@ Previous unrelated M9 acceptance remains valid.
 - Maintainer-reported: quick feature acceptance passed; no platform details or
   automated report were supplied. This is not independently inspected evidence
   of a full Windows suite pass or detailed scaling checks.
-- Remaining: inspect the Windows automated report before closing the ticket.
-  Detailed scaling checks remain unconfirmed. Preserve the accepted quick check;
-  previous Windows native lock/cleanup acceptance is not claimed revalidated here.
+- Follow-up: the supplied Windows report was independently inspected below.
+  Detailed scaling checks remain unreported; preserve the accepted quick check.
 - Maintainer explicitly authorized commit; implementation and acceptance notes
   are committed together. No push requested.
+
+## Windows verification — 2026-10-07
+
+Maintainer supplied `tests/acceptance/reports/20261007T200507.473386Z/report.json`;
+the agent independently inspected the synced report, case matrix and native
+cleanup log. Windows 11, Python 3.14.7, ExifTool 13.59; clean commit `1d6d909`.
+All recorded harness hashes matched the scripts in committed revision `1d6d909`.
+
+- Passed: sixteen process phases/42 cases across both backup settings, including
+  persistent ignores, fresh-process read-only inspection, restore, clear and
+  changed capture evidence.
+- Passed: native sharing-lock partial failure/failed-only retry for both backup
+  settings; native process cleanup probes (five tests).
+- Verified: every phase returned zero with process-tree cleanup; both disposable
+  workspaces were removed.
+- Manual acceptance: maintainer's prior quick check is accepted. The automated
+  report explicitly does not validate appearance; detailed scaling observations
+  remain unreported, not claimed passed or waived. No repeat quick check requested.
+
+Ticket completed. This documentation update is not a new commit authorization.
+
+## Maintainer follow-up
+
+Maintainer explicitly confirmed ignoring and resetting work. That manual
+acceptance is preserved while the separately scoped ticket 05 removes Edit mode.

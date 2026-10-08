@@ -106,17 +106,22 @@ source, but no candidate is accepted automatically. A target with existing tags,
 unknown tag state, or pending mutation intent is ineligible; propagation does not
 merge into already-tagged photos.
 
-Duplicate Review uses an explicit Edit mode. `e` enters the mode and `Esc` leaves
-it; edit commands never apply in text inputs. `h`/`l` move between the horizontal
+Duplicate Review shortcuts act directly; there is no Edit mode or `e` toggle.
+Single-key commands never apply in text inputs. `Ctrl+I` opens Ignored candidates
+from Duplicate review; its tooltip and view help advertise the shortcut. `h`/`l` move between the horizontal
 group queue, `j`/`k` move through photo cards in grid reading order, `s` chooses
 the focused source, `t` toggles the focused target, `c` opens copy confirmation,
 and `i` ignores the group. Relevant controls show visible key hints. In the
-confirmation preview, `y` confirms and `n` or `Esc` cancels.
+confirmation preview, `y` confirms and `n` or `Esc` cancels. Outside dialogs and
+the command line, `Esc` cancels an active scan or returns to Tagging.
 
 Focused photo navigation outlines the card and shows its position/name. It scrolls
 the focused control into view after a rebuilt grid's Qt layout settles. Full paths
 use the theme's normal text color. `:help` / F1 shows only the current view's
-commands and shortcuts, including keyboard-only actions with Edit-mode hints.
+commands and shortcuts, including keyboard-only source, target and ignore actions.
+The collapsed Scan setup toggle sits immediately left of Ignored candidates in
+the view header, centered at the same button height. Expanded, it returns to its
+section header and preserves focus.
 Scan/scope shortcuts remain usable when focus is on the main window after a
 command closes; duplicate scan shortcuts are inactive in Tagging and text inputs.
 
@@ -131,6 +136,12 @@ tags and scan-local IDs. Changed identity becomes eligible for review. The
 Ignored candidates list permits read-only inspection of saved evidence and photo
 previews; Restore and confirmed Clear all ignores explicitly remove decisions.
 Saved tags are labelled as historical, and missing photos show Preview unavailable.
+Within the ignored list, `j/k` moves selection without wrapping, `r` restores one
+candidate, `a` opens clear-all confirmation, and `c` or `Esc` closes. Button
+mnemonics underline R in Restore, a in Clear all ignores, and C in Close; tooltips
+show the direct shortcuts. These three buttons request visible underlines even
+before Alt on Windows; other controls retain platform behavior. Empty/loading
+lists disable selection/recovery actions.
 
 Returning to normal tagging preserves its selection, filters, and search state.
 Review source/target choices remain local to duplicate review.

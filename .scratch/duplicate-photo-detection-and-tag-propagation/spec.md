@@ -104,3 +104,20 @@ do not invalidate a decision; changed capture evidence or membership does.
 Ignored candidates supports read-only photo/evidence inspection and explicit
 Restore or confirmed Clear all ignores. The independent SQLite store survives
 photo-index rebuilds. See ticket 04 for current verification and acceptance.
+
+## Direct shortcut follow-up — ticket 05
+
+Maintainer requested complete removal of Duplicate review Edit mode. Source,
+target, ignore and copy keys act directly outside text inputs. The mode control,
+`e` toggle, `:duplicateedit` command and mode-specific help are removed.
+Navigation, copy confirmation, text typing and Escape cancellation/view return
+remain available. See ticket 05 for verification.
+
+Ticket 05 also adds `Ctrl+I` for Ignored candidates, advertised in its tooltip
+and help, and places the collapsed Scan setup toggle immediately before that
+button. Expanded placement remains in the setup section.
+
+Within Ignored candidates, `j/k` navigates, `r` restores one, `a` requests
+confirmed clear-all, and `c`/`Esc` closes. Recovery/close buttons have mnemonic
+underlines and matching tooltips; navigation is bounded and recovery is disabled
+while loading or empty.

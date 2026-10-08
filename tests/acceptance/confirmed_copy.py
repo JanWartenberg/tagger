@@ -143,7 +143,8 @@ def copy_control(window, path, role):
 
 def preview(app, window):
     wait(app, "copy enabled", window.duplicateApplyTagsButton.isEnabled)
-    click(window.duplicateApplyTagsButton)
+    window.duplicateApplyTagsButton.setFocus()
+    QtTest.QTest.keyClick(window.duplicateApplyTagsButton, QtCore.Qt.Key.Key_C)
 
     def visible_dialog():
         return next(
@@ -184,10 +185,14 @@ def select_copy_targets(app, window, photos, keep_backup):
         "source choice",
         lambda: copy_control(window, photos / "source.jpg", "source"),
     )
-    click(copy_control(window, photos / "source.jpg", "source"))
+    source = copy_control(window, photos / "source.jpg", "source")
+    source.setFocus()
+    QtTest.QTest.keyClick(source, QtCore.Qt.Key.Key_S)
     for name in PHOTO_NAMES[1:]:
         assert copy_control(window, photos / name, "target").isChecked()
-    click(copy_control(window, photos / "excluded.jpg", "target"))
+    excluded = copy_control(window, photos / "excluded.jpg", "target")
+    excluded.setFocus()
+    QtTest.QTest.keyClick(excluded, QtCore.Qt.Key.Key_T)
     assert not copy_control(window, photos / "excluded.jpg", "target").isChecked()
 
 

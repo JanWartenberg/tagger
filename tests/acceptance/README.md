@@ -45,6 +45,7 @@ Each run checks both backup settings in separate disposable workspaces:
 
 | Case | Independent checks |
 | --- | --- |
+| Direct Duplicate review keys | Source selection uses `s`, target exclusion uses `t`, copy preview uses `c`, and persistent Ignore uses `i` on the selected candidate queue button; ignored-candidate inspection uses `Ctrl+I` and list actions use `j/k/r/a/c`; no mode toggle is used |
 | Cancel | All four JPEG hashes unchanged; no new files/backups |
 | Confirm selected subset | Two targets change; source and excluded target unchanged |
 | Canonical IPTC/XMP | Source-only XMP tags are not copied; existing target XMP mirrors IPTC; empty XMP remains empty |
@@ -52,11 +53,11 @@ Each run checks both backup settings in separate disposable workspaces:
 | Persistence | Writer exits; a separate process displays saved tags and rereads metadata; JPEGs/backups unchanged |
 | Preview/confirmation refusal | Changed or missing source/target rejected after a positive unchanged-file control; all remaining file bytes and file sets unchanged |
 | Final target write guard | Changed/missing target is reported failed without metadata or backup writes |
-| Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; all application actions leave JPEG hashes/file sets unchanged |
+| Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; a two-record archive verifies `j/k` selection/evidence and `c` close; all application actions leave JPEG hashes/file sets unchanged |
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
 
-Both backup settings are required. Linux requires 38 case results across fourteen
-process phases. Windows requires 42 results across sixteen phases plus the native
+Both backup settings are required. Linux requires 40 case results across fourteen
+process phases. Windows requires 44 results across sixteen phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;

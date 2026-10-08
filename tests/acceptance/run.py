@@ -24,6 +24,7 @@ REQUIRED_CASES = {
         "explicit_restore_persists_without_photo_writes",
         "clear_all_ignores_without_photo_writes",
         "changed_capture_evidence_returns_without_photo_writes",
+        "ignored_list_keyboard_navigation_and_close",
     },
     "copy": {"cancel_copy", "confirmed_subset", "backup_policy"},
     "reopen": {"fresh_application_persistence"},

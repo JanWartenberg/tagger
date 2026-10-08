@@ -11,6 +11,13 @@ from tagger_app.services.ignored_candidates import (
 )
 
 
+class _VisibleShortcutStyle(QtWidgets.QProxyStyle):
+    def styleHint(self, hint, option=None, widget=None, returnData=None):
+        if hint == QtWidgets.QStyle.StyleHint.SH_UnderlineShortcut:
+            return 1
+        return super().styleHint(hint, option, widget, returnData)
+
+
 class IgnoredCandidatesDialog(QtWidgets.QDialog):
     previewReady = QtCore.pyqtSignal(object)
 
@@ -41,6 +48,9 @@ class IgnoredCandidatesDialog(QtWidgets.QDialog):
         splitter = QtWidgets.QSplitter()
         self.candidates = QtWidgets.QListWidget()
         self.candidates.setMinimumWidth(220)
+        self.candidates.setToolTip(
+            "Select candidates with j / k; restore the selected candidate with r"
+        )
         self.candidates.currentRowChanged.connect(self._inspect)
         splitter.addWidget(self.candidates)
         self.details = QtWidgets.QScrollArea()
@@ -53,21 +63,51 @@ class IgnoredCandidatesDialog(QtWidgets.QDialog):
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
         actions = QtWidgets.QHBoxLayout()
-        self.restore = QtWidgets.QPushButton("Restore")
+        self.restore = QtWidgets.QPushButton("&Restore")
         self.restore.setToolTip(
-            "Remove this ignore; matching candidates become eligible for review"
+            "Restore this candidate (r); matching candidates become eligible for review"
         )
         self.restore.clicked.connect(self._restore)
         actions.addWidget(self.restore)
-        self.clear = QtWidgets.QPushButton("Clear all ignores…")
+        self.clear = QtWidgets.QPushButton("Clear &all ignores…")
+        self.clear.setToolTip(
+            "Restore all ignored candidates for this index (a); confirmation required"
+        )
         self.clear.clicked.connect(self._clear)
         actions.addWidget(self.clear)
         actions.addStretch()
-        close = QtWidgets.QPushButton("Close")
+        close = QtWidgets.QPushButton("&Close")
+        close.setToolTip("Close Ignored candidates (c / Esc)")
         close.clicked.connect(self.reject)
         actions.addWidget(close)
+        # Windows normally hides mnemonic underlines until Alt is pressed.
+        self._shortcut_style = _VisibleShortcutStyle()
+        self._shortcut_style.setParent(self)
+        for button in (self.restore, self.clear, close):
+            button.setStyle(self._shortcut_style)
         layout.addLayout(actions)
+        self._shortcuts = []
+        for key, handler in (
+            ("j", lambda: self._move_selection(1)),
+            ("k", lambda: self._move_selection(-1)),
+            ("r", self.restore.click),
+            ("a", self.clear.click),
+            ("c", close.click),
+        ):
+            shortcut = QtGui.QShortcut(QtGui.QKeySequence(key), self)
+            shortcut.setContext(QtCore.Qt.ShortcutContext.WindowShortcut)
+            shortcut.activated.connect(handler)
+            self._shortcuts.append(shortcut)
         self._load()
+
+    def _move_selection(self, delta):
+        if not self.candidates.isEnabled() or not self.candidates.count():
+            return
+        row = self.candidates.currentRow()
+        row = 0 if row < 0 else max(0, min(row + delta, self.candidates.count() - 1))
+        self.candidates.setCurrentRow(row)
+        self.candidates.scrollToItem(self.candidates.currentItem())
+        self.candidates.setFocus()
 
     def _set_busy(self, busy):
         self.restore.setEnabled(not busy and self.candidates.currentRow() >= 0)
@@ -88,7 +128,10 @@ class IgnoredCandidatesDialog(QtWidgets.QDialog):
             item = QtWidgets.QListWidgetItem(
                 f"{member.timestamp}\n{len(record.group.members)} photos · {Path(member.path).name}"
             )
-            item.setToolTip("\n".join(member.path for member in record.group.members))
+            item.setToolTip(
+                "\n".join(member.path for member in record.group.members)
+                + "\nSelect: j / k · Restore: r"
+            )
             self.candidates.addItem(item)
         row = next(
             (i for i, record in enumerate(records) if record.identity == self.selected),

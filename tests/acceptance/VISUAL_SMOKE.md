@@ -1,10 +1,32 @@
 # Minimal Windows visual smoke
 
+Direct shortcuts follow-up (2026-10-07): Edit mode control removed; source, target,
+ignore and copy keys now act directly. No new manual check requested. Public Qt
+tests and real-file keyboard scenarios validate observable behavior; previous
+ignore/reset acceptance is preserved. Windows execution passed in independently inspected report
+`20261008T161432.936635Z` (sixteen phases/44 cases plus native cleanup). Maintainer
+accepted placement, Ctrl+I (after opening a folder), c/Esc close and tooltips.
+AT-04 initially failed because underlines appeared only after Alt. A local
+button-style fix requests them immediately; maintainer confirmed the fix on
+2026-10-08. All six checklist checks are accepted; ticket 05 completed. The collapsed Scan
+setup toggle now sits immediately left of Ignored candidates; matching height,
+alignment and adjacency are automated. `Ctrl+I` opens the list and appears in its
+tooltip/help. Ignored-list `j/k/r/a/c` and Escape are automated; Restore, Clear all
+ignores and Close use mnemonic underlines and shortcut tooltips. Native placement,
+tooltips and immediate underline visibility are maintainer-accepted. Previous
+ignore/reset acceptance stays valid.
+
 Persistent ignores follow-up (2026-10-07; previous unrelated checks remain valid):
 
+Windows automated report `20261007T200507.473386Z` independently inspected:
+sixteen phases/42 cases plus native sharing-lock and cleanup coverage passed on
+`1d6d909`. Ticket 04 is completed with prior maintainer quick acceptance. The
+report does not validate appearance; the detailed scaling item below remains
+unreported rather than passed or waived.
+
 - [x] Maintainer reported a successful quick feature acceptance check and
-  authorized commit. No platform, detailed scaling observations or automated
-  report were supplied; do not repeat the accepted quick check.
+  authorized commit; later confirmed ignoring and resetting work. Detailed
+  scaling observations were not supplied; do not repeat these accepted checks.
 - [ ] Detailed scaling coverage (not reported by the quick check): Ignored
   candidates button and dialog fit at the usual Windows scaling.
   List, photo previews, long paths, capture evidence, historical tag labels and
@@ -38,8 +60,10 @@ candidate group with a tagged source and an empty target; do not confirm a write
   keyboard focus and view-specific help match the active view. After Alt+U collapses
   setup, h/l navigates groups and j/k navigates photos without pressing e is
   already accepted (02j); do not repeat that check.
-- [x] Scan setup toggle sits inside the section frame when expanded. Collapsed,
-  it sits directly left of Add folder at the same height, with no empty frame.
+- [x] Scan setup toggle sits inside the section frame when expanded. Its original
+  accepted collapsed position was directly left of Add folder. Ticket 05 now
+  moves it immediately left of Ignored candidates, retaining height/alignment
+  and no empty frame; automated Qt geometry tests pass for the new placement.
   Neutral color is accepted. Alt+U appears only in its tooltip.
   Collapse/expand with the toggle or Alt+U. Review gains
   space, scope/source/target choices survive, and Alt+S or a new scan reopens setup.
@@ -56,8 +80,8 @@ candidate group with a tagged source and an empty target; do not confirm a write
 - [x] Source/target choices and excluded targets are visually distinguishable;
   controls work as expected (maintainer confirmed). Keyboard focus is checked
   separately under navigation above.
-- [x] C opens Copy preview without entering Edit mode (and still works in Edit
-  mode); typing c in a text field remains normal typing. Preview clearly shows
+- [x] C opens Copy preview directly; typing c in a text field remains normal
+  typing. Ticket 05 removes the former mode distinction. Preview clearly shows
   source and targets side by side, images and bold canonical tags, with target
   before/after tags and the backup setting. For multiple targets, source remains
   visible while targets scroll. Layout is accepted (02k). Multi-target visibility

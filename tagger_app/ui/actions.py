@@ -33,7 +33,6 @@ class KeyRoute:
         "list_widgets",
         "widget_exact",
         "duplicate_review",
-        "duplicate_edit",
     ]
     widget_refs: tuple[str, ...] = ()
     timeout_ms: int | None = None
@@ -201,7 +200,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="setduplicatesource",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("s",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("s",), scope="duplicate_review"),
             ),
             description="Set focused candidate photo as tag source",
             handler_name="set_focused_duplicate_source",
@@ -211,7 +210,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="toggleduplicatetarget",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("t",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("t",), scope="duplicate_review"),
             ),
             description="Toggle focused candidate photo as tag target",
             handler_name="toggle_focused_duplicate_target",
@@ -221,7 +220,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             id="ignoreduplicate",
             views=("duplicate_review",),
             key_routes=(
-                KeyRoute(kind="single", sequence=("i",), scope="duplicate_edit"),
+                KeyRoute(kind="single", sequence=("i",), scope="duplicate_review"),
             ),
             description="Remember active candidate group as ignored across scans and restarts",
             handler_name="ignore_active_duplicate_group",
@@ -233,16 +232,7 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             description="Inspect ignored candidates; explicitly restore one or clear all ignores",
             handler_name="show_ignored_duplicate_candidates",
             command=CommandBinding("ignoredcandidates"),
-        ),
-        ActionSpec(
-            id="editduplicates",
-            views=("duplicate_review",),
-            description="Toggle Edit mode (Esc leaves Edit mode)",
-            handler_name="toggle_duplicate_edit_mode",
-            command=CommandBinding("duplicateedit"),
-            key_routes=(
-                KeyRoute(kind="single", sequence=("e",), scope="duplicate_review"),
-            ),
+            shortcuts=(ShortcutBinding("Ctrl+I"),),
         ),
         ActionSpec(
             id="copyduplicatetags",

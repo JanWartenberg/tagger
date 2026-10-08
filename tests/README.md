@@ -1,6 +1,7 @@
 # Test conventions
 
-TAGGER uses built-in `unittest` tests at two seams:
+TAGGER runs its suite with pytest, including legacy `unittest` cases and
+pytest tests. Tests cover two seams:
 
 1. **Core and coordinator tests** exercise `PhotoWorkspace`, tag-mutation,
    indexing, and background-coordinator behavior without constructing Qt widgets.
@@ -32,18 +33,18 @@ Linux and other POSIX environments:
 QT_QPA_PLATFORM=offscreen python3 -m pytest
 ```
 
-Windows Command Prompt (`cmd.exe`), from the activated project virtual environment:
-
-```bat
-set QT_QPA_PLATFORM=offscreen
-pytest
-```
-
-Windows PowerShell:
+Windows PowerShell, from the repository root with the development virtual
+environment activated:
 
 ```powershell
-$env:QT_QPA_PLATFORM = 'offscreen'
-pytest
+$env:QT_QPA_PLATFORM = "offscreen"; python -m pytest
+```
+
+Use `python -m pytest` so Python includes the repository root in its import path.
+For Ruff, select the same project configuration on either platform:
+
+```sh
+python -m ruff check --config pyproject.toml .
 ```
 
 ## Real-file integration matrix

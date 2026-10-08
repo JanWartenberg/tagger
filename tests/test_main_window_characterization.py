@@ -300,13 +300,17 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             )
             self.assertEqual(self.window.duplicateScanSetupFrame.isVisible(), expanded)
             if not expanded:
-                add_folder = self.window.duplicateAddFolderButton
-                self.assertEqual(button.height(), add_folder.height())
+                ignored = self.window.duplicateIgnoredCandidatesButton
+                self.assertEqual(button.height(), ignored.height())
                 self.assertEqual(
                     button.mapTo(self.window, button.rect().center()).y(),
-                    add_folder.mapTo(self.window, add_folder.rect().center()).y(),
+                    ignored.mapTo(self.window, ignored.rect().center()).y(),
                 )
-                self.assertLess(button.geometry().right(), add_folder.geometry().left())
+                self.assertLess(button.geometry().right(), ignored.geometry().left())
+                self.assertEqual(
+                    self.window.duplicateReviewHeader.indexOf(button) + 1,
+                    self.window.duplicateReviewHeader.indexOf(ignored),
+                )
             self.assertTrue(button.isVisible())
             self.assertEqual(self.window.duplicateScanSetup.isVisible(), expanded)
             self.assertEqual(
@@ -372,7 +376,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertTrue(self._copy_control(source, "source").isChecked())
         self.assertFalse(self._copy_control(second, "target").isChecked())
 
-    def test_alt_u_keeps_hjkl_navigation_available_without_edit_mode(self):
+    def test_alt_u_keeps_hjkl_navigation_available(self):
         self._scan_copy_candidates(two_groups=True)
         self.window.duplicateShowAllCandidatesCheck.setChecked(True)
         self.window.duplicateScopeCombo.setFocus()
@@ -383,7 +387,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.app.processEvents()
         self.assertFalse(self.window.duplicateScanSetup.isVisible())
-        self.assertFalse(self.window._duplicate_edit_mode)
         self.assertIs(self.window.focusWidget(), self.window.duplicateScanSetupToggle)
         first_group = self.window._active_duplicate_group_id
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
@@ -580,7 +583,8 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn(
             "Alt+E", self.window.duplicateExcludeEmptyCandidatesCheck.toolTip()
         )
-        self.assertIn("i in Edit mode", self.window.duplicateIgnoreButton.toolTip())
+        self.assertIn("(i)", self.window.duplicateIgnoreButton.toolTip())
+        self.assertNotIn("Edit mode", self.window.duplicateIgnoreButton.toolTip())
         self.assertIn("(c)", self.window.duplicateApplyTagsButton.toolTip())
         self.assertNotIn("Edit mode", self.window.duplicateApplyTagsButton.toolTip())
 
@@ -694,9 +698,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run()
         self.app.processEvents()
         self.window.duplicateReviewBackButton.setFocus()
-        QtTest.QTest.keyClick(
-            self.window.duplicateReviewBackButton, QtCore.Qt.Key.Key_E
-        )
         for control in (
             self.window.duplicateScopeCombo,
             self.window.duplicateStartScanButton,
@@ -1052,7 +1053,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             self.assertGreaterEqual(top, 0)
             self.assertLessEqual(top + button.height(), queue.viewport().height())
 
-    def test_duplicate_copy_shortcut_works_without_edit_mode(self):
+    def test_duplicate_copy_shortcut_opens_confirmation_directly(self):
         source, *_ = self._scan_copy_candidates()
         control = self._copy_control(source, "source")
         control.click()
@@ -1124,8 +1125,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.discovery_runner.run()
         self.app.processEvents()
         self.window.resize(900, 700)
-        self.window.duplicateEditModeButton.setFocus()
-        QtTest.QTest.keyClick(self.window.duplicateEditModeButton, QtCore.Qt.Key.Key_E)
+        self.window.duplicateIgnoreButton.setFocus()
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_L)
         QtTest.QTest.qWait(1)
         for index in range(4):
@@ -1151,15 +1151,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_K)
         self.assertIs(self.window.focusWidget(), self._copy_control(paths[2], "target"))
 
-    def test_duplicate_edit_keys_are_modal_and_ignore_is_recoverable(self):
+    def test_duplicate_shortcuts_work_directly_and_ignore_is_recoverable(self):
         source, first, _second, _tagged, _unknown = self._scan_copy_candidates(
             two_groups=True
         )
         control = self._copy_control(source, "source")
         control.setFocus()
-        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_S)
-        self.assertFalse(control.isChecked())
-        QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_E)
         QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_S)
         self.assertTrue(control.isChecked())
         QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_J)
@@ -1169,13 +1166,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.cmdLine.show()
         self.window.cmdLine.setFocus()
         QtTest.QTest.keyClicks(self.window.cmdLine, "scti")
+        self.assertEqual(self.window.cmdLine.text(), "scti")
+        self.assertTrue(control.isChecked())
+        self.assertFalse(self._copy_control(first, "target").isChecked())
         self.assertEqual(FakeExifTool.write_calls, [])
         self.window.cmdLine.hide()
         self._copy_control(first, "target").setFocus()
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_Escape)
-        self.assertTrue(self.window.duplicateReviewView.isVisible())
-        self.assertIn("Edit mode: off", self.window.duplicateEditModeButton.text())
-        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
         QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_I)
         self._wait_until(lambda: self.window.duplicateResultsButton.isVisible())
         ignored = next(
@@ -1187,6 +1183,23 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._restore_ignored_candidate()
         self.assertTrue(self._copy_control(source, "source").isChecked())
         self.assertFalse(self._copy_control(first, "target").isChecked())
+
+    def test_duplicate_review_has_no_edit_toggle_and_escape_returns_to_tagging(self):
+        self._scan_copy_candidates()
+        self.assertFalse(
+            any(
+                "Edit mode" in button.text()
+                for button in self.window.duplicateReviewView.findChildren(
+                    QtWidgets.QPushButton
+                )
+            )
+        )
+        self.window.duplicateIgnoreButton.setFocus()
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_E)
+        self.assertTrue(self.window.duplicateReviewView.isVisible())
+        self.assertFalse(self.window.duplicateResultsButton.isVisible())
+        QtTest.QTest.keyClick(self.window.focusWidget(), QtCore.Qt.Key.Key_Escape)
+        self.assertTrue(self.window.taggingWorkspaceView.isVisible())
 
     def test_duplicate_copy_refresh_rejects_changed_source_before_preview(self):
         source, _first, _second, _tagged, _unknown = self._scan_copy_candidates()
@@ -1587,9 +1600,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             "Choose a tagged source and empty targets.",
             self.window.duplicateAssessmentHint.text(),
         )
-        self.assertIn(
-            "e toggles Edit mode", self.window.duplicateEditModeButton.toolTip()
-        )
 
         first_group_id = result.groups[0].group_id
         second_group_id = result.groups[1].group_id
@@ -1597,7 +1607,6 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         first_button.setFocus()
         QtTest.QTest.keyClick(first_button, QtCore.Qt.Key.Key_Right)
         self.assertEqual(self.window._active_duplicate_group_id, second_group_id)
-        self.window.toggle_duplicate_edit_mode()
         QtTest.QTest.keyClick(
             self.window._duplicate_group_buttons[second_group_id],
             QtCore.Qt.Key.Key_H,
@@ -1868,7 +1877,7 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         next(
             button
             for button in dialog.findChildren(QtWidgets.QPushButton)
-            if button.text() == "Restore"
+            if button.text().replace("&", "") == "Restore"
         ).click()
         self._wait_until(
             lambda: dialog.findChild(QtWidgets.QListWidget).count() == before - 1
@@ -1899,14 +1908,17 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.assertIn("Duplicate review", title)
         self.assertIn("scanduplicates", text)
         self.assertIn("Space s", text)
-        self.assertIn("[e]", text)
+        self.assertIn("Ctrl+I", text)
+        self.assertNotIn("[e]", text)
+        self.assertNotIn("duplicateedit", text)
+        self.assertNotIn("Edit mode", text)
         self.assertIn("[c]", text)
         self.assertNotIn("c (Edit mode)", text)
         for key in ("h", "j", "k", "l"):
             self.assertIn(f"[{key}]", text)
             self.assertNotIn(f"{key} (Edit mode)", text)
         for key in ("s", "t", "i"):
-            self.assertIn(f"{key} (Edit mode)", text)
+            self.assertIn(f"[{key}]", text)
         for irrelevant in ("addtag", "retryall", "filterfiles", "reindex"):
             self.assertNotIn(irrelevant, text)
         self.window.show_tagging_workspace()
@@ -3655,18 +3667,42 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
     def test_open_choice_accepts_a_o_and_c_keys(self) -> None:
         def choose_with(key: QtCore.Qt.Key) -> str:
+            failures = []
+
             def press_key() -> None:
                 dialog = QtWidgets.QApplication.activeModalWidget()
-                self.assertIsInstance(dialog, QtWidgets.QMessageBox)
-                self.assertSetEqual(
-                    {button.text() for button in dialog.buttons()},
-                    {"(A)ll", "(O)nly", "(C)ancel"},
-                )
-                QtTest.QTest.keyClick(dialog, key)
-                QtCore.QTimer.singleShot(10, dialog.reject)
+                try:
+                    self.assertIsInstance(dialog, QtWidgets.QMessageBox)
+                    self.assertSetEqual(
+                        {button.text() for button in dialog.buttons()},
+                        {"(A)ll", "(O)nly", "(C)ancel"},
+                    )
+                    dialog.activateWindow()
+                    dialog.setFocus()
+                    self._wait_for_ui(
+                        lambda: self.app.activeWindow() is dialog
+                        and self.app.focusWindow() is dialog.windowHandle()
+                    )
+                    QtTest.QTest.keyClick(dialog, key)
+                    self._wait_for_ui(lambda: dialog.clickedButton() is not None)
+                    expected = {
+                        QtCore.Qt.Key.Key_A: "(A)ll",
+                        QtCore.Qt.Key.Key_O: "(O)nly",
+                        QtCore.Qt.Key.Key_C: "(C)ancel",
+                    }
+                    self.assertEqual(dialog.clickedButton().text(), expected[key])
+                except Exception as error:
+                    failures.append(error)
+                finally:
+                    if isinstance(dialog, QtWidgets.QMessageBox) and dialog.isVisible():
+                        dialog.reject()
 
-            QtCore.QTimer.singleShot(10, press_key)
-            return self.window._open_selection_choice("Open photos")
+            # Trigger before activation can settle to exercise the readiness wait.
+            QtCore.QTimer.singleShot(0, press_key)
+            result = self.window._open_selection_choice("Open photos")
+            if failures:
+                raise failures[0]
+            return result
 
         self.assertEqual(choose_with(QtCore.Qt.Key.Key_A), "all")
         self.assertEqual(choose_with(QtCore.Qt.Key.Key_O), "active")
@@ -4698,6 +4734,12 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                 self.window.keywordsList.count() == 1
                 and self.window.keywordsList.item(0).text() == "tag-0"
             )
+        )
+        # Finish fixture setup before recording loads caused by rapid navigation.
+        self._wait_for_ui(
+            lambda: not self.window._preview_load_timer.isActive()
+            and self.window._pending_preview_load is None
+            and not self.window._queued_preview_workers
         )
 
         class SlowImageReader:

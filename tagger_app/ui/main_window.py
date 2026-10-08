@@ -949,7 +949,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_duplicate_group_id: str | None = None
         self._visible_duplicate_group_ids: list[str] = []
         self._duplicate_group_buttons: dict[str, QtWidgets.QPushButton] = {}
-        self._duplicate_edit_mode = False
         self._duplicate_mutations: dict[int, tuple[ScanResult, str]] = {}
         self._duplicate_copy_generation = 0
         self._duplicate_copy_workers: set[Worker] = set()
@@ -1500,7 +1499,7 @@ class MainWindow(QtWidgets.QMainWindow):
             "Ignored candidates"
         )
         self.duplicateIgnoredCandidatesButton.setToolTip(
-            "Inspect remembered candidates; restore or clear ignores explicitly"
+            "Inspect remembered candidates (Ctrl+I); restore or clear ignores explicitly"
         )
         self.duplicateIgnoredCandidatesButton.clicked.connect(
             self.show_ignored_duplicate_candidates
@@ -1677,19 +1676,9 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.duplicateAssessmentHint.setWordWrap(True)
         assessment_actions_layout.addWidget(self.duplicateAssessmentHint, 1)
-        self.duplicateEditModeButton = QtWidgets.QPushButton("Edit mode: off (e)")
-        self.duplicateEditModeButton.setToolTip(
-            "e toggles Edit mode; Esc leaves it.\n"
-            "h/l: groups · j/k: photos (in either mode)\n"
-            "s: source · t: target · i: ignore (in Edit mode)\n"
-            "c previews a copy in either mode; confirmation is required."
-        )
-        self.duplicateEditModeButton.clicked.connect(self.toggle_duplicate_edit_mode)
-        assessment_actions_layout.addWidget(self.duplicateEditModeButton)
-        self.duplicateEditModeButton.installEventFilter(self)
         self.duplicateIgnoreButton = QtWidgets.QPushButton("Ignore candidate (i)")
         self.duplicateIgnoreButton.setToolTip(
-            "Remember this group as ignored (i in Edit mode); inspect or restore it in Ignored candidates"
+            "Remember this group as ignored (i); inspect or restore it in Ignored candidates"
         )
         self.duplicateIgnoreButton.clicked.connect(self.ignore_active_duplicate_group)
         assessment_actions_layout.addWidget(self.duplicateIgnoreButton)
@@ -1733,12 +1722,16 @@ class MainWindow(QtWidgets.QMainWindow):
             toggle.setMaximumHeight(16777215)
         else:
             self.duplicateReviewHeader.insertWidget(
-                self.duplicateReviewHeader.indexOf(self.duplicateAddFolderButton),
+                self.duplicateReviewHeader.indexOf(
+                    self.duplicateIgnoredCandidatesButton
+                ),
                 toggle,
                 0,
                 QtCore.Qt.AlignmentFlag.AlignVCenter,
             )
-            toggle.setFixedHeight(self.duplicateAddFolderButton.sizeHint().height())
+            toggle.setFixedHeight(
+                self.duplicateIgnoredCandidatesButton.sizeHint().height()
+            )
         self.duplicateScanSetup.setVisible(expanded)
         self.duplicateScanSetupFrame.setVisible(expanded)
         toggle.show()
@@ -2217,9 +2210,7 @@ class MainWindow(QtWidgets.QMainWindow):
             button.setCheckable(True)
             button.setMinimumWidth(190)
             button.setAccessibleName(f"Open candidate group {position}")
-            button.setToolTip(
-                "Open candidate group (h/l in Edit mode or Left/Right in queue)"
-            )
+            button.setToolTip("Open candidate group (h/l or Left/Right in queue)")
             button.setProperty("duplicateGroupId", group_id)
             button.installEventFilter(self)
             button.clicked.connect(
@@ -2737,15 +2728,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         dialog.open()
 
-    def toggle_duplicate_edit_mode(self) -> None:
-        self._duplicate_edit_mode = not self._duplicate_edit_mode
-        self.duplicateEditModeButton.setText(
-            "Edit mode: on (Esc)" if self._duplicate_edit_mode else "Edit mode: off (e)"
-        )
-        if self._active_duplicate_group_id in self._visible_duplicate_group_ids:
-            self._refresh_duplicate_assessment_hint()
-
-    def _duplicate_edit_key_handler(
+    def _duplicate_key_handler(
         self, event: QtGui.QKeyEvent
     ) -> Callable[[], None] | None:
         if self.mainViews.currentWidget() is not self.duplicateReviewView:
@@ -2762,17 +2745,13 @@ class MainWindow(QtWidgets.QMainWindow):
         if event.key() == QtCore.Qt.Key.Key_Escape:
             if self._active_duplicate_scan_id is not None:
                 return self.cancel_duplicate_scan
-            if self._duplicate_edit_mode:
-                return self.toggle_duplicate_edit_mode
             return None
         token = self._event_token(event)
         for spec in self._actions_by_id.values():
             for route in spec.key_routes:
                 if route.kind != "single" or route.sequence != (token,):
                     continue
-                if route.scope == "duplicate_review" or (
-                    route.scope == "duplicate_edit" and self._duplicate_edit_mode
-                ):
+                if route.scope == "duplicate_review":
                     return lambda action_id=spec.id: self._dispatch_action(action_id)
         return None
 
@@ -2782,7 +2761,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtCore.QEvent.Type.KeyPress,
         ):
             return False
-        handler = self._duplicate_edit_key_handler(event)
+        handler = self._duplicate_key_handler(event)
         if handler is None:
             return False
         if event.type() == QtCore.QEvent.Type.KeyPress:
@@ -3286,8 +3265,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_tagging_workspace(self) -> None:
         self._invalidate_duplicate_copy()
-        if self._duplicate_edit_mode:
-            self.toggle_duplicate_edit_mode()
         self.mainViews.setCurrentWidget(self.taggingWorkspaceView)
         self.duplicateResultsButton.hide()
         self.taggingViewAction.setChecked(True)
@@ -3464,7 +3441,6 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         labels.extend(
             self._format_key_route_label(route)
-            + (" (Edit mode)" if route.scope == "duplicate_edit" else "")
             for route in spec.key_routes
             if route.show_in_help
         )
@@ -4045,8 +4021,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.mainViews.currentWidget() is self.duplicateReviewView:
             if self._active_duplicate_scan_id is not None:
                 self.cancel_duplicate_scan()
-            elif self._duplicate_edit_mode:
-                self.toggle_duplicate_edit_mode()
             else:
                 self.show_tagging_workspace()
             return
@@ -4199,7 +4173,7 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             prefix = f"{command.name}{alias} — " if command else ""
             description = (
-                "Cancel scan / leave Edit mode / return to tagging"
+                "Cancel scan / return to tagging"
                 if duplicate and spec.id == "escape"
                 else spec.description
             )
