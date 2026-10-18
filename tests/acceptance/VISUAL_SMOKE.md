@@ -1,5 +1,13 @@
 # Minimal Windows visual smoke
 
+Files-pane scroll follow-up (2026-10-18): adjacent clicks in stable No tags results
+with hidden rows and overflowing paths now use pixel scrolling. Native delayed
+scrolling, partially clipped anchors, end navigation and explicit scrolling are
+automated; no subjective appearance check is added. Linux passed. The maintainer's
+Windows run passed in independently inspected report
+`reports/20261018T161400.894002Z/report.json` (20 phases / 52 cases), including both
+native scroll cases. Preserve previously accepted visual checks.
+
 Direct shortcuts follow-up (2026-10-07): Edit mode control removed; source, target,
 ignore and copy keys now act directly. No new manual check requested. Public Qt
 tests and real-file keyboard scenarios validate observable behavior; previous

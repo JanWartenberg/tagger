@@ -246,6 +246,10 @@ class FileListWidget(QtWidgets.QListWidget):
         self.setSelectionMode(
             QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
         )
+        # Qt's per-item scrolling miscounts hidden rows when long paths overflow.
+        self.setVerticalScrollMode(
+            QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel
+        )
 
     def dragEnterEvent(self, event: QtGui.QDragEnterEvent) -> None:
         if event.mimeData().hasUrls():
@@ -5948,9 +5952,9 @@ class MainWindow(QtWidgets.QMainWindow):
     def _schedule_files_selection_scroll_anchor_restore(self) -> None:
         """Restore after the mouse selection has queued its viewport changes."""
         if self._files_selection_scroll_anchor is not None:
-            # Let the native QListWidget finish its deferred ensure-visible work
-            # before restoring the pre-click viewport. A zero-delay timer can run
-            # first on Windows, so the native scroll wins afterward.
+            # Restore after immediate selection/layout work. A zero-delay timer
+            # can run before that work on Windows. Pixel scrolling separately
+            # avoids the native scroll queued past the double-click interval.
             self._files_selection_scroll_restore_timer.start(1)
 
     def _queue_files_selection_scroll_anchor_restore(
@@ -5996,7 +6000,7 @@ class MainWindow(QtWidgets.QMainWindow):
             item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
         )
         scroll_bar = self.files.verticalScrollBar()
-        scroll_bar.setValue(scroll_bar.value() + offset)
+        scroll_bar.setValue(scroll_bar.value() - offset)
 
     def _preserve_files_scroll(self, fn) -> None:
         view = self.files
@@ -6011,7 +6015,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 view.scrollToItem(
                     item, QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
                 )
-                sb.setValue(sb.value() + top_offset)
+                sb.setValue(sb.value() - top_offset)
 
     def apply_iptc_filter_async(self) -> None:
         """Apply the immediate SQLite IPTC-empty view without a metadata scan."""

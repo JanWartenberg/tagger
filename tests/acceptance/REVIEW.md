@@ -955,3 +955,78 @@ Maintainer explicitly requested commit after final Windows verification and the
 second review. Implementation and final acceptance/status records are included
 together. Ticket 05 is completed; no unresolved review or acceptance findings.
 Earlier failure/reproduction notes remain historical evidence. No push requested.
+
+# Delayed adjacent-photo click scroll — 2026-10-18
+
+The earlier 10 ms injected-scroll experiment showed a timing gap but did not prove
+the reported trigger. A subsequent real Qt reproduction needs no injected scroll:
+settled No tags results with hidden leading rows and horizontally overflowing
+paths jump after clicking an already visible adjacent photo. Qt's native mouse
+timer scrolls after its double-click interval plus 100 ms, beyond the existing
+1 ms restoration. The new native regression failed at scrollbar 79 versus 20.
+
+The Files pane now scrolls by pixels, avoiding Qt's hidden-row per-item position
+recalculation. Both anchor restoration paths subtract the top photo's viewport
+offset, retaining partially clipped rows. Separate click and matching-filename
+filter tests failed at 1393 versus 1407 before their respective corrections.
+
+- Passed: all three new regressions; full Linux offscreen pytest **424 passed,
+  four Windows skips, 33 subtests passed**. Ruff check and changed-range/file
+  formatting passed; unrelated legacy formatting is unchanged.
+- Passed and independently inspected:
+  `reports/20261018T155311.799843Z/report.json`, **18 phases / 48 cases**, both
+  backup settings. All children exited zero, process cleanup was verified,
+  temporary workspaces were removed and recorded harness hashes matched the tested
+  combined working tree. New
+  production Qt/ExifTool/index cases use 200 generated JPEGs and verify native
+  delayed adjacent clicks, partial anchors, end navigation, explicit scrolling
+  and unchanged JPEG hashes/file sets.
+- Independent review: first two read-only reviewers found no functional issues
+  and independently passed the three new regressions. A stale timer comment was
+  clarified. Two fresh final reviewers returned no findings; the validation
+  reviewer independently passed all three new Qt tests again.
+- **Unrun:** native Windows Qt behavior, expanded Windows real-file matrix,
+  sharing locks and native process cleanup. Run the documented Windows acceptance
+  command and inspect its report before closing scroll issue 02. No subjective
+  visual check or repeat of previously accepted appearance checks is requested.
+- No commit, merge or push requested. Pre-existing scoped-folder-refresh changes
+  are preserved and are outside this fix's review scope.
+
+# Windows scroll verification completed — 2026-10-18
+
+The maintainer ran the requested Windows command and reported PASSED. Independently
+inspected `reports/20261018T161400.894002Z/report.json` and its cleanup log:
+Windows 11 / Python 3.14.7 / ExifTool 13.59, **20 phases / 52 cases** passed across
+both backup settings. All children exited zero, process cleanup was verified,
+both temporary workspaces were removed, and harness hashes matched the tested
+combined working tree.
+Windows sharing-lock partial failure/retry and five native cleanup probes passed.
+
+The two real-file scroll phases retained scrollbar **240 → 240** after the
+adjacent-photo click and native delay. Partial-row anchors, end navigation,
+explicit scrolling and unchanged JPEG hashes/file sets also passed. This is a
+maintainer-executed Windows run with independently inspected evidence; it is not
+agent execution on Windows. No subjective visual acceptance or full Windows
+pytest run is claimed. Scroll issue 02 is completed. The maintainer authorized the scroll-fix commit
+on 2026-10-18; unrelated pending folder-refresh work is excluded. No push requested.
+
+Case-count correction during commit preparation: four JSON environment/diagnostic
+records were previously counted as test cases. The combined reports contain
+48 Linux / 52 Windows passed cases, plus four diagnostic records each; all
+reported pass/fail outcomes are unchanged.
+
+## Scroll commit isolation — 2026-10-18
+
+The scroll fix is committed independently of pending scoped-folder-refresh work.
+An exported staged snapshot passed Ruff, full Linux offscreen pytest **399 passed,
+four Windows skips, 33 subtests passed**, and real-file acceptance **16 phases /
+44 passed cases**. The inspected snapshot report is
+`tests/acceptance/reports/20261018T181043.954686Z/report.json`; all child exits,
+cleanup, workspace removal and harness hashes were verified against staged files.
+The combined Windows report above also includes the uncommitted folder-refresh
+phase; its scroll cases use the same scroll scenario as this commit.
+
+One additional isolated suite run segfaulted in the existing duplicate-copy
+background-preview navigation test. That test passed in isolation and the entire
+suite then passed without a parallel acceptance run. The crash is not claimed
+fixed by this change. No push requested.

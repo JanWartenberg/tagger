@@ -18,6 +18,10 @@ from process_control import start_child, stop_child
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 REQUIRED_CASES = {
+    "files-scroll": {
+        "native_filtered_adjacent_click",
+        "partial_anchor_and_explicit_scroll",
+    },
     "ignore": {"ignore_remembered_without_photo_writes"},
     "ignored-reopen": {
         "fresh_process_ignore_and_read_only_inspection",
@@ -70,8 +74,8 @@ def isolated_environment(root):
 
 
 def run_phase(root, env, phase, backup, report_dir, report):
-    if phase == "windows-lock":
-        root = root / "locked-ui"
+    if phase in ("windows-lock", "files-scroll"):
+        root = root / ("locked-ui" if phase == "windows-lock" else "files-scroll-ui")
         root.mkdir()
         env = isolated_environment(root)
     name = f"backup-{backup}-{phase}"
@@ -91,6 +95,8 @@ def run_phase(root, env, phase, backup, report_dir, report):
             / (
                 "confirmed_copy.py"
                 if phase in ("copy", "reopen")
+                else "files_scroll.py"
+                if phase == "files-scroll"
                 else "ignored_candidates.py"
                 if phase in ("ignore", "ignored-reopen")
                 else "locked_copy.py"
@@ -181,6 +187,7 @@ def main():
             name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
             for name in (
                 "run.py",
+                "files_scroll.py",
                 "confirmed_copy.py",
                 "ignored_candidates.py",
                 "process_control.py",
@@ -222,6 +229,7 @@ def main():
                         "write-guard",
                         "ignore",
                         "ignored-reopen",
+                        "files-scroll",
                     ]
                     if os.name == "nt":
                         phases.append("windows-lock")

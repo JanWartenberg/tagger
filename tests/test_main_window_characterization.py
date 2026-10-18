@@ -4422,6 +4422,87 @@ class MainWindowCharacterizationTests(unittest.TestCase):
 
         self.assertEqual(scroll_bar.value(), anchor)
 
+    def test_no_tags_adjacent_click_preserves_scroll_after_native_delay(self) -> None:
+        paths = self._add_paths(
+            *(f"{'long-photo-name-' * 8}{index:04d}.jpg" for index in range(200))
+        )
+        FakePhotoIndex.iptc_empty_results = set(paths[80:])
+        self.window.onlyUntagged.setChecked(True)
+        self._wait_until(
+            lambda: (
+                self.window.statusBar().currentMessage() == "IPTC-empty results ready"
+            )
+        )
+        view = self.window.files
+        view.setCurrentRow(100)
+        native_delay = QtWidgets.QApplication.doubleClickInterval() + 100
+        QtTest.QTest.qWait(native_delay + 100)
+        view.scrollToItem(
+            view.item(100), QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+        )
+        self.app.processEvents()
+        target = view.item(101)
+        rect = view.visualItemRect(target)
+        self.assertGreater(rect.width(), view.viewport().width())
+        self.assertGreaterEqual(rect.top(), 0)
+        self.assertLess(rect.bottom(), view.viewport().height())
+        anchor = view.verticalScrollBar().value()
+
+        # Exercise Qt's real post-click scroll, after its double-click window.
+        QtTest.QTest.mouseClick(
+            view.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=QtCore.QPoint(20, rect.center().y()),
+        )
+        QtTest.QTest.qWait(native_delay + 100)
+
+        self.assertEqual(self.window.active_file_path(), paths[101])
+        self.assertEqual(view.verticalScrollBar().value(), anchor)
+        self.assertTrue(view.visualItemRect(target).intersects(view.viewport().rect()))
+
+    def test_click_preserves_a_partially_scrolled_top_photo(self) -> None:
+        self._add_paths(*(f"photo-{index:04d}.jpg" for index in range(200)))
+        view = self.window.files
+        view.scrollToItem(
+            view.item(100), QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+        )
+        self.app.processEvents()
+        scroll_bar = view.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.value() + 7)
+        anchor = scroll_bar.value()
+        self.assertEqual(view.visualItemRect(view.item(100)).top(), -7)
+        rect = view.visualItemRect(view.item(102))
+
+        QtTest.QTest.mouseClick(
+            view.viewport(),
+            QtCore.Qt.MouseButton.LeftButton,
+            pos=rect.center(),
+        )
+        QtTest.QTest.qWait(30)
+
+        self.assertEqual(view.currentRow(), 102)
+        self.assertEqual(scroll_bar.value(), anchor)
+
+    def test_matching_filename_filter_preserves_a_partial_scroll_anchor(self) -> None:
+        self._add_paths(*(f"photo-{index:04d}.jpg" for index in range(200)))
+        view = self.window.files
+        view.setCurrentRow(102)
+        view.scrollToItem(
+            view.item(100), QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+        )
+        self.app.processEvents()
+        scroll_bar = view.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.value() + 7)
+        anchor = scroll_bar.value()
+        self.assertEqual(view.visualItemRect(view.item(100)).top(), -7)
+
+        self.window.filenameFilterEdit.setText(".jpg")
+        self.window.apply_filename_filter()
+        self.app.processEvents()
+
+        self.assertEqual(view.currentRow(), 102)
+        self.assertEqual(scroll_bar.value(), anchor)
+
     def test_date_and_no_tags_click_keeps_the_existing_scroll_anchor(self) -> None:
         paths = self._add_paths(*(f"photo-{index}.jpg" for index in range(200)))
         FakePhotoIndex.search_results = set(paths[:150])
