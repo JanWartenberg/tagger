@@ -34,6 +34,9 @@ from tagger_app.services.background_coordinator import (
     DiscoveryEvent,
     DiscoveryKind,
     DiscoveryRequest,
+    FolderRefreshCompleted,
+    FolderRefreshFailed,
+    FolderRefreshRequest,
     IndexAdapter,
     IndexEnsureCompleted,
     IndexReadFailed,
@@ -793,6 +796,9 @@ class PhotoIndexAdapter:
     def reconcile_directory(self, root: str, directory: str) -> object:
         return PhotoIndex(root).sync_directory(self._exif, directory)
 
+    def refresh_folder(self, root: str, directory: str) -> Sequence[str]:
+        return PhotoIndex(root).refresh_folder(self._exif, directory)
+
     def index_missing(self, root: str, paths: Sequence[str]) -> int:
         index = PhotoIndex(root)
         normalized_paths = [normalize_path(path) for path in paths]
@@ -909,6 +915,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._preview_load_timer.timeout.connect(self._start_pending_preview_load)
         self.photo_workspace = PhotoWorkspace()
         self._active_replacement_discovery: DiscoveryRequest | None = None
+        self._refresh_folder_target: str | None = None
+        self._active_folder_refresh: FolderRefreshRequest | None = None
+        self._folder_refresh_context: tuple[object, ...] | None = None
+        self._refresh_preserves_index_root = False
         self._pending_additive_discoveries: set[int] = set()
         self._coordinator_workspace_generation: int | None = None
 
@@ -3307,6 +3317,8 @@ class MainWindow(QtWidgets.QMainWindow):
         }
 
     def _index_root_for_paths(self, paths: list[str]) -> str | None:
+        if self._refresh_preserves_index_root:
+            return self._index_root
         # An empty database-search result has no paths of its own. Keep its
         # originating root rather than treating the configured default as a new
         # root for the next query.
@@ -3339,6 +3351,12 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         root = self._index_root_for_paths(list(states.keys()))
         if root:
+            if self._refresh_preserves_index_root:
+                states = {
+                    p: state
+                    for p, state in states.items()
+                    if Path(p).is_relative_to(root)
+                }
             self._background_coordinator.submit_confirmed_states(root, states)
 
     def _index_missing_paths(self, root: str, paths: list[str]) -> None:
@@ -4548,6 +4566,7 @@ class MainWindow(QtWidgets.QMainWindow):
         super().dropEvent(event)
 
     def add_files(self, paths: list[str]) -> None:
+        self._refresh_preserves_index_root = False
         before = self.photo_workspace.snapshot()
         snapshot = self.photo_workspace.add_paths(
             normalize_path(path) for path in paths
@@ -4585,6 +4604,8 @@ class MainWindow(QtWidgets.QMainWindow):
             if paths_are_normalized
             else [normalize_path(path) for path in paths]
         )
+        self._active_folder_refresh = None
+        self._refresh_preserves_index_root = False
         self._active_search_request = None
         self._displayed_search_request = None
         self._displayed_search_generation = None
@@ -4653,6 +4674,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._start_folder_discovery(folder)
 
     def _start_folder_discovery(self, folder: str) -> None:
+        self._refresh_folder_target = normalize_path(folder)
         # A folder selection replaces the current workspace before discovery starts.
         had_prepared_index_scope = (
             self._prepared_duplicate_scope is not None
@@ -4701,6 +4723,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.add_dropped_directory(directory)
 
     def _handle_coordinator_event(self, event: CoordinatorEvent) -> None:
+        if isinstance(event, (FolderRefreshCompleted, FolderRefreshFailed)):
+            self._handle_folder_refresh_event(event)
+            return
         if isinstance(
             event,
             (
@@ -4836,6 +4861,16 @@ class MainWindow(QtWidgets.QMainWindow):
             and snapshot.filter_operation_id is None
         )
 
+    def _resubmit_pending_iptc_filter(self) -> None:
+        """Carry an in-flight filter across a refresh's workspace generation."""
+        if self._iptc_empty_filter_request is None or self._iptc_empty_root is None:
+            return
+        self._iptc_empty_filter_request = self._background_coordinator.load_iptc_empty(
+            self._iptc_empty_root,
+            self.photo_workspace.snapshot().paths,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+        )
+
     def _check_iptc_empty_results_after_index_update(self, root: str) -> None:
         """Compare a completed normal index update without changing the view."""
         if not self._has_current_iptc_empty_view(root):
@@ -4936,12 +4971,26 @@ class MainWindow(QtWidgets.QMainWindow):
         if request.kind is IndexRefreshKind.STALE_RESULT_REPAIR:
             self._handle_stale_result_repair_event(event)
             return
+        # A scoped refresh can advance the view generation while this full-root
+        # job still owns the current filter's startup dependency.
+        current_filter_dependency = (
+            self._refresh_preserves_index_root
+            and self._iptc_empty_waiting_for_index
+            and request.root == self._iptc_empty_root
+        )
         if (
             request != self._active_index_refresh_request
-            or request.workspace_generation
-            != self._tag_mutation_coordinator.workspace_generation
+            or (
+                request.workspace_generation
+                != self._tag_mutation_coordinator.workspace_generation
+                and not current_filter_dependency
+            )
             or request.root != self._index_root
         ):
+            if request == self._active_index_refresh_request and isinstance(
+                event, (IndexRefreshCompleted, IndexRefreshFailed)
+            ):
+                self._active_index_refresh_request = None
             return
         if isinstance(event, IndexRefreshProgress):
             self._show_refresh_progress(event.result)
@@ -4949,6 +4998,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._active_index_refresh_request = None
         self._stop_refresh_discovery_animation()
         if isinstance(event, IndexRefreshFailed):
+            if self._iptc_empty_waiting_for_index:
+                before = self.selected_file_paths()
+                snapshot = self.photo_workspace.clear_iptc_empty_filter()
+                self._clear_iptc_empty_refresh_state()
+                self._render_photo_workspace_snapshot(snapshot, before)
             self._iptc_empty_refresh_available = False
             self._iptc_empty_refresh_check_request = None
             self.iptcEmptyRefreshOffer.hide()
@@ -5124,6 +5178,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._displayed_search_generation = (
                 self._tag_mutation_coordinator.workspace_generation
             )
+            if self._refresh_preserves_index_root:
+                self._resubmit_pending_iptc_filter()
+                self._check_iptc_empty_results_after_index_update(request.root)
             return
 
         if (
@@ -5453,7 +5510,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if snapshot.active_path is not None:
                 item = self._find_item_by_path(snapshot.active_path)
                 if item is not None:
-                    self.files.setCurrentItem(item)
+                    self.files.setCurrentItem(
+                        item, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate
+                    )
         finally:
             self.files.blockSignals(False)
             self.onlyUntagged.blockSignals(False)
@@ -5521,7 +5580,9 @@ class MainWindow(QtWidgets.QMainWindow):
             if snapshot.active_path is not None:
                 item = self._find_item_by_path(snapshot.active_path)
                 if item is not None:
-                    self.files.setCurrentItem(item)
+                    self.files.setCurrentItem(
+                        item, QtCore.QItemSelectionModel.SelectionFlag.NoUpdate
+                    )
             self.on_selection_changed()
             if on_rendered is not None:
                 on_rendered()
@@ -6625,11 +6686,22 @@ class MainWindow(QtWidgets.QMainWindow):
         if first_search:
             self._search_restore_scroll = self._capture_files_scroll_anchor()
         snapshot = self.photo_workspace.apply_database_search_matches(
-            normalize_path(path) for path in matches
+            matches
+            if self._refresh_preserves_index_root
+            else (normalize_path(path) for path in matches)
         )
         self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
         self._batch_summary_generation += 1
-        self._render_photo_workspace_snapshot(snapshot, before)
+        if (
+            self._refresh_preserves_index_root
+            and len(snapshot.paths) > FILE_PANE_RENDER_BATCH_SIZE
+        ):
+            self._files_render_token += 1
+            self._render_photo_workspace_in_batches(
+                snapshot, self._files_render_token, None
+            )
+        else:
+            self._render_photo_workspace_snapshot(snapshot, before)
         if snapshot.active_path is not None:
             self.files.setFocus()
         self.statusBar().showMessage(f"DB search: {len(matches)} match(es)")
@@ -6778,6 +6850,102 @@ class MainWindow(QtWidgets.QMainWindow):
         self._iptc_empty_refresh_check_request = None
         self.iptcEmptyRefreshOffer.hide()
         self.indexRepairStatusLabel.setText("Cancelling index refresh…")
+
+    def _current_folder_refresh_context(self) -> tuple[object, ...]:
+        return (
+            self._tag_mutation_coordinator.workspace_generation,
+            self._index_root,
+            self._displayed_search_request,
+            self._active_search_request,
+            self.mainViews.currentWidget(),
+            self.photo_workspace.snapshot().filter_operation_id,
+        )
+
+    def refresh_folder(self) -> None:
+        """Refresh an explicit folder without falling back to a whole-root scan."""
+        folder = self._refresh_folder_target
+        if folder is None:
+            folder = QtWidgets.QFileDialog.getExistingDirectory(
+                self, "Refresh folder", self._get_default_folder_for_dialog() or ""
+            )
+            if not folder:
+                return
+            self._refresh_folder_target = normalize_path(folder)
+        self._folder_refresh_context = self._current_folder_refresh_context()
+        candidates = tuple(
+            dict.fromkeys(
+                self.photo_workspace.folder_paths
+                + self.photo_workspace.snapshot().paths
+            )
+        )
+        self._active_folder_refresh = self._background_coordinator.refresh_folder(
+            folder,
+            index_root=self._index_root,
+            workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+            candidate_paths=candidates,
+        )
+        self.indexRepairStatusLabel.setText(f"Refreshing folder: {folder}")
+
+    def _handle_folder_refresh_event(
+        self, event: FolderRefreshCompleted | FolderRefreshFailed
+    ) -> None:
+        if event.request != self._active_folder_refresh:
+            return
+        self._active_folder_refresh = None
+        if (
+            self._folder_refresh_context != self._current_folder_refresh_context()
+            or event.request.workspace_generation
+            != self._tag_mutation_coordinator.workspace_generation
+        ):
+            if (
+                self.indexRepairStatusLabel.text()
+                == f"Refreshing folder: {event.request.folder}"
+            ):
+                self.indexRepairStatusLabel.clear()
+            return
+        folder = event.request.folder
+        if isinstance(event, FolderRefreshFailed):
+            self._record_session_error("Folder refresh", event.error)
+            self.indexRepairStatusLabel.setText(f"Folder refresh failed: {folder}")
+            self.statusBar().showMessage(f"Folder refresh failed: {event.error}")
+            return
+        before = self.selected_file_paths()
+        snapshot = self.photo_workspace.refresh_paths(event.paths, event.removed_paths)
+        # Selection metadata reads must not create/switch an index for photos
+        # outside the existing root after a view-only folder refresh.
+        self._refresh_preserves_index_root = True
+        self._keywords_cache.clear()
+        self._selection_token += 1
+        self._preview_token += 1
+        self._tag_mutation_coordinator.replace_workspace(snapshot.paths)
+        self._batch_summary_generation += 1
+        self._resubmit_pending_iptc_filter()
+        if len(snapshot.paths) > FILE_PANE_RENDER_BATCH_SIZE:
+            self._files_render_token += 1
+            self._render_photo_workspace_in_batches(
+                snapshot, self._files_render_token, None
+            )
+        else:
+            self._render_photo_workspace_snapshot(snapshot, before)
+            self.on_selection_changed()
+        indexed = event.request.index_root is not None
+        suffix = "" if indexed else " (index not updated)"
+        self.indexRepairStatusLabel.setText(f"Folder refreshed: {folder}{suffix}")
+        self.statusBar().showMessage(
+            f"Folder refreshed: {len(event.paths)} photos{suffix}"
+        )
+        if indexed:
+            self.force_refresh_known_tags()
+            self._check_iptc_empty_results_after_index_update(event.request.index_root)
+            if (
+                self.photo_workspace.has_database_search
+                and self._displayed_search_request is not None
+            ):
+                self._active_search_request = self._background_coordinator.search_index(
+                    event.request.index_root,
+                    self._displayed_search_request.query or "",
+                    workspace_generation=self._tag_mutation_coordinator.workspace_generation,
+                )
 
     def reindex_active_root(self) -> None:
         root = self._index_root

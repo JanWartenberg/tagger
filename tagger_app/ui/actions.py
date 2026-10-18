@@ -252,6 +252,13 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             command=CommandBinding("indexroot"),
         ),
         ActionSpec(
+            id="refreshfolder",
+            description="Refresh folder",
+            handler_name="refresh_folder",
+            command=CommandBinding("refreshfolder"),
+            shortcuts=(ShortcutBinding("F5"),),
+        ),
+        ActionSpec(
             id="reindex",
             description="Fully refresh the active photo index",
             handler_name="reindex_active_root",

@@ -113,6 +113,13 @@ class PhotoWorkspace:
         return self._search_restore_state is not None
 
     @property
+    def folder_paths(self) -> tuple[str, ...]:
+        """Return the underlying folder membership, including during a search."""
+        if self._search_restore_state is not None:
+            return self._search_restore_state.paths
+        return tuple(self._paths)
+
+    @property
     def workspace_path_count(self) -> int:
         """Return the folder-backed size before an indexed search narrows it."""
         if self._search_restore_state is not None:
@@ -297,6 +304,44 @@ class PhotoWorkspace:
                 known.add(path)
                 self._paths.append(path)
                 self._visible.add(path)
+        self._repair_selection()
+        return self.snapshot()
+
+    def refresh_paths(
+        self, discovered_paths: Iterable[str], removed_paths: Iterable[str]
+    ) -> PhotoWorkspaceSnapshot:
+        """Reconcile folder facts while retaining selection and stable filters."""
+        discovered = tuple(discovered_paths)
+        removed = set(removed_paths)
+
+        def reconcile(paths: Iterable[str]) -> list[str]:
+            return list(
+                dict.fromkeys([p for p in paths if p not in removed] + list(discovered))
+            )
+
+        if self._search_restore_state is not None:
+            state = self._search_restore_state
+            self._search_restore_state = _SearchRestoreState(
+                tuple(reconcile(state.paths)),
+                state.selected_paths - removed,
+                state.active_path,
+            )
+            self._paths = [p for p in self._paths if p not in removed]
+        else:
+            self._paths = reconcile(self._paths)
+        self._matches -= removed
+        if self._has_active_iptc_filter():
+            self._visible -= removed
+        else:
+            self._visible = set(self._paths)
+        if self._filter_restore_state is not None:
+            state = self._filter_restore_state
+            self._filter_restore_state = _FilterRestoreState(
+                state.view_mode,
+                frozenset(self._paths),
+                state.selected_paths - removed,
+                state.active_path,
+            )
         self._repair_selection()
         return self.snapshot()
 

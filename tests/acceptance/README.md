@@ -55,10 +55,11 @@ Each run checks both backup settings in separate disposable workspaces:
 | Final target write guard | Changed/missing target is reported failed without metadata or backup writes |
 | Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; a two-record archive verifies `j/k` selection/evidence and `c` close; all application actions leave JPEG hashes/file sets unchanged |
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
+| Folder refresh | F5 reconciles additions, capture-date changes and removals only in the chosen subtree; a nested marker does not redirect the database, sibling entries and root freshness are retained despite redirected directories (native junctions on Windows), and `:refreshfolder` reapplies an active date search without changing JPEG bytes |
 | Files-pane scrolling | A real adjacent-photo click in settled No tags results with hidden rows and long paths preserves the viewport beyond Qt's double-click delay; partial-row anchors, end navigation and explicit scrollbar actions remain usable; JPEG hashes and file set stay unchanged |
 
-Both backup settings are required. Linux requires 44 case results across sixteen
-process phases. Windows requires 48 results across eighteen phases plus the native
+Both backup settings are required. Linux requires 48 case results across eighteen
+process phases. Windows requires 52 results across twenty phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;

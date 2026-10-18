@@ -22,6 +22,10 @@ REQUIRED_CASES = {
         "native_filtered_adjacent_click",
         "partial_anchor_and_explicit_scroll",
     },
+    "folder-refresh": {
+        "folder_refresh_scoped_reconciliation",
+        "folder_refresh_reapplies_date_search",
+    },
     "ignore": {"ignore_remembered_without_photo_writes"},
     "ignored-reopen": {
         "fresh_process_ignore_and_read_only_inspection",
@@ -95,6 +99,8 @@ def run_phase(root, env, phase, backup, report_dir, report):
             / (
                 "confirmed_copy.py"
                 if phase in ("copy", "reopen")
+                else "folder_refresh.py"
+                if phase == "folder-refresh"
                 else "files_scroll.py"
                 if phase == "files-scroll"
                 else "ignored_candidates.py"
@@ -187,6 +193,7 @@ def main():
             name: hashlib.sha256((HERE / name).read_bytes()).hexdigest()
             for name in (
                 "run.py",
+                "folder_refresh.py",
                 "files_scroll.py",
                 "confirmed_copy.py",
                 "ignored_candidates.py",
@@ -229,6 +236,7 @@ def main():
                         "write-guard",
                         "ignore",
                         "ignored-reopen",
+                        "folder-refresh",
                         "files-scroll",
                     ]
                     if os.name == "nt":

@@ -15,6 +15,8 @@ class DiscoveryAdapter(Protocol):
 
     def discover(self, root: str) -> Iterable[str | Path]: ...
 
+    def discover_refresh(self, root: str) -> Iterable[str | Path]: ...
+
 
 class IndexAdapter(Protocol):
     """Per-root index operations performed only by the Coordinator's workers."""
@@ -36,6 +38,8 @@ class IndexAdapter(Protocol):
     def remove_photo(self, root: str, path: str) -> object: ...
 
     def reconcile_directory(self, root: str, directory: str) -> object: ...
+
+    def refresh_folder(self, root: str, directory: str) -> Sequence[str]: ...
 
     def index_missing(self, root: str, paths: Sequence[str]) -> int: ...
 
@@ -60,6 +64,7 @@ class DiscoveryKind(Enum):
 
 
 class IndexOperationKind(Enum):
+    REFRESH_FOLDER = "refresh_folder"
     ENSURE = "ensure"
     REFRESH_IF_STALE = "refresh_if_stale"
     FULL_REINDEX = "full_reindex"
@@ -219,9 +224,33 @@ class IndexReadFailed:
     error: str
 
 
+@dataclass(frozen=True)
+class FolderRefreshRequest:
+    request_id: int
+    workspace_generation: int
+    folder: str
+    index_root: str | None
+    candidate_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FolderRefreshCompleted:
+    request: FolderRefreshRequest
+    paths: tuple[str, ...]
+    removed_paths: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class FolderRefreshFailed:
+    request: FolderRefreshRequest
+    error: str
+
+
 DiscoveryEvent: TypeAlias = DiscoveryCompleted | DiscoveryFailed
 IndexEvent: TypeAlias = (
-    IndexEnsureCompleted
+    FolderRefreshCompleted
+    | FolderRefreshFailed
+    | IndexEnsureCompleted
     | IndexWriteCompleted
     | IndexWriteFailed
     | IndexRefreshCompleted
@@ -242,6 +271,7 @@ class _IndexOperation:
     paths: tuple[str, ...] = ()
     refresh_request: IndexRefreshRequest | None = None
     restart: bool = False
+    folder_request: FolderRefreshRequest | None = None
 
 
 @dataclass
@@ -295,6 +325,47 @@ class BackgroundCoordinator:
         self._current_search_request_id: int | None = None
         self._current_iptc_empty_request_id: int | None = None
         self._current_known_tags_request_id: int | None = None
+        self._folder_refreshes: dict[
+            tuple[str | None, str, int], FolderRefreshRequest
+        ] = {}
+
+    def refresh_folder(
+        self,
+        folder: str | Path,
+        *,
+        index_root: str | Path | None,
+        workspace_generation: int,
+        candidate_paths: Sequence[str],
+    ) -> FolderRefreshRequest:
+        """Queue a deduplicated subtree scan behind this root's existing writes."""
+        folder = _normalize_path(folder)
+        root = _normalize_path(index_root) if index_root is not None else None
+        if root is not None and not Path(folder).is_relative_to(root):
+            root = None
+        # A newer view needs its own completion and membership snapshot.
+        key = (root, folder, workspace_generation)
+        with self._lock:
+            if key in self._folder_refreshes:
+                return self._folder_refreshes[key]
+            request = FolderRefreshRequest(
+                self._new_request_id(),
+                workspace_generation,
+                folder,
+                root,
+                tuple(candidate_paths),
+            )
+            self._folder_refreshes[key] = request
+            queue_root = root or folder
+            queue = self._index_queues.setdefault(queue_root, _RootWriteQueue())
+            queue.pending.append(
+                _IndexOperation(
+                    IndexOperationKind.REFRESH_FOLDER, folder_request=request
+                )
+            )
+            work = self._next_index_work_locked(queue_root, queue)
+        if work is not None:
+            self._runner.submit(work)
+        return request
 
     def replace_workspace_from_folder(self, root: str | Path) -> DiscoveryRequest:
         """Start a replacement discovery, invalidating all older workspace work."""
@@ -727,14 +798,33 @@ class BackgroundCoordinator:
             )
             return
         try:
-            if operation.kind is IndexOperationKind.ENSURE:
+            if operation.kind is IndexOperationKind.REFRESH_FOLDER:
+                request = operation.folder_request
+                if request is None:
+                    raise RuntimeError("Folder refresh has no request")
+                paths = tuple(
+                    sorted(
+                        self._index.refresh_folder(root, request.folder)
+                        if request.index_root is not None
+                        else self._discovery.discover_refresh(request.folder),
+                        key=str.casefold,
+                    )
+                )
+                current = set(paths)
+                removed = tuple(
+                    p
+                    for p in request.candidate_paths
+                    if Path(p).is_relative_to(request.folder) and p not in current
+                )
+                event: IndexEvent = FolderRefreshCompleted(request, paths, removed)
+            elif operation.kind is IndexOperationKind.ENSURE:
                 if self._index.is_initialized(root):
                     result = None
                 elif self._index.needs_keyword_index_rebuild(root):
                     result = self._index.refresh(root)
                 else:
                     result = self._index.sync(root, operation.paths)
-                event: IndexEvent = IndexEnsureCompleted(root, result)
+                event = IndexEnsureCompleted(root, result)
             elif operation.kind in {
                 IndexOperationKind.REFRESH_IF_STALE,
                 IndexOperationKind.FULL_REINDEX,
@@ -778,7 +868,9 @@ class BackgroundCoordinator:
                     self._index.update_states(root, states)
                 event = IndexWriteCompleted(root, operation.kind)
         except Exception as error:  # noqa: BLE001 - worker boundary reports failures
-            if operation.refresh_request is not None:
+            if operation.folder_request is not None:
+                event = FolderRefreshFailed(operation.folder_request, str(error))
+            elif operation.refresh_request is not None:
                 event = IndexRefreshFailed(operation.refresh_request, str(error))
             else:
                 event = IndexWriteFailed(root, operation.kind, str(error))
@@ -796,6 +888,15 @@ class BackgroundCoordinator:
         self, root: str, event: IndexEvent, operation: _IndexOperation
     ) -> None:
         with self._lock:
+            if isinstance(event, (FolderRefreshCompleted, FolderRefreshFailed)):
+                self._folder_refreshes.pop(
+                    (
+                        event.request.index_root,
+                        event.request.folder,
+                        event.request.workspace_generation,
+                    ),
+                    None,
+                )
             if (
                 isinstance(event, (IndexRefreshCompleted, IndexRefreshFailed))
                 and event.request.kind is IndexRefreshKind.STALE_RESULT_REPAIR

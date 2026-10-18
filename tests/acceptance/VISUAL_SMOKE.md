@@ -8,6 +8,16 @@ Windows run passed in independently inspected report
 `reports/20261018T161400.894002Z/report.json` (20 phases / 52 cases), including both
 native scroll cases. Preserve previously accepted visual checks.
 
+Scoped folder refresh follow-up (2026-10-18): F5 / `:refreshfolder` uses the
+existing secondary footer for its target path and progress/completion/failure.
+The public Qt picker and keyboard path are automated with disposable JPEGs.
+Linux offscreen behavior passed; native Windows appearance is unrun. No new
+layout or subjective visual acceptance is claimed, and prior accepted checks
+remain valid. Maintainer-executed Windows automated acceptance passed in the
+independently inspected report `20261018T180842.568212Z`, including native
+junctions. This offscreen run does not establish native appearance; no new
+subjective check or repeat of previous appearance checks is requested.
+
 Direct shortcuts follow-up (2026-10-07): Edit mode control removed; source, target,
 ignore and copy keys now act directly. No new manual check requested. Public Qt
 tests and real-file keyboard scenarios validate observable behavior; previous

@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from tagger_app.exif_tool import ExifTool, KeywordState
+from tagger_app.services.photo_discovery import FileSystemPhotoDiscovery
 from tagger_app.utils import SUPPORTED_EXTS, dedupe_casefold, normalize_path
 
 # SQLite commonly permits 999 bind variables. Keep path-set queries comfortably below
@@ -1107,6 +1108,41 @@ class PhotoIndex:
             else []
         )
         return self._sync_paths(exif, paths, force=True, deletion_directory=scope)
+
+    def refresh_folder(self, exif: ExifTool, directory: str | Path) -> tuple[str, ...]:
+        """Reconcile one subtree without changing root freshness or checkpoints."""
+        scope = Path(directory).resolve(strict=True)
+        if not scope.is_relative_to(self.root):
+            raise ValueError("Refresh folder is outside the index root")
+        paths = tuple(
+            sorted(
+                FileSystemPhotoDiscovery().discover_refresh(str(scope)),
+                key=str.casefold,
+            )
+        )
+        # Read first: failed metadata reads preserve the previous index in full.
+        if any(not Path(path).is_relative_to(scope) for path in paths):
+            raise ValueError("Discovered photo is outside the refresh folder")
+        states: dict[str, KeywordState] = {}
+        for offset in range(0, len(paths), _REFRESH_EXIF_SUBGROUP_SIZE):
+            batch = list(paths[offset : offset + _REFRESH_EXIF_SUBGROUP_SIZE])
+            read = exif.read_keywords_many(batch)
+            for path in batch:
+                state = read.get(path)
+                if state is None or not state.iptc_readable:
+                    raise RuntimeError(f"Could not read photo metadata: {path}")
+                states[path] = state
+        scope.stat()
+        with self._connection() as conn:
+            existing = [str(row[0]) for row in conn.execute("SELECT path FROM photos")]
+            for path, state in states.items():
+                self._upsert_state_normalized(conn, path, state)
+            current = set(paths)
+            for path in existing:
+                if Path(path).is_relative_to(scope) and path not in current:
+                    conn.execute("DELETE FROM photos WHERE path = ?", (path,))
+            self._prune_orphan_tags(conn)
+        return paths
 
     def sync_paths(
         self, exif: ExifTool, paths: list[str], *, force: bool = False

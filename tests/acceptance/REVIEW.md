@@ -956,6 +956,45 @@ second review. Implementation and final acceptance/status records are included
 together. Ticket 05 is completed; no unresolved review or acceptance findings.
 Earlier failure/reproduction notes remain historical evidence. No push requested.
 
+# Scoped folder refresh — 2026-10-18
+
+Implemented F5 / `:refreshfolder` for the last explicitly selected folder,
+including descendants, with scoped reconciliation in the current index and
+guarded query reapplication. Stable filters and surviving selection are retained;
+out-of-root folder refreshes cannot create an index through selection reads.
+
+Portable verification inspected independently in this environment:
+
+- `ruff check .` passed. Modified Python code was formatted with Ruff. The
+  whole-file formatting check reports only two pre-existing duplicate-card
+  context-menu lambda blocks in `main_window.py`; the same failure was reproduced
+  on HEAD. Those unrelated blocks are deliberately unchanged; the other ten
+  modified/new Python files pass the formatting check.
+- `QT_QPA_PLATFORM=offscreen python -m pytest -q`: 421 passed, 4 skipped,
+  33 subtests passed. The skips are unavailable native Windows process checks.
+- `python tests/acceptance/run.py`: passed, independently inspected report
+  `reports/20261018T152828.979803Z/report.json`, sixteen phases / 44 passed cases
+  (plus four diagnostic records),
+  both backup settings. New real-file cases use production Qt/ExifTool/index
+  adapters and check recursive addition, changed capture dates, removal,
+  untouched siblings, unchanged full-root freshness, nested index markers,
+  preserved active photo, query reapplication, redirected sibling/ancestor directories, and unchanged JPEG bytes. Harness hashes were compared with current files; every child cleanup was verified and both disposable workspaces were removed.
+- Focused tests cover unreadable metadata and incomplete enumeration retaining
+  prior records, resumable full-refresh checkpoints, queue ordering and request
+  deduplication, selection/filter state, stale completions, picker cancellation,
+  out-of-root metadata reads, and search combined with stable IPTC-empty results.
+
+An earlier new-phase run failed because the acceptance picker tried calling a
+protected Qt `accept()` method; a focused run then exposed missing offscreen
+window activation after the picker. Both harness issues were corrected using
+public Qt key/mouse events; the complete matrix above subsequently passed.
+
+Windows execution, sharing locks, native process cleanup, and native appearance
+are **unrun**, not waived or validated by Linux. Required follow-up is the
+documented Windows acceptance command; inspect its generated report when supplied.
+Three rounds of two independent read-only code reviewers are recorded in the implementation ticket. All confirmed findings were fixed with regression coverage; the final two reviewers returned no findings. Further tests cover pending-filter reads and full-index dependencies (success/failure) across generation changes, cross-generation repeated refreshes, linked-photo loading, and simulated junction sibling escape/ancestor cycles. The real-file phase uses POSIX links locally and creates native Windows junctions with `mklink /J` when run on Windows; native junction evidence remains unrun here.
+No commit, merge, or push is authorized by this acceptance record.
+
 # Delayed adjacent-photo click scroll — 2026-10-18
 
 The earlier 10 ms injected-scroll experiment showed a timing gap but did not prove
@@ -1030,3 +1069,44 @@ One additional isolated suite run segfaulted in the existing duplicate-copy
 background-preview navigation test. That test passed in isolation and the entire
 suite then passed without a parallel acceptance run. The crash is not claimed
 fixed by this change. No push requested.
+
+
+# Windows scoped-folder-refresh acceptance completed — 2026-10-18
+
+The maintainer ran the requested acceptance command and reported PASSED.
+Independently inspected `reports/20261018T180842.568212Z/report.json`, the
+folder-refresh logs and native cleanup log: Windows 11 / Python 3.14.7 /
+ExifTool 13.59, **20 phases / 52 passed cases** in the combined working tree.
+Both backup modes passed the scoped reconciliation and query-reapplication
+cases with native sibling/ancestor junctions. Sharing-lock partial failure/retry
+and all five native cleanup probes passed. All child exits were zero, process
+cleanup was verified and both disposable workspaces were removed. Every harness
+hash matched the local files before the diagnostic correction below.
+
+The folder-refresh stderr logs contain subprocess-reader `UnicodeDecodeError`
+tracebacks caused by decoding localized `mklink /J` output as cp1252. Commands
+returned zero and junction-isolation assertions passed. Removed `text=True` from
+this diagnostic-only subprocess capture so output stays bytes. A portable probe
+verified capture of byte `0x81`; Ruff passed. This is the only harness difference
+after the inspected Windows run; the Windows branch has not been rerun after
+that correction. Native cleanup stderr also includes a non-failing ResourceWarning.
+
+The former Windows acceptance blocker for folder refresh is resolved and its
+spec/ticket are completed. This is maintainer execution with independently
+inspected evidence, not agent execution on Windows. No native visual acceptance
+or full Windows pytest run is claimed. The maintainer subsequently requested
+the folder-refresh commit on 2026-10-18. Implementation and completed acceptance
+records are included together; no push requested.
+
+
+## Folder-refresh commit verification — 2026-10-18
+
+Before the authorized folder-refresh commit, the combined working tree after
+the separate scroll commit passed Ruff lint and full Linux offscreen pytest:
+**424 passed, four Windows skips, 33 subtests passed**. Staged whitespace checks
+and Ruff formatting checks for the ten other modified/new Python files passed;
+the two documented baseline lambda-format issues in `main_window.py` remain
+unchanged. Native functional evidence is the inspected combined Windows report
+above. The only post-report harness change remains binary diagnostic capture;
+no additional Windows run or independent review is claimed for that correction.
+No push requested.
