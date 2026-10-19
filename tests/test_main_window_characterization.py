@@ -848,8 +848,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.keepBackup.setChecked(True)
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
         text = " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
@@ -934,8 +936,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakeExifTool.write_failures = [False, True]
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
         QtTest.QTest.keyClick(dialog, QtCore.Qt.Key.Key_Y)
@@ -957,11 +961,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         FakeExifTool.release_writes()
         self._wait_until(
-            lambda: len(FakeExifTool.write_calls) == 2
-            and "Failed"
-            in " ".join(
-                button.text()
-                for button in self.window.duplicateResultsButton.menu().actions()
+            lambda: (
+                len(FakeExifTool.write_calls) == 2
+                and "Failed"
+                in " ".join(
+                    button.text()
+                    for button in self.window.duplicateResultsButton.menu().actions()
+                )
             )
         )
         self.assertEqual(FakeExifTool.states_by_path[first].iptc, ["Holiday"])
@@ -988,11 +994,13 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         retry.click()
         self._wait_until(
-            lambda: len(FakeExifTool.write_calls) == 3
-            and "Completed"
-            in " ".join(
-                button.text()
-                for button in self.window.duplicateResultsButton.menu().actions()
+            lambda: (
+                len(FakeExifTool.write_calls) == 3
+                and "Completed"
+                in " ".join(
+                    button.text()
+                    for button in self.window.duplicateResultsButton.menu().actions()
+                )
             )
         )
         self.assertEqual(
@@ -1060,8 +1068,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         control.setFocus()
         QtTest.QTest.keyClick(control, QtCore.Qt.Key.Key_C)
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
         self.assertTrue(dialog.isVisible())
@@ -1207,8 +1217,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakeExifTool.states_by_path[source] = KeywordState(["Changed"], [])
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: "changed since assessment"
-            in self.window.statusBar().currentMessage()
+            lambda: (
+                "changed since assessment" in self.window.statusBar().currentMessage()
+            )
         )
         self.assertIsNone(
             self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
@@ -1220,8 +1231,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._copy_control(source, "source").click()
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         FakeExifTool.states_by_path[first] = KeywordState(["External"], [])
         QtTest.QTest.keyClick(
@@ -1229,8 +1242,9 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             QtCore.Qt.Key.Key_Y,
         )
         self._wait_for_ui(
-            lambda: "changed since assessment"
-            in self.window.statusBar().currentMessage()
+            lambda: (
+                "changed since assessment" in self.window.statusBar().currentMessage()
+            )
         )
         self.assertEqual(FakeExifTool.write_calls, [])
 
@@ -1256,18 +1270,22 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         FakeExifTool.write_failures = [True]
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         QtTest.QTest.keyClick(
             self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
             QtCore.Qt.Key.Key_Y,
         )
         self._wait_until(
-            lambda: "Failed"
-            in " ".join(
-                button.text()
-                for button in self.window.duplicateResultsButton.menu().actions()
+            lambda: (
+                "Failed"
+                in " ".join(
+                    button.text()
+                    for button in self.window.duplicateResultsButton.menu().actions()
+                )
             )
         )
         FakeExifTool.states_by_path[first] = KeywordState(["External"], [])
@@ -1292,8 +1310,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self.window.keepBackup.setChecked(True)
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         self.window.keepBackup.setChecked(False)
         QtTest.QTest.keyClick(
@@ -1311,8 +1331,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: "Pending tag changes must settle"
-            in self.window.statusBar().currentMessage()
+            lambda: (
+                "Pending tag changes must settle"
+                in self.window.statusBar().currentMessage()
+            )
         )
         self.assertIsNone(
             self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
@@ -1324,8 +1346,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._copy_control(source, "source").click()
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         FakeExifTool.read_delay_seconds = 0.03
         QtTest.QTest.keyClick(
@@ -1360,18 +1384,22 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._copy_control(second, "target").click()
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         QtTest.QTest.keyClick(
             self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview"),
             QtCore.Qt.Key.Key_Y,
         )
         self._wait_for_ui(
-            lambda: "Pending"
-            in " ".join(
-                button.text()
-                for button in self.window.duplicateResultsButton.menu().actions()
+            lambda: (
+                "Pending"
+                in " ".join(
+                    button.text()
+                    for button in self.window.duplicateResultsButton.menu().actions()
+                )
             )
         )
         self.window.replace_photo_workspace([])
@@ -1483,8 +1511,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         self._copy_control(paths[0], "source").click()
         self.window.duplicateApplyTagsButton.click()
         self._wait_for_ui(
-            lambda: self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
-            is not None
+            lambda: (
+                self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
+                is not None
+            )
         )
         dialog = self.window.findChild(QtWidgets.QDialog, "duplicateCopyPreview")
         self.assertLessEqual(dialog.minimumSizeHint().height(), 420)
@@ -3680,8 +3710,10 @@ class MainWindowCharacterizationTests(unittest.TestCase):
                     dialog.activateWindow()
                     dialog.setFocus()
                     self._wait_for_ui(
-                        lambda: self.app.activeWindow() is dialog
-                        and self.app.focusWindow() is dialog.windowHandle()
+                        lambda: (
+                            self.app.activeWindow() is dialog
+                            and self.app.focusWindow() is dialog.windowHandle()
+                        )
                     )
                     QtTest.QTest.keyClick(dialog, key)
                     self._wait_for_ui(lambda: dialog.clickedButton() is not None)
@@ -4818,9 +4850,11 @@ class MainWindowCharacterizationTests(unittest.TestCase):
         )
         # Finish fixture setup before recording loads caused by rapid navigation.
         self._wait_for_ui(
-            lambda: not self.window._preview_load_timer.isActive()
-            and self.window._pending_preview_load is None
-            and not self.window._queued_preview_workers
+            lambda: (
+                not self.window._preview_load_timer.isActive()
+                and self.window._pending_preview_load is None
+                and not self.window._queued_preview_workers
+            )
         )
 
         class SlowImageReader:

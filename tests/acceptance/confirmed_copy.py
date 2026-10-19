@@ -218,8 +218,9 @@ def copy_scenario(app, root, keep_backup):
                 wait(
                     app,
                     "cancelled work drained",
-                    lambda: QtCore.QThreadPool.globalInstance().activeThreadCount()
-                    == 0,
+                    lambda: (
+                        QtCore.QThreadPool.globalInstance().activeThreadCount() == 0
+                    ),
                 )
                 assert photo_hashes(photos) == before, (
                     "Cancellation wrote files/backups"

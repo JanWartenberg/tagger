@@ -65,11 +65,13 @@ def inspect(app, window, expected=1):
     wait(
         app,
         "photo previews",
-        lambda: sum(
-            label.pixmap() is not None and not label.pixmap().isNull()
-            for label in dialog.findChildren(QtWidgets.QLabel)
-        )
-        == 4,
+        lambda: (
+            sum(
+                label.pixmap() is not None and not label.pixmap().isNull()
+                for label in dialog.findChildren(QtWidgets.QLabel)
+            )
+            == 4
+        ),
     )
     text = " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
     assert "Holiday" in text and "Tags when ignored:" in text
@@ -97,8 +99,9 @@ def main():
             wait(
                 app,
                 "source choice",
-                lambda: copy_control(window, photos / "source.jpg", "source")
-                is not None,
+                lambda: (
+                    copy_control(window, photos / "source.jpg", "source") is not None
+                ),
             )
             ignore(app, window)
             assert photo_hashes(photos) == before

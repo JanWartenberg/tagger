@@ -2320,9 +2320,9 @@ class MainWindow(QtWidgets.QMainWindow):
             card.installEventFilter(self)
             card.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             card.customContextMenuRequested.connect(
-                lambda pos,
-                path=member.path,
-                widget=card: self._show_duplicate_photo_context_menu(path, widget, pos)
+                lambda pos, path=member.path, widget=card: (
+                    self._show_duplicate_photo_context_menu(path, widget, pos)
+                )
             )
             card.setMinimumWidth(210)
             card_layout = QtWidgets.QVBoxLayout(card)
@@ -2330,10 +2330,8 @@ class MainWindow(QtWidgets.QMainWindow):
             preview.setObjectName("duplicateCandidatePreview")
             preview.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
             preview.customContextMenuRequested.connect(
-                lambda pos,
-                path=member.path,
-                widget=preview: self._show_duplicate_photo_context_menu(
-                    path, widget, pos
+                lambda pos, path=member.path, widget=preview: (
+                    self._show_duplicate_photo_context_menu(path, widget, pos)
                 )
             )
             preview.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)

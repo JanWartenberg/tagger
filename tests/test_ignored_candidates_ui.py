@@ -183,8 +183,9 @@ def test_failed_ignore_keeps_candidate_visible_and_reports_error(workspace):
     wait(
         app,
         runner,
-        lambda: "Could not update ignored candidates"
-        in window.statusBar().currentMessage(),
+        lambda: (
+            "Could not update ignored candidates" in window.statusBar().currentMessage()
+        ),
     )
     assert window.duplicateCandidateQueue.isVisible()
     assert window.duplicateIgnoreButton.isEnabled()
@@ -221,8 +222,10 @@ def test_ctrl_i_opens_ignored_candidates_with_collapsed_setup_and_is_view_scoped
     wait(
         app,
         runner,
-        lambda: "No ignored candidates"
-        in " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel)),
+        lambda: (
+            "No ignored candidates"
+            in " ".join(label.text() for label in dialog.findChildren(QtWidgets.QLabel))
+        ),
     )
     dialog.reject()
     app.processEvents()
