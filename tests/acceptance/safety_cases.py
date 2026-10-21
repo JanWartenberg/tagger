@@ -13,6 +13,10 @@ from tagger_app.services.duplicate_detection import (
     ScanRequest,
 )
 from tagger_app.services.tag_mutation import TagMutationService
+from tagger_app.services.pending_tag_mutation import (
+    PendingTagMutationCoordinator,
+    TagIntent,
+)
 from tagger_app.services.tag_propagation import (
     TagPropagationPlan,
     prepare_propagation,
@@ -109,6 +113,90 @@ def write_guard_case(root: Path, change: str, backup: bool) -> None:
     )
 
 
+def unreadable_mutation_case(root: Path, backup: bool) -> None:
+    """Real ExifTool read errors refuse writes; repaired files support failed-only retry."""
+    for operation in ("add", "remove", "paste", "retry"):
+        photos = root / f"unreadable-{operation}"
+        generate_photos(photos)
+        path = str(photos / "source.jpg")
+        healthy = str(photos / "empty-xmp.jpg")
+        original = Path(path).read_bytes()
+        # A fully truncated generated JPEG produces a real ExifTool read error.
+        # Silent parser omissions are a separate limitation, not simulated here.
+        Path(path).write_bytes(b"")
+        before = photo_hashes(photos)
+        exif = ExifTool()
+        service = TagMutationService(exif)
+        try:
+            exif.read_keywords(path)
+        except ExifToolError as error:
+            read_error = str(error)
+        else:
+            raise AssertionError("Fixture must fail during metadata reading")
+        intents = (
+            [TagIntent.remove("Holiday")]
+            if operation == "remove"
+            else [TagIntent.add("Added")]
+        )
+        pending = PendingTagMutationCoordinator()
+        pending.remember_confirmed(
+            {path: KeywordState(["Holiday"], ["Source mirror only"])}
+        )
+        mutation = pending.begin_intents({path: intents})
+        if operation == "add":
+            result = service.add_tag([path], "Added", backup, exif.read_keywords)
+        elif operation == "remove":
+            result = service.remove_tags(
+                [path], {"Holiday"}, backup, exif.read_keywords
+            )
+        elif operation == "paste":
+            result = service.add_tags([path], ["Added"], backup, exif.read_keywords)
+        else:
+            result = service.replace_keyword_states(
+                [path], backup, exif.read_keywords, mutation.apply
+            )
+        assert set(result.failed_paths) == {path} and not result.updated_states
+        assert result.failed_paths[path] == read_error
+        assert photo_hashes(photos) == before, "Unreadable mutation wrote bytes/backups"
+        pending.fail(mutation, list(result.failed_paths))
+
+        # A mixed batch must still confirm its healthy photo.
+        partial = service.add_tag(
+            [path, healthy], "Healthy", backup, exif.read_keywords
+        )
+        assert set(partial.failed_paths) == {path}
+        assert set(partial.updated_states) == {healthy}
+        assert photo_hashes(photos)["source.jpg"] == before["source.jpg"]
+        assert not Path(path + "_original").exists()
+        healthy_before_retry = Path(healthy).read_bytes()
+
+        # Repair is external; retry rereads it and preserves an external tag.
+        Path(path).write_bytes(original)
+        cli("-overwrite_original", "-IPTC:Keywords+=External", path)
+        repaired = Path(path).read_bytes()
+        retry = pending.retry_failed([path, healthy])
+        assert retry is not None and set(retry.intents_by_path) == {path}
+        result = service.replace_keyword_states(
+            [path], backup, exif.read_keywords, retry.apply
+        )
+        assert not result.failed_paths and set(result.updated_states) == {path}
+        expected = (
+            ["External"] if operation == "remove" else ["Added", "External", "Holiday"]
+        )
+        record = metadata(Path(path))
+        assert tags(record, "IPTC:Keywords") == expected
+        assert tags(record, "XMP-dc:Subject") == expected
+        assert Path(healthy).read_bytes() == healthy_before_retry
+        if backup:
+            assert Path(path + "_original").read_bytes() == repaired
+        else:
+            assert not Path(path + "_original").exists()
+    emit(
+        "unreadable_mutations_and_failed_only_retry",
+        operations=["add", "remove", "paste", "retry"],
+    )
+
+
 def run() -> None:
     if not __debug__:
         raise RuntimeError("Assertions must be enabled")
@@ -119,6 +207,7 @@ def run() -> None:
     if phase == "write-guard":
         for change in ("changed", "missing"):
             write_guard_case(root, change, backup)
+        unreadable_mutation_case(root, backup)
     else:
         stage = phase.removeprefix("safety-")
         if stage not in ("preview", "confirm"):

@@ -44,7 +44,11 @@ REQUIRED_CASES = {
         }
         for stage in ("preview", "confirm")
     },
-    "write-guard": {"write_changed_target_refused", "write_missing_target_refused"},
+    "write-guard": {
+        "write_changed_target_refused",
+        "write_missing_target_refused",
+        "unreadable_mutations_and_failed_only_retry",
+    },
     "windows-lock": {"sharing_lock_partial_failure", "sharing_lock_failed_only_retry"},
 }
 

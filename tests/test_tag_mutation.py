@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
+import pytest
+
 from tagger_app.exif_tool import KeywordState
+from tagger_app.services.pending_tag_mutation import (
+    PendingTagMutation,
+    TagIntent,
+)
 from tagger_app.services.tag_mutation import TagMutationService
 
 
@@ -124,6 +130,75 @@ class FakeExifTool:
         if path in self.failed_paths:
             raise RuntimeError("simulated write failure")
         self.states_by_path[path] = KeywordState(iptc, xmp)
+
+
+@pytest.mark.parametrize("keep_backup", [False, True])
+@pytest.mark.parametrize("operation", ["add", "remove", "paste", "retry"])
+@pytest.mark.parametrize(
+    "iptc_readable,xmp_readable", [(False, True), (True, False), (False, False)]
+)
+@pytest.mark.parametrize("keywords", [[], ["existing"]])
+def test_ordinary_mutations_refuse_unreadable_fields(
+    keep_backup, operation, iptc_readable, xmp_readable, keywords
+):
+    path = "/disposable/photo.jpg"
+    current = KeywordState(
+        keywords,
+        ["existing-xmp"],
+        iptc_readable=iptc_readable,
+        xmp_readable=xmp_readable,
+    )
+    exif = FakeExifTool({path: current}, failed_paths=set())
+    service = TagMutationService(exif)
+    if operation == "add":
+        result = service.add_tag([path], "new", keep_backup, exif.read_keywords)
+    elif operation == "remove":
+        result = service.remove_tags(
+            [path], {"existing"}, keep_backup, exif.read_keywords
+        )
+    elif operation == "paste":
+        result = service.add_tags(
+            [path], ["new", "pasted"], keep_backup, exif.read_keywords
+        )
+    else:
+        retry = PendingTagMutation(1, {path: (TagIntent.add("new"),)})
+        result = service.replace_keyword_states(
+            [path], keep_backup, exif.read_keywords, retry.apply
+        )
+
+    assert exif.write_calls == []
+    assert exif.states_by_path[path] == current
+    assert result.updated_states == result.emptiness_by_path == {}
+    assert result.processed_count == 1 and result.changed_count == 0
+    assert set(result.failed_paths) == {path}
+    for readable, field in (
+        (iptc_readable, "IPTC:Keywords"),
+        (xmp_readable, "XMP-dc:Subject"),
+    ):
+        assert (field in result.failed_paths[path]) == (not readable)
+
+
+@pytest.mark.parametrize("retry", [False, True])
+def test_explicit_resolution_can_replace_unreadable_fields(retry):
+    path = "/disposable/photo.jpg"
+    exif = FakeExifTool(
+        {path: KeywordState([], [], iptc_readable=False, xmp_readable=False)},
+        failed_paths=set(),
+    )
+    chosen = KeywordState([], ["chosen"])
+    service = TagMutationService(exif)
+    if retry:
+        mutation = PendingTagMutation(1, {path: (TagIntent.replace_fields(chosen),)})
+        result = service.replace_keyword_states(
+            [path], False, exif.read_keywords, mutation.apply
+        )
+    else:
+        result = service.resolve_keyword_fields(
+            [path], {path: chosen}, False, exif.read_keywords
+        )
+    assert result.updated_states == {path: chosen}
+    assert result.failed_paths == {}
+    assert exif.write_calls == [(path, [], ["chosen"])]
 
 
 if __name__ == "__main__":

@@ -104,6 +104,18 @@ class TagMutationService:
             try:
                 current = load_state(path)
                 target = self._normalized_state(transform(path, current), current)
+                # Routine transforms retain source readability. Explicit Resolve
+                # choices replace those facts with the user's chosen field state.
+                unreadable = [
+                    field
+                    for field, readable in (
+                        ("IPTC:Keywords", target.iptc_readable),
+                        ("XMP-dc:Subject", target.xmp_readable),
+                    )
+                    if not readable
+                ]
+                if unreadable:
+                    raise ValueError(f"Cannot read {' and '.join(unreadable)}")
                 violation = iptc_keyword_list_violation(target.iptc)
                 if violation is not None:
                     raise IptcKeywordLengthError(violation)
