@@ -1110,3 +1110,63 @@ unchanged. Native functional evidence is the inspected combined Windows report
 above. The only post-report harness change remains binary diagnostic capture;
 no additional Windows run or independent review is claimed for that correction.
 No push requested.
+
+
+# Qt test application lifetime — 2026-10-22
+
+Bounded investigation on app-managed `investigate/qt-preview-crash`, starting at
+`1b53095`. See [issue 06](../../.scratch/duplicate-photo-detection-and-tag-propagation/issues/06-investigate-intermittent-qt-preview-crash.md)
+for commands, reductions, unsuccessful attempts and separate observations.
+Environment: Linux/WSL2, Python 3.11.2, PyQt 6.11.0, Qt 6.11.2,
+PyQt6-sip 13.13.0, pytest 9.1.1, ExifTool 12.57.
+
+The original navigation test passed 100 fresh processes, 1,000 repetitions in
+one QApplication and 300 repetitions with collection after navigation. The
+unchanged full suite passed 26 times, including three runs parallel with real-file
+acceptance. Corrected late-completion probes passed 900 cases; rapid-navigation
+probes passed another 320 cases, each with 40 transitions and 21 submitted copy
+preparations. Those green runs did not establish a fix.
+
+Reproduced a related in-suite SIGSEGV after removing the 25 later folder-refresh
+tests and adding collection between tests. Reduced to nine ignored-candidate
+tests preceding thirteen duplicate-copy tests. This 22-case prefix crashed in
+**five of 30 fresh processes**. Native GDB traces show invalid QObject state in
+recursive `findChild` / `objectName`; another trace fails during `QObject::connect`.
+They do not establish a decoder or production worker defect.
+
+A controlled comparison retained one QApplication for the entire test process:
+**30 processes, zero failures**. A fresh-process regression using actual fixture
+cleanup then deterministically failed before the fix with `QApplication destroyed
+between UI fixtures`. The correction gives the three existing GUI test setup
+sites one shared, lazily created QApplication. The regression now passes and
+checks survival and reuse across fixtures and the characterization class.
+Production code, tag-mutation services, CI and real-file harness wiring are unchanged.
+
+- **Passed:** actual fix without the diagnostic retention plugin, **100 fresh
+  22-case processes / zero failures**, with collection stress still enabled.
+- **Passed:** full Linux offscreen suite, **425 passed / four Windows skips /
+  33 subtests**; five historical-scope collection-stress suites, **400 passed /
+  four skips / 33 subtests each**. Ruff lint, all five affected Python files'
+  formatting and diff whitespace checks passed.
+- **Passed and inspected:** post-fix real-file report
+  `reports/20261022T165709.815353Z/report.json`, **18 phases / 48 cases** across
+  both backup settings. Every child exited zero, process-tree cleanup was
+  verified, both workspaces were removed and all harness hashes matched.
+- **Independent review:** no blocking findings in the test lifetime helper,
+  three callers, regression or documentation. The reviewer also independently
+  inspected the initial baseline counts and three earlier acceptance reports.
+- **Pending:** the maintainer reports that Windows acceptance is running;
+  its result and report have not yet been supplied or independently inspected.
+  Windows pytest remains unrun in this investigation. No visual behavior changed;
+  previous visual acceptance is not invalidated.
+
+The demonstrated test application-lifetime defect is fixed. The exact historical
+navigation crash was not independently reproduced; its absent stack prevents
+claiming that every historical Qt crash had this cause. Issue 06 remains open for
+that historical uncertainty. A separate shutdown-probe SIGABRT is not part of
+this fix. The maintainer subsequently authorized committing the reviewed test
+fix while Windows acceptance is running. No merge or push was requested.
+
+Detailed logs, temporary probes, native traces, controlled-comparison records and
+`fix-verification.json` are preserved under `/tmp/tagger-qt-crash-20261021/`.
+The latter records inspected post-fix results, report hash and tested Python hashes.

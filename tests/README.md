@@ -12,6 +12,11 @@ pytest tests. Tests cover two seams:
    index, discovery, and background-runner adapters; they must not access a real
    photo library or create a production index database.
 
+Qt adapters share a lazily created, process-lifetime QApplication through
+`qt_test_application.application()`. Fixture cleanup closes its own windows and
+drains its workers; it must not destroy and recreate the application between
+tests or modules. Core-only runs do not create a QApplication.
+
 ## Requirements
 
 Install the project dependencies before running the complete suite:

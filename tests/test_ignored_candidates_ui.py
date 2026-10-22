@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 from PyQt6 import QtCore, QtTest, QtWidgets
+from qt_test_application import application
 from test_main_window_characterization import (
     DeterministicCoordinatorRunner,
     FakeExifTool,
@@ -21,7 +22,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr("tagger_app.ui.main_window.PhotoIndex", FakePhotoIndex)
     FakeExifTool.reset()
     FakePhotoIndex.reset()
-    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    app = application()
     paths = [str(tmp_path / name) for name in ("source.jpg", "target.jpg")]
     FakePhotoIndex.snapshot_paths = paths
     FakeExifTool.states_by_path = {

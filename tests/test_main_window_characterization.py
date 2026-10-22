@@ -31,6 +31,8 @@ else:
     PYQT_AVAILABLE = True
 
 if PYQT_AVAILABLE:
+    from qt_test_application import application
+
     from tagger_app.exif_tool import KeywordState
     from tagger_app.indexing import (
         IndexRefreshProgress as IndexRefreshStep,
@@ -56,7 +58,7 @@ if PYQT_AVAILABLE:
 class MainWindowCharacterizationTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
-        cls.app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+        cls.app = application()
 
     def setUp(self) -> None:
         self.ignore_storage = tempfile.TemporaryDirectory()
