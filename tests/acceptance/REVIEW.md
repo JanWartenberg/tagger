@@ -1,3 +1,69 @@
+# Reader-declared unreadable mutation refusal — 2026-10-21
+
+Issue 06 in `.scratch/reliable-tag-mutations/issues/` guards ordinary
+add/remove/paste and intent retry before writes when required keyword fields are
+reported unreadable. Routine transforms preserve field readability; explicit
+Resolve replacements, including retries, retain their intentional choices.
+Partial success, failed-only retry, external tags and empty XMP remain intact.
+Only production change is in `services/tag_mutation.py`; no production Qt/worker
+lifecycle code changes overlap the separate crash investigation. The added Qt
+test shares `test_main_window_characterization.py` with that work.
+
+Passed and independently inspected on Linux / ExifTool 12.57:
+
+- Original mock reproduction now fails the photo with `Cannot read IPTC:Keywords`
+  and never invokes the writer. Before the fix, 48 new service cases failed;
+  afterward all passed for add/remove/paste/retry, both backups, IPTC/XMP/both
+  unreadable, and empty/nonempty canonical input. Explicit Resolve controls pass.
+- Full offscreen pytest: **475 passed, 4 Windows skips, 33 subtests passed**.
+  Focused service/pending/coordinator suite: 72 passed. Qt regression confirms
+  mixed-batch restoration and index state, refusal while still unreadable, then
+  failed-only retry from fresh metadata preserving external tags and empty XMP.
+- Ruff lint, all five modified Python files' formatting and diff whitespace pass.
+- `reports/20261021T190859.443782Z/report.json`: **18 phases / 50 cases**,
+  both backups. Every child exited zero; process cleanup, removed workspaces and
+  recorded harness hashes matched the tested files. New real-file cases fully
+  truncate generated JPEGs, explicitly establish an ExifTool read exception,
+  assert unchanged bytes/file sets on refusal, retain healthy partial successes,
+  and verify failed-only retry after external repair, preserved external tags
+  and exact original-backup bytes. These cover real read exceptions; unit/Qt
+  tests separately exercise returned unreadability flags.
+- Independent read-only service review, expanded-diff review and final fixture
+  review found no blocking issue. The reviewer's concern about proving the real
+  failure seam was addressed with the explicit read-error/cause assertion.
+
+The first expanded acceptance run (`20261021T190739.677136Z`) failed because its
+altered-XMP fixture was accepted by ExifTool rather than raising a read error.
+The fixture assumption was corrected to a fully truncated JPEG; no production
+behavior was changed to fit that test. Its temporary workspace was removed.
+
+**Known unresolved limitation:** a separate disposable real-file investigation
+reproduced replacement of malformed IPTC that ExifTool silently reports as empty
+and readable. Invalid extended IPTC record length `ff ff` hides the original
+keyword; an ordinary add then replaces both fields. Even `-validate` reports OK.
+Issue 07 records the exact recipe, hashes and evidence. This patch guards
+reader-declared unreadability, not general malformed-file safety; the parser gap
+remains open and is not waived.
+
+**Unrun:** Windows expanded matrix, sharing locks and native cleanup. When Windows
+is available, run the documented `python tests/acceptance/run.py` command and
+inspect the 54-case report. Linux does not validate these checks. Subjective
+visual checks are unaffected and were not repeated.
+
+## Pre-integration review — 2026-10-21
+
+Jan explicitly authorized another review followed by commit and main integration.
+A fresh independent review found no blocking findings and independently passed
+72 focused service/pending/coordinator tests. Staged diff was empty; all unstaged
+changes and both new issues were reviewed. Stale authorization text was corrected.
+Ruff passed again. Full offscreen pytest initially segfaulted constructing
+MainWindow in `test_default_index_root.py::test_invalid_setting_falls_back`;
+an unchanged full rerun passed **475 tests, 4 Windows skips, 33 subtests** in
+25.56 seconds. The Qt crash is not claimed fixed or caused by this service guard;
+the separate lifecycle investigation remains outside this integration.
+The 50-case real-file report above still matches the unchanged harness files.
+Only this reviewed branch is authorized for integration; no push requested.
+
 # Collapsed toggle placement — 02h follow-up
 
 Per maintainer request, collapsing now moves the same Scan setup toggle directly
@@ -1165,8 +1231,19 @@ navigation crash was not independently reproduced; its absent stack prevents
 claiming that every historical Qt crash had this cause. Issue 06 remains open for
 that historical uncertainty. A separate shutdown-probe SIGABRT is not part of
 this fix. The maintainer subsequently authorized committing the reviewed test
-fix while Windows acceptance is running. No merge or push was requested.
+fix while Windows acceptance is running, and later authorized merging into local
+`main`. No push was requested.
 
 Detailed logs, temporary probes, native traces, controlled-comparison records and
 `fix-verification.json` are preserved under `/tmp/tagger-qt-crash-20261021/`.
 The latter records inspected post-fix results, report hash and tested Python hashes.
+
+Local integration verification on 2026-10-23 combined this fix with `badde1c`
+(unreadable-metadata refusal) without conflicts. Ruff lint and affected-file
+formatting passed; the full offscreen suite passed **476 tests / four Windows
+skips / 33 subtests**. Real-file acceptance passed **18 phases / 50 cases** in
+`reports/20261023T221828.235014Z/report.json` on the combined code tree
+(`e720de3`, before this documentation update). All child exits, process cleanup,
+workspace removal and harness hashes were independently checked. Report SHA256:
+`ad1d3d2209b7c69f8eaa8e6640ff0af07150e96ac125be17b9b6e99f2a4bca2d`.
+Windows results remain pending; the historical-crash issue remains open.

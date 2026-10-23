@@ -201,5 +201,10 @@ unrun in this investigation. No visual behavior changed and no previous visual
 acceptance was invalidated.
 
 The maintainer authorized committing the reviewed test fix while Windows
-acceptance is running. No merge or push was requested. The historical-crash issue
-remains open as described above.
+acceptance is running, and later authorized merging into local `main`. No push
+was requested. Integration with `badde1c` passed Ruff, 476 tests (four Windows
+skips, 33 subtests), and real-file acceptance (18 phases / 50 cases) on
+2026-10-23. The inspected report is
+`tests/acceptance/reports/20261023T221828.235014Z/report.json`; see REVIEW.md for
+its hash and verification details. Windows results remain pending. The
+historical-crash issue remains open as described above.

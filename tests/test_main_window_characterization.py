@@ -3220,6 +3220,56 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             FakePhotoIndex.states_by_path[second].merged, ["added", "confirmed"]
         )
 
+    def test_unreadable_mutation_restores_failure_and_retries_only_failed_photo(self):
+        first, second = self._add_paths("one.jpg", "two.jpg")
+        self._wait_until(lambda: self.window.keywordsList.count() == 1)
+        self.window.files.setCurrentItem(
+            self.window.files.item(0),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window.files.selectionModel().select(
+            self.window.files.model().index(1, 0),
+            QtCore.QItemSelectionModel.SelectionFlag.Select,
+        )
+        FakeExifTool.states_by_path[second] = KeywordState(
+            [], ["confirmed"], iptc_readable=False
+        )
+        self.window.addEdit.setText("added")
+        self.window.add_keyword_from_input()
+        self._wait_until(
+            lambda: "1 succeeded, 1 failed" in self.window.statusBar().currentMessage()
+        )
+        self.assertEqual(FakeExifTool.write_calls, [(first, ["added", "confirmed"])])
+        self.assertTrue(self.window.files.item(0).icon().isNull())
+        self.assertFalse(self.window.files.item(1).icon().isNull())
+        self.assertEqual(FakePhotoIndex.states_by_path[second].merged, ["confirmed"])
+
+        # An explicit retry while still unreadable must fail without another write.
+        self.window.files.setCurrentItem(
+            self.window.files.item(1),
+            QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect,
+        )
+        self.window._dispatch_command("retry", [])
+        self._wait_until(
+            lambda: "0 succeeded, 1 failed" in self.window.statusBar().currentMessage()
+        )
+        self.assertEqual(len(FakeExifTool.write_calls), 1)
+
+        # Fresh readable metadata restores the original intent and external tags.
+        FakeExifTool.states_by_path[second] = KeywordState(["external"], [])
+        self.window._dispatch_command("retry", [])
+        self._wait_until(lambda: self.window.files.item(1).icon().isNull())
+        self.assertEqual(
+            FakeExifTool.field_write_calls,
+            [
+                (first, ["added", "confirmed"], ["added", "confirmed"]),
+                (second, ["added", "external"], []),
+            ],
+        )
+        self.assertEqual(
+            FakePhotoIndex.states_by_path[second].iptc, ["added", "external"]
+        )
+
     def test_retryall_retries_all_failed_photos_but_not_pending_ones(self) -> None:
         first, second, pending = self._add_paths("one.jpg", "two.jpg", "three.jpg")
         self._wait_until(lambda: self.window.keywordsList.count() == 1)

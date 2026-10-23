@@ -53,17 +53,22 @@ Each run checks both backup settings in separate disposable workspaces:
 | Persistence | Writer exits; a separate process displays saved tags and rereads metadata; JPEGs/backups unchanged |
 | Preview/confirmation refusal | Changed or missing source/target rejected after a positive unchanged-file control; all remaining file bytes and file sets unchanged |
 | Final target write guard | Changed/missing target is reported failed without metadata or backup writes |
+| Unreadable metadata | Real read errors from a truncated file refuse add/remove/paste/retry without writes/backups; healthy batch photos succeed and failed-only retry preserves external tags after repair |
 | Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; a two-record archive verifies `j/k` selection/evidence and `c` close; all application actions leave JPEG hashes/file sets unchanged |
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
 | Folder refresh | F5 reconciles additions, capture-date changes and removals only in the chosen subtree; a nested marker does not redirect the database, sibling entries and root freshness are retained despite redirected directories (native junctions on Windows), and `:refreshfolder` reapplies an active date search without changing JPEG bytes |
 | Files-pane scrolling | A real adjacent-photo click in settled No tags results with hidden rows and long paths preserves the viewport beyond Qt's double-click delay; partial-row anchors, end navigation and explicit scrollbar actions remain usable; JPEG hashes and file set stay unchanged |
 
-Both backup settings are required. Linux requires 48 case results across eighteen
-process phases. Windows requires 52 results across twenty phases plus the native
+Both backup settings are required. Linux requires 50 case results across eighteen
+process phases. Windows requires 54 results across twenty phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;
 sharing-lock failure/retry uses public UI events and real production workers.
+Unreadable-metadata cases use public mutation/pending-intent services and real
+ExifTool. Their fully truncated JPEG raises a read error; service and Qt adapter tests
+separately cover returned unreadability flags. They do not establish detection of
+malformed metadata that ExifTool silently reports as readable (see REVIEW.md).
 The expanded matrix passed on Windows before relocation:
 `reports/20261002T152911.296728Z/report.json`, and after relocation:
 `reports/20261002T161141.558457Z/report.json`.
