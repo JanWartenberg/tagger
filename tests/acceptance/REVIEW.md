@@ -1247,3 +1247,27 @@ skips / 33 subtests**. Real-file acceptance passed **18 phases / 50 cases** in
 workspace removal and harness hashes were independently checked. Report SHA256:
 `ad1d3d2209b7c69f8eaa8e6640ff0af07150e96ac125be17b9b6e99f2a4bca2d`.
 Windows results remain pending; the historical-crash issue remains open.
+
+## Malformed IPTC mutation guard — 2026-10-28
+
+A generated, decodable JPEG reproduced silent data loss on ordinary add before
+the guard. The fresh single-photo read now validates framing of extracted IPTC
+blocks and marks malformed ones unreadable, so ordinary mutations refuse them.
+Resolve remains an explicit replacement. A generated second-block case verifies
+that an earlier readable block does not hide a later malformed one. Missing IPTC
+remains readable; bulk index reads are unchanged and writes use fresh validated
+reads. This validates extracted IIM framing only. A completely omitted corrupt
+block or other container/semantic corruption may still escape detection; the
+1 MiB block limit bounds validation, but not ExifTool subprocess output capture.
+
+- **Passed:** generated add/remove/paste/retry refusal and explicit Resolve,
+  backup off/on, with ExifTool 12.57 and 13.60 on Linux. Other versions untested.
+- **Passed:** Linux offscreen pytest: 493 passed, four Windows-only skips and
+  33 subtests; Ruff lint and modified Python format checks passed.
+- **Passed and inspected:** Linux report
+  `reports/20261028T174603.279473Z/report.json`, 18 phases / 52 passed cases,
+  both backup settings, all exits zero and process cleanup verified. Both
+  temporary workspaces were removed and harness hashes matched. SHA-256:
+  `1ce155abc894badebc8cd9b43363d52074e410e4b08b256e74be082f9f696b88`.
+- **Unrun:** Windows acceptance, sharing-lock and native process-cleanup checks
+  for this change. No visual behavior changed; prior visual acceptance stands.

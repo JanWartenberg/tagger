@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-from PyQt6 import QtWidgets
+from PyQt6 import QtGui, QtWidgets
 
 from confirmed_copy import cli, emit, generate_photos, metadata, photo_hashes, tags
 from tagger_app.exif_tool import ExifTool, ExifToolError, KeywordState
@@ -197,6 +197,114 @@ def unreadable_mutation_case(root: Path, backup: bool) -> None:
     )
 
 
+def malformed_iptc_case(root: Path, backup: bool) -> None:
+    """A decodable JPEG with a skipped IIM entry must never lose tags silently."""
+
+    def make_photo(photos: Path, iptc: str) -> Path:
+        photos.mkdir()
+        path = photos / "source.jpg"
+        image = QtGui.QImage(64, 48, QtGui.QImage.Format.Format_RGB32)
+        image.fill(QtGui.QColor("red"))
+        assert image.save(str(path), "JPEG")
+        cli(
+            "-overwrite_original",
+            f"-IPTC:Keywords={iptc}",
+            "-XMP-dc:Subject=existing-xmp",
+            path,
+        )
+        return path
+
+    for operation in ("add", "remove", "paste", "retry"):
+        photos = root / f"malformed-iptc-{operation}"
+        path = str(make_photo(photos, "existing-iptc"))
+        original = Path(path).read_bytes()
+        header = b"\x1c\x02\x19\x00\x0d"
+        assert original.count(header) == 1
+        malformed = original.replace(header, b"\x1c\x02\x19\xff\xff", 1)
+        Path(path).write_bytes(malformed)
+        assert b"existing-iptc" in malformed and b"existing-xmp" in malformed
+        assert not QtGui.QImage(path).isNull(), "Fixture must remain decodable"
+        before = photo_hashes(photos)
+        exif = ExifTool()
+        service = TagMutationService(exif)
+        pending = PendingTagMutationCoordinator()
+        pending.remember_confirmed(
+            {path: KeywordState(["existing-iptc"], ["existing-xmp"])}
+        )
+        mutation = pending.begin_intents({path: [TagIntent.add("new")]})
+        if operation == "add":
+            result = service.add_tag([path], "new", backup, exif.read_keywords)
+        elif operation == "remove":
+            result = service.remove_tags(
+                [path], {"existing-iptc"}, backup, exif.read_keywords
+            )
+        elif operation == "paste":
+            result = service.add_tags([path], ["new"], backup, exif.read_keywords)
+        else:
+            pending.fail(mutation, [path])
+            retry = pending.retry_failed([path])
+            assert retry is not None
+            result = service.replace_keyword_states(
+                [path], backup, exif.read_keywords, retry.apply
+            )
+        # Check bytes first: this is the data-loss regression, not just a flag test.
+        assert photo_hashes(photos) == before, (
+            f"Malformed IPTC {operation} changed bytes/backups"
+        )
+        assert set(result.failed_paths) == {path} and not result.updated_states
+        assert "IPTC" in result.failed_paths[path]
+        state = exif.read_keywords(path)
+        assert not state.iptc_readable and state.xmp_readable
+        assert state.xmp == ["existing-xmp"]
+
+        # Resolve is an explicit replacement, even when routine edits are refused.
+        resolved = service.resolve_keyword_fields(
+            [path],
+            {path: KeywordState([], ["existing-xmp"])},
+            backup,
+            exif.read_keywords,
+        )
+        assert not resolved.failed_paths and set(resolved.updated_states) == {path}
+        assert exif.read_keywords(path).iptc_readable
+        assert tags(metadata(Path(path)), "IPTC:Keywords") == []
+        assert tags(metadata(Path(path)), "XMP-dc:Subject") == ["existing-xmp"]
+        if backup:
+            assert Path(path + "_original").read_bytes() == malformed
+        else:
+            assert not Path(path + "_original").exists()
+    # A later IPTC block can be malformed even when the first yields good tags.
+    photos = root / "malformed-iptc-second-block"
+    path = make_photo(photos, "Holiday")
+    data = path.read_bytes()
+    marker = data.index(b"Photoshop 3.0\x00")
+    segment_start = marker - 4
+    assert data[segment_start : segment_start + 2] == b"\xff\xed"
+    segment_end = (
+        segment_start
+        + 2
+        + int.from_bytes(data[segment_start + 2 : segment_start + 4], "big")
+    )
+    segment = data[segment_start:segment_end]
+    header = b"\x1c\x02\x19\x00\x07Holiday"
+    assert segment.count(header) == 1
+    broken = segment.replace(header, b"\x1c\x02\x19\xff\xffHoliday", 1)
+    path.write_bytes(data[:segment_end] + broken + data[segment_end:])
+    assert not QtGui.QImage(str(path)).isNull()
+    before = photo_hashes(photos)
+    exif = ExifTool()
+    state = exif.read_keywords(str(path))
+    assert state.iptc == ["Holiday"] and not state.iptc_readable
+    result = TagMutationService(exif).add_tag(
+        [str(path)], "new", backup, exif.read_keywords
+    )
+    assert set(result.failed_paths) == {str(path)}
+    assert photo_hashes(photos) == before
+    emit(
+        "malformed_iptc_mutations_refused_and_resolve_preserved",
+        operations=["add", "remove", "paste", "retry"],
+    )
+
+
 def run() -> None:
     if not __debug__:
         raise RuntimeError("Assertions must be enabled")
@@ -208,6 +316,7 @@ def run() -> None:
         for change in ("changed", "missing"):
             write_guard_case(root, change, backup)
         unreadable_mutation_case(root, backup)
+        malformed_iptc_case(root, backup)
     else:
         stage = phase.removeprefix("safety-")
         if stage not in ("preview", "confirm"):

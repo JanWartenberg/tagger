@@ -1,3 +1,5 @@
+import base64
+import binascii
 import json
 import shutil
 import subprocess
@@ -11,6 +13,41 @@ from tagger_app.services.keyword_limits import (
 from tagger_app.utils import dedupe_casefold, normalize_path
 
 _KEYWORD_READ_BATCH_SIZE = 1000
+# Bound the additional per-photo validation work and refuse oversized blocks.
+_MAX_IPTC_BLOCK_SIZE = 1024 * 1024
+
+
+def _valid_iptc_block(value: object) -> bool:
+    """Check IIM framing without interpreting or changing metadata values."""
+    if not isinstance(value, str) or not value.startswith("base64:"):
+        return False
+    encoded = value[7:]
+    if len(encoded) > 4 * ((_MAX_IPTC_BLOCK_SIZE + 2) // 3):
+        return False
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        return False
+    if len(data) > _MAX_IPTC_BLOCK_SIZE:
+        return False
+    pos = 0
+    while pos < len(data):
+        if data[pos] == 0:
+            return not any(data[pos:])  # Some applications pad blocks with zeros.
+        if len(data) - pos < 5 or data[pos] != 0x1C:
+            return False
+        length = int.from_bytes(data[pos + 3 : pos + 5], "big")
+        pos += 5
+        if length & 0x8000:
+            width = length & 0x7FFF
+            if not 1 <= width <= 8 or width > len(data) - pos:
+                return False
+            length = int.from_bytes(data[pos : pos + width], "big")
+            pos += width
+        if length > len(data) - pos:
+            return False
+        pos += length
+    return True
 
 
 @dataclass
@@ -94,7 +131,10 @@ class ExifTool:
 
     def read_keywords(self, file_path: str) -> KeywordState:
         file_path = normalize_path(file_path)
-        return self.read_keywords_many([file_path]).get(file_path, KeywordState([], []))
+        states = self._read_keywords_many([file_path], validate_iptc=True)
+        if file_path not in states:
+            raise ExifToolError("ExifTool did not return metadata for the photo.")
+        return states[file_path]
 
     def _parse_keyword_record(self, rec: dict) -> tuple[str | None, KeywordState]:
         src = rec.get("SourceFile")
@@ -184,6 +224,11 @@ class ExifTool:
         return src, state
 
     def read_keywords_many(self, file_paths: list[str]) -> dict[str, KeywordState]:
+        return self._read_keywords_many(file_paths, validate_iptc=False)
+
+    def _read_keywords_many(
+        self, file_paths: list[str], *, validate_iptc: bool
+    ) -> dict[str, KeywordState]:
         if not file_paths:
             return {}
 
@@ -200,7 +245,7 @@ class ExifTool:
                     "-q",
                     "-q",
                     "-j",
-                    "-G1",
+                    *(["-G1:4", "-a", "-b", "-IPTC"] if validate_iptc else ["-G1"]),
                     "-IPTC:Keywords",
                     "-XMP-dc:Subject",
                     "-EXIF:DateTimeOriginal",
@@ -220,6 +265,14 @@ class ExifTool:
             for rec in data:
                 src, state = self._parse_keyword_record(rec)
                 if src is not None:
+                    if validate_iptc:
+                        blocks = [
+                            value for key, value in rec.items() if key.endswith(":IPTC")
+                        ]
+                        if (state.iptc and not blocks) or any(
+                            not _valid_iptc_block(block) for block in blocks
+                        ):
+                            state.iptc_readable = False
                     out[normalize_path(src)] = state
 
         return out
