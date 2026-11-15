@@ -72,6 +72,22 @@ The module owns case-insensitive identity comparison, NFC/keyword normalization,
 - Confirmed: the overview correctly distinguishes tags shared by all selected photos from tags present on only some selected photos.
 - Observation: the "Updating" indicator can remain visible while file access completes; no actionable duration regression was confirmed.
 
+## Layout follow-up — 2026-11-15
+
+Implemented the approved partial-tag line wrap so a large summary does not
+shrink the Photo Workspace pane. No selection or mutation behavior changes.
+The new public Qt regression failed before the fix (549 to 250 pixels), then
+passed with 100 partial tags, retained window/pane sizes, manual resizing, and
+return to single-photo detail. Ruff/format checks and full Linux offscreen pytest
+passed (507 passed, 4 Windows skips). Two independent read-only reviews found no
+issues. Real-file acceptance passed in independently inspected report
+`tests/acceptance/reports/20261115T183331.279159Z/report.json` (20 phases,
+56 named case results; harness hashes match). The maintainer subsequently reported
+the acceptance test green and authorized committing after review. This follow-up
+is complete and accepted by the maintainer. No new Windows report or detailed
+visual checklist was supplied or independently inspected; no checks were waived.
+See `tests/acceptance/REVIEW.md` and `VISUAL_SMOKE.md` for evidence and limits.
+
 ## Constraints
 
 - Do not change `PhotoWorkspace` membership, selection, active-photo, filter, restoration, or Files-pane interaction rules.

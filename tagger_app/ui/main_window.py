@@ -1067,6 +1067,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
         )
         self.batchPartialTagsLabel = QtWidgets.QLabel()
+        self.batchPartialTagsLabel.setWordWrap(True)
         self.batchRemoveBtn = QtWidgets.QPushButton("Remove shared tag")
         self.batchRemoveBtn.setEnabled(False)
         self.batchRemoveBtn.clicked.connect(self.remove_shared_batch_tag)

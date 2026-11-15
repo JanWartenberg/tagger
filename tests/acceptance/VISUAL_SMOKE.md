@@ -1,5 +1,13 @@
 # Minimal Windows visual smoke
 
+Batch-summary follow-up (2026-11-15): partial tags wrap onto multiple lines.
+An automated public Qt test covers pane/window width retention with 100 tags,
+manual splitter adjustment and return to single-photo detail. Linux passed.
+The maintainer subsequently reported the acceptance test green and authorized
+committing after review. The follow-up is accepted by the maintainer; no new
+Windows report or separate detailed visual checklist was supplied or inspected.
+Previously accepted checks remain valid and need not be repeated.
+
 Unload follow-up (2026-11-15): a compact ⏏ button sits directly after Add folder
 in both views, with tooltip `Unload workspace (:unload)` and accessible name
 `Unload workspace`. Public Qt tests and disposable real JPEGs cover behavior.

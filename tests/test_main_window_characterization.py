@@ -3117,6 +3117,51 @@ class MainWindowCharacterizationTests(unittest.TestCase):
             {first, second},
         )
 
+    def test_many_partial_tags_preserve_photo_workspace_pane_width(self) -> None:
+        paths = [
+            normalize_path(str(Path("C:/photos") / name))
+            for name in ("one.jpg", "two.jpg", "many.jpg")
+        ]
+        partial_tags = [f"Bird species {index:03d}" for index in range(100)]
+        for path in paths[:2]:
+            FakeExifTool.states_by_path[path] = KeywordState(["shared"], [])
+        FakeExifTool.states_by_path[paths[2]] = KeywordState(
+            ["shared", *partial_tags], []
+        )
+        self._add_paths("one.jpg", "two.jpg", "many.jpg")
+        self.window.files.setCurrentRow(0)
+        self.window.files.item(1).setSelected(True)
+        self._wait_until(lambda: self.window.batchSharedTagsList.count() == 1)
+        self.window.resize(1500, 900)
+        splitter = self.window.taggingWorkspaceView
+        splitter.setSizes([550, 950])
+        QtTest.QTest.qWait(100)
+        original_sizes = splitter.sizes()
+        original_window_size = self.window.size()
+
+        self.window.files.item(2).setSelected(True)
+        self._wait_until(
+            lambda: partial_tags[-1] in self.window.batchPartialTagsLabel.text()
+        )
+        # Qt propagates minimum-size changes through deferred layout events.
+        QtTest.QTest.qWait(100)
+        self.assertEqual(splitter.sizes(), original_sizes)
+        self.assertEqual(self.window.size(), original_window_size)
+        self.assertEqual(self.window.batchSharedTagsList.item(0).text(), "shared")
+        self.assertTrue(self.window.addEdit.isVisible())
+
+        splitter.setSizes([450, 1050])
+        QtTest.QTest.qWait(100)
+        adjusted_sizes = splitter.sizes()
+        self.assertLess(adjusted_sizes[0], original_sizes[0])
+        self.window.files.setCurrentRow(
+            0, QtCore.QItemSelectionModel.SelectionFlag.ClearAndSelect
+        )
+        self._wait_until(lambda: not self.window.batchOverview.isVisible())
+        QtTest.QTest.qWait(100)
+        self.assertEqual(splitter.sizes(), adjusted_sizes)
+        self.assertTrue(self.window.keywordsList.isVisible())
+
     def test_batch_summary_read_failure_disables_shared_removal(self) -> None:
         _first, _second = self._add_paths("one.jpg", "two.jpg")
         self._wait_until(lambda: self.window.keywordsList.count() == 1)

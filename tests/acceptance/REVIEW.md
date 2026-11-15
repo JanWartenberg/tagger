@@ -1,3 +1,30 @@
+# Batch summary width — 2026-11-15
+
+The partial-tag summary now wraps within the detail pane. Its former single-line
+minimum width pushed the Photo Workspace pane down to its 250-pixel minimum.
+The public Qt regression first failed (549 to 250 pixels), then passed with
+100 partial tags while preserving pane and window sizes. It also checks manual
+splitter adjustment and return to single-photo detail. The existing real-file
+matrix checks covered workflows; this focused Qt test covers the new layout fix.
+
+Passed on Linux with PyQt 6.11.0: Ruff, format checks of affected Python files,
+full offscreen pytest (507 passed, 4 Windows skips), and two independent read-only
+reviews with no findings. Real-file acceptance also passed with runtime Qt 6.11.2
+and ExifTool 12.57 in independently inspected report
+`reports/20261115T183331.279159Z/report.json`: 20 phases, 56 named case results,
+successful process cleanup throughout, and matching harness hashes. Native
+Windows sharing-lock and process-cleanup cases were not run locally.
+
+The maintainer subsequently reported the acceptance test green and authorized
+committing after review. This closes maintainer acceptance for the layout fix.
+No new report, exact command or detailed visual checklist was supplied, so this
+is maintainer-reported acceptance rather than independently inspected Windows
+evidence. No checks were waived. The focused Windows regression command is:
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"; .\.venv\Scripts\python -m pytest -q tests/test_main_window_characterization.py -k many_partial_tags_preserve_photo_workspace_pane_width
+```
+
 # Unload workspace — 2026-11-15
 
 Height follow-up after the initial Windows acceptance: the maintainer requested
