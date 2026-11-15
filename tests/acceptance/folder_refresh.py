@@ -88,7 +88,7 @@ def main():
         cli(
             "-overwrite_original", "-EXIF:DateTimeOriginal=2026:10:18 08:09:00", changed
         )
-        added = folder / "nested" / "DSC06827.JPG"
+        added = folder / "a" / "DSC06827.JPG"
         make_photo(added, "2026:10:18 08:09:00")
         unseen = sibling / "unseen.jpg"
         make_photo(unseen, "2026:10:18 08:09:00")
@@ -115,7 +115,7 @@ def main():
                 "Folder refreshed:"
             ),
         )
-        assert set(window.all_file_paths()) == {str(keep), str(changed), str(added)}
+        assert window.all_file_paths() == list(map(str, (changed, keep, added)))
         assert window.active_file_path() == str(keep)
         assert set(index.search_photos("date:2026-10")) == {str(changed), str(added)}
         assert index.has_photos([str(gone), str(unseen)]) == set()
@@ -145,6 +145,8 @@ def main():
             app, "refreshed date search", lambda: str(second) in window.all_file_paths()
         )
         assert set(window.all_file_paths()) == {str(changed), str(added), str(second)}
+        window.clear_db_search()
+        assert window.all_file_paths() == list(map(str, (changed, second, keep, added)))
         assert index.has_photos([str(unseen)]) == set()
         assert {path: digest(Path(path)) for path in before} == before
         emit(

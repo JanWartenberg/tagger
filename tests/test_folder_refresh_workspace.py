@@ -1,6 +1,36 @@
 from tagger_app.photo_workspace import PhotoWorkspace
 
 
+def test_refresh_replaces_sorted_folder_block_in_place_and_keeps_active_photo():
+    workspace = PhotoWorkspace()
+    workspace.reload_paths(
+        [
+            "/before/keep.jpg",
+            "/birds/zebra.jpg",
+            "/birds/a/nested.jpg",
+            "/after/keep.jpg",
+        ]
+    )
+    workspace.select_paths(["/birds/a/nested.jpg", "/birds/zebra.jpg"])
+    snapshot = workspace.refresh_paths(
+        [
+            "/birds/Meerstrand.JPG",
+            "/birds/zebra.jpg",
+            "/birds/a/nested.jpg",
+        ],
+        [],
+    )
+    assert snapshot.paths == (
+        "/before/keep.jpg",
+        "/birds/Meerstrand.JPG",
+        "/birds/zebra.jpg",
+        "/birds/a/nested.jpg",
+        "/after/keep.jpg",
+    )
+    assert snapshot.selected_paths == ("/birds/zebra.jpg", "/birds/a/nested.jpg")
+    assert snapshot.active_path == "/birds/a/nested.jpg"
+
+
 def test_refresh_preserves_filters_selection_and_iptc_membership():
     workspace = PhotoWorkspace()
     workspace.reload_paths(["/birds/old.jpg", "/birds/keep.jpg", "/other/keep.jpg"])
@@ -10,9 +40,11 @@ def test_refresh_preserves_filters_selection_and_iptc_membership():
     operation = workspace.snapshot().filter_operation_id
     workspace.accept_indexed_iptc_empty_filter(operation, ["/birds/keep.jpg"])
 
-    snapshot = workspace.refresh_paths(["/birds/new.jpg"], ["/birds/old.jpg"])
+    snapshot = workspace.refresh_paths(
+        ["/birds/keep.jpg", "/birds/new.jpg"], ["/birds/old.jpg"]
+    )
 
-    assert snapshot.paths == ("/birds/keep.jpg", "/other/keep.jpg", "/birds/new.jpg")
+    assert snapshot.paths == ("/birds/keep.jpg", "/birds/new.jpg", "/other/keep.jpg")
     assert snapshot.visible_paths == ("/birds/keep.jpg",)
     assert snapshot.selected_paths == ("/birds/keep.jpg",)
     assert snapshot.filename_filter_query == "keep"
@@ -31,7 +63,7 @@ def test_refresh_updates_folder_restore_state_without_polluting_search():
 
     assert snapshot.visible_paths == ()
     restored = workspace.clear_database_search()
-    assert restored.paths == ("/other/keep.jpg", "/birds/new.jpg")
+    assert restored.paths == ("/birds/new.jpg", "/other/keep.jpg")
 
 
 def test_refresh_keeps_directory_exclusions_and_unrelated_workspace_members():

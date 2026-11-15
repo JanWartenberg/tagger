@@ -707,10 +707,11 @@ class BackgroundCoordinator:
                 )
                 if cancelled():
                     return
+                root = Path(request.root)
                 paths = tuple(
                     sorted(
                         (_normalize_path(path) for path in discovered),
-                        key=str.casefold,
+                        key=lambda path: (Path(path).parent != root, path.casefold()),
                     )
                 )
             except Exception as error:  # noqa: BLE001 - worker boundary reports failures
@@ -836,12 +837,13 @@ class BackgroundCoordinator:
                 request = operation.folder_request
                 if request is None:
                     raise RuntimeError("Folder refresh has no request")
+                folder = Path(request.folder)
                 paths = tuple(
                     sorted(
                         self._index.refresh_folder(root, request.folder)
                         if request.index_root is not None
                         else self._discovery.discover_refresh(request.folder),
-                        key=str.casefold,
+                        key=lambda path: (Path(path).parent != folder, path.casefold()),
                     )
                 )
                 current = set(paths)

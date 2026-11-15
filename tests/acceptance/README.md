@@ -57,12 +57,12 @@ Each run checks both backup settings in separate disposable workspaces:
 | Malformed IPTC | Generated decodable JPEGs with a silently skipped IIM entry refuse add/remove/paste/retry without writes/backups, including corruption in a second block; explicit Resolve still works |
 | Persistent ignores | Ignore survives a fresh process; inspecting previews/evidence does not restore; explicit restore and confirmed clear-all persist; changed capture provenance returns the candidate; a two-record archive verifies `j/k` selection/evidence and `c` close; all application actions leave JPEG hashes/file sets unchanged |
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
-| Folder refresh | F5 reconciles additions, capture-date changes and removals only in the chosen subtree; a nested marker does not redirect the database, sibling entries and root freshness are retained despite redirected directories (native junctions on Windows), and `:refreshfolder` reapplies an active date search without changing JPEG bytes |
-| Files-pane scrolling | A real adjacent-photo click in settled No tags results with hidden rows and long paths preserves the viewport beyond Qt's double-click delay; partial-row anchors, end navigation and explicit scrollbar actions remain usable; JPEG hashes and file set stay unchanged |
+| Folder refresh | F5 reconciles additions, capture-date changes and removals only in the chosen subtree, retaining direct-first order after refresh and return from search; a nested marker does not redirect the database, sibling entries and root freshness are retained despite redirected directories (native junctions on Windows), and `:refreshfolder` reapplies an active date search without changing JPEG bytes |
+| Files-pane scrolling | Direct photos precede a lexically earlier subfolder; a real adjacent-photo click in settled No tags results with hidden rows and long paths preserves the viewport beyond Qt's double-click delay; partial-row anchors, end navigation and explicit scrollbar actions remain usable; JPEG hashes and file set stay unchanged |
 | Unload workspace | Eject clears duplicate results and scope; `:unload` clears filters, selection, details and draft input; reloading and indexed search still work; JPEG hashes/file sets and the index are preserved |
 
-Both backup settings are required. Linux requires 60 case results across twenty
-process phases. Windows requires 64 results across twenty-two phases plus the native
+Both backup settings are required. Linux requires 56 case results across twenty
+process phases. Windows requires 60 results across twenty-two phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;

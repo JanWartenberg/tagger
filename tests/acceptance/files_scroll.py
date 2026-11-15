@@ -12,15 +12,18 @@ def main():
     app = QtWidgets.QApplication([])
     folder = Path(os.environ["TAGGER_ACCEPTANCE_ROOT"]) / "photos"
     folder.mkdir()
+    (folder / "a").mkdir()
     paths = [
-        folder / f"{'long-photo-name-' * 6}{index:04d}.jpg" for index in range(200)
+        (folder if index < 100 else folder / "a")
+        / f"z-{'long-photo-name-' * 6}{index:04d}.jpg"
+        for index in range(200)
     ]
     image = QtGui.QImage(64, 48, QtGui.QImage.Format.Format_RGB32)
     image.fill(QtGui.QColor("blue"))
     for path in paths:
         assert image.save(str(path), "JPEG")
     cli("-overwrite_original", "-IPTC:Keywords=Tagged", *paths[:80])
-    before = {path.name: digest(path) for path in paths}
+    before = {str(path.relative_to(folder)): digest(path) for path in paths}
     native_delay = QtWidgets.QApplication.doubleClickInterval() + 100
 
     with application_window(app) as window:
@@ -97,7 +100,12 @@ def main():
         bar.triggerAction(QtWidgets.QAbstractSlider.SliderAction.SliderToMinimum)
         QtTest.QTest.qWait(native_delay + 100)
         assert bar.value() == 0
-        assert {p.name: digest(p) for p in folder.iterdir() if p.is_file()} == before
+        assert {
+            str(p.relative_to(folder)): digest(p)
+            for directory in (folder, folder / "a")
+            for p in directory.iterdir()
+            if p.is_file()
+        } == before
         emit("partial_anchor_and_explicit_scroll", jpeg_hashes_unchanged=True)
 
 

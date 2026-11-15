@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from PyQt6 import QtCore, QtTest
+from PyQt6 import QtCore, QtTest, QtWidgets
 
 import test_main_window_characterization as ui
 from tagger_app.utils import normalize_path
@@ -52,6 +52,131 @@ def refresh_key(case):
     case.window.files.setFocus()
     QtTest.QTest.keyClick(case.window.files, QtCore.Qt.Key.Key_F5)
     case.app.processEvents()
+
+
+def test_f5_inserts_new_direct_photo_above_subfolders(harness):
+    case, refreshed = harness
+    folder = normalize_path("C:/photos/birds")
+    direct, nested, added = [
+        str(Path(folder) / name)
+        for name in ("Zebra.JPG", "a/nested.jpg", "Meerstrand.JPG")
+    ]
+    load(case, folder, [nested, direct])
+    assert case.window.all_file_paths() == [direct, nested]
+    case.window.files.setCurrentRow(1)
+    refreshed[folder] = [nested, direct, added]
+    refresh_key(case)
+    case._wait_until(lambda: added in case.window.all_file_paths())
+    assert case.window.all_file_paths() == [added, direct, nested]
+    assert case.window.active_file_path() == nested
+
+
+def test_grouped_folder_order_survives_filter_composition_and_search_return(harness):
+    case, _ = harness
+
+    def visible():
+        view = case.window.files
+        return [
+            view.item(i).text()
+            for i in range(view.count())
+            if not view.item(i).isHidden()
+        ]
+
+    folder = normalize_path("C:/photos/birds")
+    direct, nested, excluded = [
+        str(Path(folder) / name)
+        for name in ("Zebra-match.JPG", "a/match.jpg", "hidden/match.jpg")
+    ]
+    load(case, folder, [excluded, nested, direct])
+    expected = [direct, nested, excluded]
+    assert case.window.all_file_paths() == expected
+    case.window.filenameFilterEdit.setText("match")
+    QtTest.QTest.keyClick(case.window.filenameFilterEdit, QtCore.Qt.Key.Key_Return)
+    ui.FakePhotoIndex.iptc_empty_results = {direct, nested, excluded}
+    case.window.onlyUntagged.setChecked(True)
+    case._wait_until(
+        lambda: case.window.statusBar().currentMessage() == "IPTC-empty results ready"
+    )
+    case.window.directoryExcludeEdit.setText("hidden")
+    QtTest.QTest.keyClick(case.window.directoryExcludeEdit, QtCore.Qt.Key.Key_Return)
+    assert visible() == [direct, nested]
+    case.window.clear_all_filters()
+    assert visible() == expected
+    ui.FakePhotoIndex.search_results = {direct, nested}
+    case.window.dbDateSearchEdit.setText("2026-10")
+    case.window.apply_db_search()
+    case._wait_until(
+        lambda: case.window.statusBar().currentMessage().startswith("DB search:")
+    )
+    assert set(visible()) == {direct, nested}
+    case.window.clear_db_search()
+    assert case.window.all_file_paths() == expected
+    assert visible() == expected
+
+
+def test_dropped_folders_keep_drop_order_and_group_direct_photos_per_folder(
+    harness, tmp_path
+):
+    case, _ = harness
+    first, second = tmp_path / "z-first", tmp_path / "a-second"
+    first.mkdir()
+    second.mkdir()
+    first_direct, first_nested = str(first / "Zebra.JPG"), str(first / "a/nested.jpg")
+    second_direct, second_nested = (
+        str(second / "Zebra.JPG"),
+        str(second / "a/nested.jpg"),
+    )
+    case.discovery.results[str(first)] = [first_nested, first_direct]
+    case.discovery.results[str(second)] = [second_nested, second_direct]
+    case.window.handle_dropped_urls(
+        [QtCore.QUrl.fromLocalFile(str(first)), QtCore.QUrl.fromLocalFile(str(second))]
+    )
+    case.discovery_runner.run_discovery(1)
+    assert case.window.all_file_paths() == []
+    case.discovery_runner.run_discovery()
+    case._wait_until(lambda: case.window.files.count() == 4)
+    assert case.window.all_file_paths() == [
+        first_direct,
+        first_nested,
+        second_direct,
+        second_nested,
+    ]
+
+
+@pytest.mark.parametrize("count", [120, 510])
+def test_grouped_refresh_preserves_filtered_partial_scroll_anchor(harness, count):
+    case, refreshed = harness
+    folder = normalize_path("C:/photos/birds")
+    direct = str(Path(folder) / "Zebra-match.JPG")
+    nested = [str(Path(folder) / f"a/match-{i:04}.jpg") for i in range(count)]
+    hidden = str(Path(folder) / "hidden.jpg")
+    load(case, folder, nested + [hidden, direct])
+    case.window.filenameFilterEdit.setText("match")
+    QtTest.QTest.keyClick(case.window.filenameFilterEdit, QtCore.Qt.Key.Key_Return)
+    QtTest.QTest.qWait(QtWidgets.QApplication.doubleClickInterval() + 100)
+    view = case.window.files
+    view.setCurrentRow(61)
+    view.scrollToItem(
+        view.item(60), QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+    )
+    case.app.processEvents()
+    view.verticalScrollBar().setValue(view.verticalScrollBar().value() + 7)
+    anchor_path = view.item(60).text()
+    offset = view.visualItemRect(view.item(60)).top()
+    assert offset == -7
+    selection = case.window.selected_file_paths()
+    added = str(Path(folder) / "Meerstrand-match.JPG")
+    refreshed[folder] = nested + [hidden, direct, added]
+    refresh_key(case)
+    case._wait_until(lambda: view.count() == count + 3 and view.isEnabled(), timeout=10)
+    QtTest.QTest.qWait(QtWidgets.QApplication.doubleClickInterval() + 100)
+    assert case.window.all_file_paths()[:3] == [hidden, added, direct]
+    anchor = next(
+        view.item(i) for i in range(view.count()) if view.item(i).text() == anchor_path
+    )
+    assert view.visualItemRect(anchor).top() == offset
+    assert case.window.selected_file_paths() == selection
+    assert view.item(0).isHidden()
 
 
 def test_f5_refresh_keeps_view_until_complete_and_preserves_filters_selection(harness):

@@ -1,5 +1,13 @@
 # Minimal Windows visual smoke
 
+Direct-first ordering follow-up (2026-11-15): recursive folder loading and F5
+group direct photos before subfolder photos. No controls or layout changed.
+Automated public Qt tests cover filter composition, search return, drop order,
+selection and partial scroll anchors in synchronous and batched refreshes.
+Real-file scenarios use lexically earlier subfolders to verify the grouping and
+exercise delayed filtered clicks. Native Windows execution is pending; no new
+subjective appearance check is needed and previous visual acceptance stands.
+
 Batch-summary follow-up (2026-11-15): partial tags wrap onto multiple lines.
 An automated public Qt test covers pane/window width retention with 100 tags,
 manual splitter adjustment and return to single-photo detail. Linux passed.

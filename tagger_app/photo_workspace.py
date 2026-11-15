@@ -311,13 +311,25 @@ class PhotoWorkspace:
         self, discovered_paths: Iterable[str], removed_paths: Iterable[str]
     ) -> PhotoWorkspaceSnapshot:
         """Reconcile folder facts while retaining selection and stable filters."""
-        discovered = tuple(discovered_paths)
+        discovered = tuple(dict.fromkeys(discovered_paths))
         removed = set(removed_paths)
+        refreshed = set(discovered) | removed
 
         def reconcile(paths: Iterable[str]) -> list[str]:
-            return list(
-                dict.fromkeys([p for p in paths if p not in removed] + list(discovered))
-            )
+            # Replace the refreshed block at its old position. Appending only
+            # new paths would strand direct photos below existing subfolders.
+            result = []
+            inserted = False
+            for path in paths:
+                if path in refreshed:
+                    if not inserted:
+                        result.extend(discovered)
+                        inserted = True
+                else:
+                    result.append(path)
+            if not inserted:
+                result.extend(discovered)
+            return result
 
         if self._search_restore_state is not None:
             state = self._search_restore_state

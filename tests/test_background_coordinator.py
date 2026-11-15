@@ -170,6 +170,33 @@ class BackgroundCoordinatorDiscoveryTests(unittest.TestCase):
             event_sink=self.events.append,
         )
 
+    def test_discovery_groups_direct_photos_before_alphabetical_subtree(self):
+        root = fixture_path("/photos")
+        self.discovery.results[root] = [
+            "/photos/zebra.jpg",
+            "/photos/a/nested/deep.jpg",
+            "/photos/B/direct.jpg",
+            "/photos/Meerstrand.JPG",
+            "/photos/a/first.jpg",
+        ]
+        self.coordinator.replace_workspace_from_folder(root)
+        self.runner.run()
+        self.assertEqual(
+            self.events[0].paths,
+            tuple(
+                map(
+                    fixture_path,
+                    [
+                        "/photos/Meerstrand.JPG",
+                        "/photos/zebra.jpg",
+                        "/photos/a/first.jpg",
+                        "/photos/a/nested/deep.jpg",
+                        "/photos/B/direct.jpg",
+                    ],
+                )
+            ),
+        )
+
     def test_current_folder_replacement_emits_normalized_alphabetical_paths(
         self,
     ) -> None:

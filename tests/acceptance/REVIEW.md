@@ -1,3 +1,35 @@
+# Direct-first folder ordering — 2026-11-15
+
+Recursive Add folder and each dropped folder now group direct photos before the
+alphabetical subtree. F5 replaces the refreshed block in place, preserving other
+photos' relative order, filters and selection. Large F5 renders now restore the
+top photo and pixel offset after batched population; its regression moved the
+anchor from -7 to 424 pixels before the fix and passes afterward. Indexed search
+keeps its existing database-wide order; returning restores the grouped folder.
+
+- **Passed:** Ruff, formatting of all eight affected Python files, whitespace
+  checks, 49 focused tests and the full Linux offscreen suite: 514 passed,
+  four Windows skips, 33 subtests. Python 3.11.2 / PyQt 6.12.1 / Qt 6.12.0.
+- **Passed:** three review rounds, each with two fresh independent read-only
+  reviewers, no code findings. Final-round stale commit-authorization wording
+  was corrected. Round 1 reviewers independently passed 31 coordinator/workspace
+  and 22 workspace/UI tests; final reviewers passed 49 focused and 22
+  workspace/UI tests. Before committing, 49 focused tests, Ruff and affected-file
+  formatting passed again.
+- **Passed and inspected:** final real-file report
+  `reports/20261115T191453.847767Z/report.json`, 20 phases / 56 passed cases,
+  both backup settings, ExifTool 12.57. All phase exits, process-tree cleanup,
+  disposable workspace removal and harness hashes verified. The file-set guard
+  includes unexpected non-JPEG files in both photo directories. Report SHA-256:
+  `b0b72484b077589019396732529b0e4afcb87533adc521d8aa7d954322a76cf3`.
+- **Unrun:** Windows native scroll behavior, sharing locks and process cleanup.
+  No checks waived. No new subjective appearance check; prior acceptance stands.
+
+See `.scratch/root-first-photo-order/issues/01-group-direct-photos-first.md`
+for the final evidence and necessary Windows commands. The maintainer accepted
+the visible result and authorized a commit after one additional review/fix round.
+This does not establish native Windows automated acceptance.
+
 # Batch summary width — 2026-11-15
 
 The partial-tag summary now wraps within the detail pane. Its former single-line

@@ -6979,9 +6979,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._batch_summary_generation += 1
         self._resubmit_pending_iptc_filter()
         if len(snapshot.paths) > FILE_PANE_RENDER_BATCH_SIZE:
+            scroll_anchor = self._capture_files_scroll_anchor()
             self._files_render_token += 1
             self._render_photo_workspace_in_batches(
-                snapshot, self._files_render_token, None
+                snapshot,
+                self._files_render_token,
+                lambda: self._queue_files_selection_scroll_anchor_restore(
+                    scroll_anchor
+                ),
             )
         else:
             self._render_photo_workspace_snapshot(snapshot, before)
