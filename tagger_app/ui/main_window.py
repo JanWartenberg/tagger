@@ -1222,6 +1222,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addFolderBtn = QtWidgets.QPushButton("Add folder")
         self.addFolderBtn.setToolTip("Add all JPG/JPEG files from a folder (Ctrl+O)")
         self.addFolderBtn.clicked.connect(self.add_folder_dialog)
+        self.unloadBtn = self._make_unload_button(self.addFolderBtn)
 
         # --- Right: image panel (selected file) ---
         self.imageBox = QtWidgets.QGroupBox("Image")
@@ -1282,6 +1283,7 @@ class MainWindow(QtWidgets.QMainWindow):
         filesWorkspaceRow = QtWidgets.QHBoxLayout(filesWorkspaceRowW)
         filesWorkspaceRow.setContentsMargins(7, 0, 0, 0)
         filesWorkspaceRow.addWidget(self.addFolderBtn)
+        filesWorkspaceRow.addWidget(self.unloadBtn)
         filesWorkspaceRow.addWidget(self.workspaceCountLabel)
         self.filesFilterToggleBtn = QtWidgets.QToolButton()
         self.filesFilterToggleBtn.setObjectName("filesFilterToggleBtn")
@@ -1525,6 +1527,10 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         self.duplicateAddFolderButton.clicked.connect(self.add_folder_dialog)
         header.addWidget(self.duplicateAddFolderButton)
+        self.duplicateUnloadButton = self._make_unload_button(
+            self.duplicateAddFolderButton
+        )
+        header.addWidget(self.duplicateUnloadButton)
         self.duplicateReviewHeader = header
         layout.addLayout(header)
 
@@ -4657,6 +4663,52 @@ class MainWindow(QtWidgets.QMainWindow):
     def _reset_files_pane_for_reload(self) -> None:
         self.replace_photo_workspace([])
 
+    def _make_unload_button(
+        self, add_folder: QtWidgets.QPushButton
+    ) -> QtWidgets.QToolButton:
+        button = QtWidgets.QToolButton()
+        button.setText("⏏")
+        button.setToolTip("Unload workspace (:unload)")
+        button.setAccessibleName("Unload workspace")
+        button.clicked.connect(self.unload_workspace)
+        height = max(add_folder.sizeHint().height(), button.sizeHint().height())
+        add_folder.setFixedHeight(height)
+        button.setFixedHeight(height)
+        return button
+
+    def unload_workspace(self) -> None:
+        """Return to an empty workspace while preserving saved data and settings."""
+        if self._tag_mutation_coordinator.is_busy:
+            self.statusBar().showMessage("Wait for tag writes before unloading")
+            return
+        self._coordinator_workspace_generation = (
+            self._background_coordinator.unload_workspace()
+        )
+        if self._index_root:
+            self._background_coordinator.cancel_refresh(self._index_root)
+        self._index_sync_inflight.clear()
+        self._stale_result_repairs.clear()
+        self._invalidate_duplicate_scope_for_folder_load()
+        self._duplicate_folder_scope_after_load = None
+        self._reset_files_pane_for_reload()
+        self.clear_all_filters()
+        self.addEdit.clear()
+        self._known_tags_snapshot.clear()
+        self._known_tags_root = None
+        self._tagHint.hide()
+        self.duplicateScopeCombo.blockSignals(True)
+        self.duplicateScopeCombo.setCurrentIndex(0)
+        self.duplicateScopeCombo.blockSignals(False)
+        self._refresh_folder_target = None
+        self._stop_refresh_discovery_animation()
+        self.indexRepairStatusLabel.clear()
+        self._hide_files_pane_message()
+        self._refresh_duplicate_scope_controls()
+        self.duplicateReviewEmpty.show()
+        self.duplicateReviewEmptyTitle.setText("No scan yet")
+        self.duplicateReviewEmptyDetail.setText("Choose a scope, then start scanning.")
+        self.statusBar().showMessage("Workspace unloaded")
+
     def add_folder_dialog(self) -> None:
         default_dir = self._get_default_folder_for_dialog()
         if default_dir:
@@ -6326,6 +6378,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def _handle_tag_mutation_lifecycle(self, event: TagMutationLifecycle) -> None:
+        self._refresh_unload_buttons()
         self._handle_duplicate_mutation_lifecycle(event)
         if event.kind is TagMutationLifecycleKind.DISCARDED:
             return
@@ -6399,6 +6452,12 @@ class MainWindow(QtWidgets.QMainWindow):
         status: str | None = None,
     ) -> None:
         self._tag_mutation_coordinator.enqueue(paths, fn, pending_mutation, status)
+        self._refresh_unload_buttons()
+
+    def _refresh_unload_buttons(self) -> None:
+        enabled = not self._tag_mutation_coordinator.is_busy
+        self.unloadBtn.setEnabled(enabled)
+        self.duplicateUnloadButton.setEnabled(enabled)
 
     def _find_item_by_path(self, path: str) -> QtWidgets.QListWidgetItem | None:
         return self._file_items_by_path.get(normalize_path(path))

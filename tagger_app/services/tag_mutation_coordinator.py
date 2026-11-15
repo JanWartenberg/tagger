@@ -79,6 +79,11 @@ class TagMutationCoordinator:
         self._workspace_generation = 0
 
     @property
+    def is_busy(self) -> bool:
+        """Whether a tag write is running or queued."""
+        return self._inflight or bool(self._queue)
+
+    @property
     def workspace_generation(self) -> int:
         return self._workspace_generation
 

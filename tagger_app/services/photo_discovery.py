@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from tagger_app.utils import SUPPORTED_EXTS
@@ -20,13 +21,27 @@ class FileSystemPhotoDiscovery:
         """Enumerate a physical subtree without following file links."""
         return self._discover(root, include_file_links=False)
 
-    def _discover(self, root: str, *, include_file_links: bool) -> list[str]:
+    def discover_cancellable(
+        self, root: str, cancelled: Callable[[], bool]
+    ) -> list[str]:
+        """Stop folder loading promptly after its workspace has been unloaded."""
+        return self._discover(root, include_file_links=True, cancelled=cancelled)
+
+    def _discover(
+        self,
+        root: str,
+        *,
+        include_file_links: bool,
+        cancelled: Callable[[], bool] = lambda: False,
+    ) -> list[str]:
         # Partial enumeration must not become evidence for deleting index rows.
         pending = [Path(root)]
         physical_root = Path(root).resolve(strict=True)
         visited: set[Path] = set()
         paths = []
         while pending:
+            if cancelled():
+                return []
             directory = pending.pop()
             physical = directory.resolve(strict=True)
             if physical in visited or (
@@ -36,6 +51,8 @@ class FileSystemPhotoDiscovery:
             visited.add(physical)
             with os.scandir(directory) as entries:
                 for entry in entries:
+                    if cancelled():
+                        return []
                     if entry.is_symlink() and not include_file_links:
                         continue
                     if entry.is_dir(follow_symlinks=False):

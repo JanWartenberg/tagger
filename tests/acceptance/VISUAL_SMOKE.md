@@ -1,5 +1,20 @@
 # Minimal Windows visual smoke
 
+Unload follow-up (2026-11-15): a compact ⏏ button sits directly after Add folder
+in both views, with tooltip `Unload workspace (:unload)` and accessible name
+`Unload workspace`. Public Qt tests and disposable real JPEGs cover behavior.
+Windows automated acceptance passed in independently inspected report
+`reports/20261115T175936.525074Z/report.json` (22 phases / 64 results, including
+native sharing locks and process cleanup). The maintainer subsequently accepted
+the result after the height adjustment and authorized the feature commit. This
+is overall maintainer acceptance; no separate detailed glyph/spacing/tooltip
+checklist was reported. Previous accepted checks remain valid.
+
+Height follow-up: the maintainer requested matching Add folder/eject heights
+after the initial Windows run. Both buttons now use their larger natural height
+in each view; public Qt geometry assertions pass for both views. Overall result
+accepted by the maintainer; prior functional acceptance stays valid.
+
 Files-pane scroll follow-up (2026-10-18): adjacent clicks in stable No tags results
 with hidden rows and overflowing paths now use pixel scrolling. Native delayed
 scrolling, partially clipped anchors, end navigation and explicit scrolling are

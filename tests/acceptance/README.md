@@ -59,9 +59,10 @@ Each run checks both backup settings in separate disposable workspaces:
 | Windows sharing lock | Real read-only sharing handle permits reads but denies writes/deletion; one target succeeds, one fails; explicit retry changes only the failed target after releasing the lock |
 | Folder refresh | F5 reconciles additions, capture-date changes and removals only in the chosen subtree; a nested marker does not redirect the database, sibling entries and root freshness are retained despite redirected directories (native junctions on Windows), and `:refreshfolder` reapplies an active date search without changing JPEG bytes |
 | Files-pane scrolling | A real adjacent-photo click in settled No tags results with hidden rows and long paths preserves the viewport beyond Qt's double-click delay; partial-row anchors, end navigation and explicit scrollbar actions remain usable; JPEG hashes and file set stay unchanged |
+| Unload workspace | Eject clears duplicate results and scope; `:unload` clears filters, selection, details and draft input; reloading and indexed search still work; JPEG hashes/file sets and the index are preserved |
 
-Both backup settings are required. Linux requires 52 case results across eighteen
-process phases. Windows requires 56 results across twenty phases plus the native
+Both backup settings are required. Linux requires 60 case results across twenty
+process phases. Windows requires 64 results across twenty-two phases plus the native
 cleanup probes. Missing results or failed phases fail the command, not an
 all-skipped pass. Linux explicitly reports Windows-only coverage as not run.
 Safety phases use public propagation/mutation services, without timing races;

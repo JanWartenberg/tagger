@@ -273,6 +273,13 @@ class _IndexOperation:
     restart: bool = False
     folder_request: FolderRefreshRequest | None = None
 
+    @property
+    def is_stale_result_repair(self) -> bool:
+        return (
+            self.refresh_request is not None
+            and self.refresh_request.kind is IndexRefreshKind.STALE_RESULT_REPAIR
+        )
+
 
 @dataclass
 class _RootWriteQueue:
@@ -366,6 +373,16 @@ class BackgroundCoordinator:
         if work is not None:
             self._runner.submit(work)
         return request
+
+    def unload_workspace(self) -> int:
+        """Invalidate discoveries and start a fresh, empty drop sequence."""
+        with self._lock:
+            self._workspace_generation += 1
+            self._current_replacement_request_id = None
+            self._next_drop_sequence = 0
+            self._next_released_drop_sequence = 0
+            self._completed_drops.clear()
+            return self._workspace_generation
 
     def replace_workspace_from_folder(self, root: str | Path) -> DiscoveryRequest:
         """Start a replacement discovery, invalidating all older workspace work."""
@@ -469,10 +486,13 @@ class BackgroundCoordinator:
             # Cancellation must beat a refresh continuation but cannot interrupt
             # the ExifTool subgroup currently owned by a worker.
             queue.cancel_requested = True
+            # Repairs restore index integrity and must reach their terminal event,
+            # including when the originating workspace has already been unloaded.
             queue.pending = [
                 operation
                 for operation in queue.pending
-                if operation.kind
+                if operation.is_stale_result_repair
+                or operation.kind
                 not in {
                     IndexOperationKind.ENSURE,
                     IndexOperationKind.REFRESH_IF_STALE,
@@ -669,14 +689,27 @@ class BackgroundCoordinator:
         return request_id
 
     def _schedule_discovery(self, request: DiscoveryRequest) -> None:
+        def cancelled() -> bool:
+            with self._lock:
+                return request.workspace_generation != self._workspace_generation
+
         def work() -> None:
+            if cancelled():
+                return
             try:
+                discover_cancellable = getattr(
+                    self._discovery, "discover_cancellable", None
+                )
+                discovered = (
+                    discover_cancellable(request.root, cancelled)
+                    if discover_cancellable is not None
+                    else self._discovery.discover(request.root)
+                )
+                if cancelled():
+                    return
                 paths = tuple(
                     sorted(
-                        (
-                            _normalize_path(path)
-                            for path in self._discovery.discover(request.root)
-                        ),
+                        (_normalize_path(path) for path in discovered),
                         key=str.casefold,
                     )
                 )
@@ -787,6 +820,7 @@ class BackgroundCoordinator:
                     IndexOperationKind.FULL_REINDEX,
                 }
                 and self._index_queues[root].cancel_requested
+                and not operation.is_stale_result_repair
             )
         if cancel_refresh:
             # The queued CANCEL_REFRESH operation owns checkpoint cleanup. This
@@ -909,7 +943,9 @@ class BackgroundCoordinator:
                 and event.result is not None
                 and getattr(event.result, "complete", True) is False
             )
-            if incomplete_refresh and not queue.cancel_requested:
+            if incomplete_refresh and (
+                not queue.cancel_requested or operation.is_stale_result_repair
+            ):
                 # Append after pending writes so confirmed mutations are committed
                 # before the next older refresh chunk can overwrite their index row.
                 queue.pending.append(

@@ -81,6 +81,13 @@ def build_action_specs() -> tuple[ActionSpec, ...]:
             shortcuts=(ShortcutBinding("Ctrl+O"),),
         ),
         ActionSpec(
+            id="unload",
+            views=("tagging", "duplicate_review"),
+            description="Unload workspace",
+            handler_name="unload_workspace",
+            command=CommandBinding("unload"),
+        ),
+        ActionSpec(
             id="showduplicates",
             views=("tagging", "duplicate_review"),
             description="Open duplicate candidate review",

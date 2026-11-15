@@ -18,6 +18,10 @@ from process_control import start_child, stop_child
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 REQUIRED_CASES = {
+    "unload": {
+        "eject_clears_duplicate_results_without_photo_writes",
+        "unload_command_resets_filters_and_preserves_index_and_photos",
+    },
     "files-scroll": {
         "native_filtered_adjacent_click",
         "partial_anchor_and_explicit_scroll",
@@ -83,8 +87,8 @@ def isolated_environment(root):
 
 
 def run_phase(root, env, phase, backup, report_dir, report):
-    if phase in ("windows-lock", "files-scroll"):
-        root = root / ("locked-ui" if phase == "windows-lock" else "files-scroll-ui")
+    if phase in ("windows-lock", "files-scroll", "unload"):
+        root = root / f"{phase}-ui"
         root.mkdir()
         env = isolated_environment(root)
     name = f"backup-{backup}-{phase}"
@@ -108,6 +112,8 @@ def run_phase(root, env, phase, backup, report_dir, report):
                 if phase == "folder-refresh"
                 else "files_scroll.py"
                 if phase == "files-scroll"
+                else "unload_workspace.py"
+                if phase == "unload"
                 else "ignored_candidates.py"
                 if phase in ("ignore", "ignored-reopen")
                 else "locked_copy.py"
@@ -200,6 +206,7 @@ def main():
                 "run.py",
                 "folder_refresh.py",
                 "files_scroll.py",
+                "unload_workspace.py",
                 "confirmed_copy.py",
                 "ignored_candidates.py",
                 "process_control.py",
@@ -243,6 +250,7 @@ def main():
                         "ignored-reopen",
                         "folder-refresh",
                         "files-scroll",
+                        "unload",
                     ]
                     if os.name == "nt":
                         phases.append("windows-lock")

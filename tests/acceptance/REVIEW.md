@@ -1,3 +1,64 @@
+# Unload workspace — 2026-11-15
+
+Height follow-up after the initial Windows acceptance: the maintainer requested
+equal Add folder/eject button heights. Both neighboring buttons now use the
+larger natural height in each view. Public Qt geometry assertions failed before
+the adjustment (21 vs 22 pixels on Linux) and pass afterward in both views.
+Two independent read-only reviewers found no issues. Ruff passed; the full
+Linux offscreen suite passed again (506 tests, 4 Windows skips, 33 subtests).
+Real-file acceptance passed again in independently inspected report
+`reports/20261115T181514.849616Z/report.json` (20 phases / 60 results; harness
+hashes match). The earlier Windows report below remains functional evidence.
+The maintainer subsequently accepted the result and authorized the feature commit.
+
+`:unload` and compact ⏏ buttons next to Add folder reset the Photo Workspace
+from both application views. Filters, selection, preview/details, draft tag input,
+duplicate results/scope, refresh target and indexed autocomplete cache are cleared.
+Saved photo metadata, index databases, preferences and remembered ignores remain;
+session error/retry history remains available. Queued/running tag writes disable
+both buttons and cause the command to refuse unloading until writes finish.
+
+Folder discovery cooperatively cancels between entries and queued obsolete work
+is skipped. Existing generation checks reject late view results. Index refresh
+cancellation preserves missing-result repairs so they finish restoring index
+integrity, including repeated unload/reload/unload. Scoped index work may finish
+its current operation without repopulating the unloaded UI.
+
+Passed and independently inspected on Linux / ExifTool 12.57:
+
+- Final Ruff check and format check of affected Python files.
+- Full offscreen pytest: **506 passed, 4 Windows skips, 33 subtests passed**.
+  Thirteen focused unload tests cover command/buttons, reset/reload, write gating,
+  stale discoveries/search/filter/repair events, the status animation, canceled
+  initial index sync and integrity-preserving repair cancellation.
+- Real-file acceptance: **20 phases / 60 results**, both backup settings, report
+  `reports/20261115T174146.800597Z/report.json`. All phases passed, disposable
+  workspaces were removed, and recorded harness hashes match final files. New
+  cases verify eject clears duplicate results and command resets filter/detail
+  state, with unchanged JPEG hashes/file sets and a reusable preserved index.
+- Four rounds of two independent read-only reviews. Confirmed lifecycle findings
+  were reproduced and fixed; both fresh final reviewers returned no findings
+  and independently passed all thirteen focused tests.
+
+The first full pytest invocation crashed natively in the existing shortcut-style
+test at `QApplication.setStyle`. Its isolated module passed (9 tests), and later
+full sequential runs passed. This change does not claim to fix that native crash.
+
+Maintainer-executed Windows acceptance passed in independently inspected report
+`reports/20261115T175936.525074Z/report.json`: Windows 11, Python 3.14.7,
+ExifTool 13.59, **22 phases / 64 results**, both backup settings, native sharing
+locks and process cleanup passed. All child return codes are zero, disposable
+workspaces were removed, and recorded harness hashes match current files.
+Both new unload cases passed with backups off and on.
+
+The automated report records visual acceptance as not run. Subsequent overall
+maintainer acceptance after the height adjustment completes this ticket; no
+separate detailed appearance/scaling checklist was reported. Prior visual
+acceptance remains valid. Final pre-commit review found no further code issues;
+Ruff, affected-file format check and all 13 focused tests passed again. Existing
+full-suite and Linux/Windows acceptance evidence was reused and harness hashes
+rechecked. Commit authorized for this feature only; no merge or push requested.
+
 # Reader-declared unreadable mutation refusal — 2026-10-21
 
 Issue 06 in `.scratch/reliable-tag-mutations/issues/` guards ordinary
